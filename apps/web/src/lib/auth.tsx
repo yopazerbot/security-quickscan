@@ -8,7 +8,7 @@ export interface Me {
   csrfToken: string;
   authMethod: string;
   sessionExpiresAt: string;
-  features: { demo: boolean; scannerAws: boolean; scannerMs: boolean; scannerMsClientId: string | null };
+  features: { local: boolean; demo: boolean; scannerAws: boolean; scannerMs: boolean; scannerMsClientId: string | null };
 }
 
 const AuthCtx = createContext<{ me: Me | null; loading: boolean; logout(): Promise<void> }>({ me: null, loading: true, logout: async () => {} });

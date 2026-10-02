@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { z } from 'zod';
 
 const bool = z
@@ -17,6 +20,13 @@ const schema = z
     /** Optional previous key, used only by the key rotation command. */
     MASTER_KEY_PREVIOUS: z.string().optional(),
     MODE: z.enum(['all', 'api', 'worker']).default('all'),
+    /**
+     * Single-user local installation (e.g. Docker on a laptop): no login, only reachable via localhost,
+     * master key generated and stored in KEY_FILE.
+     */
+    LOCAL_MODE: bool,
+    KEY_FILE: z.string().default('/data/master.key'),
+    HOST: z.string().optional(),
     TRUST_PROXY: z.string().default('true'),
     COOKIE_SECURE: z.string().default('true').transform((v) => v !== 'false'),
 
@@ -43,6 +53,11 @@ const schema = z
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   })
   .superRefine((c, ctx) => {
+    if (c.LOCAL_MODE) {
+      // Without login the app must never be reachable from other machines.
+      if (!LOOPBACK.has(new URL(c.APP_URL).hostname)) ctx.addIssue({ code: 'custom', message: 'LOCAL_MODE requires APP_URL on localhost (e.g. http://localhost:8080)' });
+      return;
+    }
     const entra = c.ENTRA_TENANT_ID && c.ENTRA_CLIENT_ID && c.ENTRA_CLIENT_SECRET;
     if (!entra && !c.BREAKGLASS_ENABLED) ctx.addIssue({ code: 'custom', message: 'Configure ENTRA_* variables (or enable break glass) so someone can sign in' });
     if (c.BREAKGLASS_ENABLED && !(c.BREAKGLASS_USERNAME && c.BREAKGLASS_PASSWORD_HASH && c.BREAKGLASS_TOTP_SECRET)) {
@@ -55,7 +70,30 @@ const schema = z
 
 export type Config = z.infer<typeof schema>;
 
+export const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+const isTrue = (v?: string) => v === 'true' || v === '1';
+
+/** Local mode: read the master key from KEY_FILE, creating it (0600) on first start. */
+function localMasterKey(file: string): string {
+  if (existsSync(file)) return readFileSync(file, 'utf8').trim();
+  const key = randomBytes(32).toString('base64');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${key}\n`, { mode: 0o600, flag: 'wx' });
+  return key;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  if (isTrue(env.LOCAL_MODE)) {
+    const port = env.PORT ?? '8080';
+    env = {
+      APP_URL: `http://localhost:${port}`,
+      COOKIE_SECURE: 'false',
+      TRUST_PROXY: 'false',
+      ...env,
+    };
+    if (!env.MASTER_KEY) env = { ...env, MASTER_KEY: localMasterKey(env.KEY_FILE ?? '/data/master.key') };
+  }
   const r = schema.safeParse(env);
   if (!r.success) {
     const msg = r.error.issues.map((i) => `  ${i.path.join('.') || 'config'}: ${i.message}`).join('\n');

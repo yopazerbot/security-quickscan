@@ -107,7 +107,8 @@ test('demo PIN login: admin enables it, visitor only sees demo data, sign out wo
   await page.getByRole('button', { name: 'Enter demo' }).click();
   await expect(page.getByText(/Demo session/)).toBeVisible();
   await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await expect(page.getByText(DEMO)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
+  await expect(page.getByText(DEMO).first()).toBeVisible();
   await expect(page.getByText(/E2E Customer/)).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Users', exact: true })).toHaveCount(0);
   await signOut(page);

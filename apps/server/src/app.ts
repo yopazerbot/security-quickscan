@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { authRoutes } from './auth/routes.js';
 import { loadSession, verifyCsrf } from './auth/session.js';
-import type { Config } from './config.js';
+import { LOOPBACK, type Config } from './config.js';
 import { HttpError, type AppCtx } from './context.js';
 import { Envelope } from './crypto/envelope.js';
 import type { Db } from './db/index.js';
@@ -99,6 +99,22 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
   });
 
+  /** Local mode has no login: only answer requests addressed to localhost (also blocks DNS rebinding). */
+  const isLoopback = (hostHeader?: string) => {
+    if (!hostHeader) return false;
+    try {
+      return LOOPBACK.has(new URL(`http://${hostHeader}`).hostname);
+    } catch {
+      return false;
+    }
+  };
+  if (config.LOCAL_MODE) {
+    app.addHook('onRequest', async (req, reply) => {
+      if (req.url === '/healthz') return;
+      if (!isLoopback(req.headers.host)) return reply.code(421).send({ error: 'Local mode only accepts requests to localhost' });
+    });
+  }
+
   app.addHook('onRequest', async (req) => {
     if (!req.url.startsWith('/api/')) return;
     await loadSession(ctx, req);
@@ -106,7 +122,9 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
       // Defence in depth on top of SameSite=Strict cookies: same-origin requests only.
       const origin = req.headers.origin;
       const site = req.headers['sec-fetch-site'];
-      if ((origin && origin !== appOrigin) || (site && site !== 'same-origin')) throw new HttpError(403, 'Cross-origin request blocked');
+      // In local mode the published port may differ from APP_URL, so any localhost origin is accepted.
+      const originOk = !origin || origin === appOrigin || (config.LOCAL_MODE && isLoopback(new URL(origin).host));
+      if (!originOk || (site && site !== 'same-origin')) throw new HttpError(403, 'Cross-origin request blocked');
       const path = req.url.split('?')[0];
       if (!PUBLIC_MUTATIONS.has(path)) {
         if (!req.user) throw new HttpError(401, 'Not signed in');

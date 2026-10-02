@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import pino from 'pino';
 import { buildApp, loggerOptions } from './app.js';
 import { loadConfig } from './config.js';
@@ -24,7 +25,9 @@ async function main() {
 
   if (mode === 'api' || mode === 'all') {
     const { app, ctx } = await buildApp(config, db);
-    await app.listen({ host: '0.0.0.0', port: config.PORT });
+    // Local mode outside a container listens on loopback only; in Docker the port is published on 127.0.0.1.
+    const host = config.HOST ?? (config.LOCAL_MODE && !existsSync('/.dockerenv') ? '127.0.0.1' : '0.0.0.0');
+    await app.listen({ host, port: config.PORT });
     close = () => app.close();
     if (mode === 'all') stopWorker = startWorker(ctx);
   } else {

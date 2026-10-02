@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useSearchParams } from 'react-router';
 import { Alert, Button, Field, Input } from '../components/ui';
 import { get, post } from '../lib/api';
@@ -20,6 +20,7 @@ const CODE_HINTS: Record<string, string> = {
   AADSTS7000215: 'invalid client secret. Use the secret Value (not the Secret ID) in ENTRA_CLIENT_SECRET.',
   AADSTS7000222: 'the client secret has expired. Create a new one.',
   AADSTS700016: 'application not found. Check ENTRA_CLIENT_ID and ENTRA_TENANT_ID.',
+  AADSTS700025: 'the app is configured as a public client. In Entra > Authentication, register the redirect URI under the Web platform (not SPA or Mobile/desktop) and set "Allow public client flows" to No.',
   AADSTS50011: 'redirect URI mismatch. Add APP_URL/api/auth/callback as a Web redirect URI.',
   AADSTS54005: 'the sign-in code was already used. Start again in a new tab.',
   AADSTS70008: 'the sign-in code expired. Please try again.',
@@ -41,7 +42,7 @@ export function Login() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [params] = useSearchParams();
-  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean; demoLogin: boolean }>('/api/auth/config') });
+  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean; demoLogin: boolean; local: boolean }>('/api/auth/config') });
   const [showBg, setShowBg] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', totp: '' });
   const [err, setErr] = useState<string | null>(null);
@@ -49,6 +50,11 @@ export function Login() {
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
   const [pinBusy, setPinBusy] = useState(false);
+
+  // Local installation: there is no login, fetching the session signs in automatically.
+  useEffect(() => {
+    if (cfg.data?.local) void qc.invalidateQueries({ queryKey: ['me'] });
+  }, [cfg.data?.local, qc]);
 
   if (me) return <Navigate to="/" replace />;
   const error = params.get('error');

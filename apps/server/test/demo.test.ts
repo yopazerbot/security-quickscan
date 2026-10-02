@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.js';
 import { Envelope } from '../src/crypto/envelope.js';
 import { createDb, runMigrations } from '../src/db/index.js';
 import { resetDemo, seedDemo } from '../src/demo/seed.js';
-import { customers, scans } from '../src/db/schema.js';
+import { customers, scans, settings } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 
 describe('demo generator', () => {
@@ -37,6 +37,7 @@ const url = process.env.TEST_DATABASE_URL;
     await runMigrations(db);
     ({ app, ctx } = await buildApp(config, db));
     await db.delete(customers).where(eq(customers.isDemo, true));
+    await db.delete(settings).where(eq(settings.key, 'demo_login'));
   });
   afterAll(async () => {
     await app.close();

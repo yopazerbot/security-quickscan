@@ -62,7 +62,7 @@ export function Layout() {
           <>
             <div className="mb-2 mt-8 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Administration</div>
             <nav className="space-y-1">
-              {adminNav.map((n) => (
+              {adminNav.filter((n) => !(me.features.local && n.to === '/admin/users')).map((n) => (
                 <Item key={n.to} {...n} />
               ))}
             </nav>
@@ -76,13 +76,17 @@ export function Layout() {
               <div className="truncate text-xs capitalize text-slate-500">{me.user.role}</div>
             </div>
           </div>
-          <button
-            className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
-            onClick={() => void logout()}
-          >
-            <LogOut className="size-[18px]" />
-            Sign out
-          </button>
+          {me.features.local ? (
+            <div className="mt-3 px-3 text-xs text-slate-500">Local installation, no sign-in required</div>
+          ) : (
+            <button
+              className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
+              onClick={() => void logout()}
+            >
+              <LogOut className="size-[18px]" />
+              Sign out
+            </button>
+          )}
         </div>
       </aside>
       <main className="ml-60 min-w-0 flex-1">

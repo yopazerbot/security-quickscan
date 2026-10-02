@@ -9,7 +9,7 @@ import type { AppCtx } from '../context.js';
 import { HttpError } from '../context.js';
 import { safeEqual, sha256 } from '../crypto/envelope.js';
 import { authStates, loginAttempts, users } from '../db/schema.js';
-import { createSession, destroySession, requireUser } from './session.js';
+import { cookieName, createSession, destroySession, loadSession, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
 import { demoLoginAvailable } from '../demo/login.js';
 
@@ -70,9 +70,16 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     entra: entraEnabled(config),
     breakglass: config.BREAKGLASS_ENABLED,
     demoLogin: await demoLoginAvailable(ctx),
+    local: config.LOCAL_MODE,
   }));
 
-  app.get('/api/auth/me', async (req) => {
+  app.get('/api/auth/me', async (req, reply) => {
+    // Local mode: no login, the browser on this machine gets a local administrator session.
+    if (config.LOCAL_MODE && !req.user) {
+      const id = await ensureLocalAdmin(ctx);
+      req.cookies[cookieName(ctx)] = await createSession(ctx, req, reply, id, 'local');
+      await loadSession(ctx, req);
+    }
     const user = requireUser(req);
     return {
       user,
@@ -81,6 +88,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       sessionExpiresAt: req.session!.expiresAt,
       features: {
         demo: config.DEMO_MODE,
+        local: config.LOCAL_MODE,
         scannerAws: Boolean(config.SCANNER_AWS_ACCESS_KEY_ID),
         scannerMs: Boolean(config.SCANNER_MS_CLIENT_ID),
         scannerMsClientId: config.SCANNER_MS_CLIENT_ID ?? null,
@@ -218,4 +226,14 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     await destroySession(ctx, req, reply);
     return { ok: true };
   });
+}
+
+const LOCAL_EMAIL = 'local-admin@localhost';
+
+/** The single administrator account of a local installation. */
+async function ensureLocalAdmin(ctx: AppCtx): Promise<string> {
+  const u = (await ctx.db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${LOCAL_EMAIL}`).limit(1))[0];
+  if (u) return u.id;
+  const [created] = await ctx.db.insert(users).values({ email: LOCAL_EMAIL, name: 'Local administrator', role: 'admin', allCustomers: true }).returning();
+  return created.id;
 }

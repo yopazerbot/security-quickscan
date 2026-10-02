@@ -1,21 +1,54 @@
-# Local stack mirroring Railway: app (API + worker) and Postgres.
+# Run Security QuickScan locally on your own machine (no login, localhost only):
+#
+#   docker compose up -d                 # uses the published image
+#   docker compose up -d --build         # or build from this source tree
+#
+# Then open http://localhost:8080. Stop with: docker compose down  (data is kept in volumes)
+name: security-quickscan
+
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_PASSWORD: localdev
+      POSTGRES_USER: quickscan
+      POSTGRES_PASSWORD: quickscan   # only reachable inside this compose network (no published port)
       POSTGRES_DB: quickscan
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickscan"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   app:
+    image: ghcr.io/yopazerbot/security-quickscan:latest
     build: .
-    env_file: .env
     environment:
-      DATABASE_URL: postgres://postgres:localdev@db:5432/quickscan
-      APP_URL: http://localhost:8080
-      COOKIE_SECURE: "false"
-    ports: ["8080:8080"]
+      LOCAL_MODE: "true"
+      DATABASE_URL: postgres://quickscan:quickscan@db:5432/quickscan
+      # Set DEMO_MODE=true to get the fictional demo customer and simulated systems.
+      DEMO_MODE: ${DEMO_MODE:-false}
+      # Optional platform scanner identities (see README):
+      SCANNER_AWS_ACCESS_KEY_ID: ${SCANNER_AWS_ACCESS_KEY_ID:-}
+      SCANNER_AWS_SECRET_ACCESS_KEY: ${SCANNER_AWS_SECRET_ACCESS_KEY:-}
+      SCANNER_MS_CLIENT_ID: ${SCANNER_MS_CLIENT_ID:-}
+      SCANNER_MS_CLIENT_SECRET: ${SCANNER_MS_CLIENT_SECRET:-}
+    ports:
+      # Published on loopback only: the app has no login in local mode.
+      - "127.0.0.1:${PORT:-8080}:8080"
+    volumes:
+      - appdata:/data   # generated master key (encrypts stored customer secrets)
     read_only: true
     tmpfs: [/tmp]
-    depends_on: [db]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
-  pgdata:
+  db:
+  appdata:

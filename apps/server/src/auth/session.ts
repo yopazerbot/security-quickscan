@@ -30,6 +30,7 @@ export async function createSession(ctx: AppCtx, req: FastifyRequest, reply: Fas
     sameSite: 'strict',
     expires: expiresAt,
   });
+  return token;
 }
 
 export async function destroySession(ctx: AppCtx, req: FastifyRequest, reply: FastifyReply) {

@@ -4,6 +4,26 @@ A web application for running read-only security quick scans of customer cloud e
 
 Built for a freelance security consultant: capture the customer context, derive a risk profile, scope the systems, collect access securely with step-by-step guidance, review the evaluation criteria, watch the scan run live and hand over a branded report.
 
+## Run it locally (no hosting, no login)
+
+Anyone with Docker can run the tool on their own machine:
+
+```bash
+git clone https://github.com/yopazerbot/security-quickscan && cd security-quickscan
+docker compose up -d --build          # or without --build once the image is published on ghcr.io
+```
+
+Open http://localhost:8080. To try it with the fictional demo customer: `DEMO_MODE=true docker compose up -d --build`.
+To use another port: `PORT=9000 docker compose up -d`. Stop with `docker compose down`; data stays in Docker volumes (`docker compose down -v` removes it).
+
+Local mode (`LOCAL_MODE=true`, set by `docker-compose.yml`):
+- No login: the browser on this machine is signed in as the local administrator.
+- Only reachable from this machine: the port is published on 127.0.0.1 only, the app rejects requests addressed to any host other than localhost (also blocks DNS rebinding), and it refuses to start with a non-localhost `APP_URL`.
+- Zero configuration: the encryption key for stored customer secrets is generated on first start and kept in the `appdata` volume (`/data/master.key`, mode 0600). Back up that volume if you keep secrets between scans.
+- Everything else works the same: customers, scans, reports, PDF/CSV exports. The secret-less access methods (AWS role, Microsoft admin consent) need your own scanner identities via the `SCANNER_*` variables; without them use access keys, app registrations and tokens.
+
+Do not expose local mode to a network. For a shared, hosted installation use the Microsoft sign-in setup below.
+
 ## Features
 
 - **Guided scan wizard**
@@ -119,7 +139,22 @@ npm test                                                     # unit tests
 TEST_DATABASE_URL=postgres://localhost/quickscan_test npm test   # plus API authorisation tests
 ```
 
-Or run the full stack with Docker: `docker compose up --build`.
+
+
+## Demo mode
+
+`DEMO_MODE=true` adds simulated systems to the wizard and seeds the fictional customer **Noordkust Logistics NV** (example domains only) on startup: two completed scans with an improving trend, triaged findings and a draft scan ready to run. Simulated findings are realistic per check (e.g. a public invoices bucket, RDP open to the internet, report-only MFA policy).
+Admins can reset the demo data under **Settings > Demo data**.
+
+**Demo PIN login** (hosted installations): under Settings > Demo data an admin can enable a PIN login (6 to 12 digits, stored as an Argon2 hash). Visitors who enter the PIN get a demo session that only sees demo customers, can only add simulated systems, cannot store credentials and cannot open administration pages. PIN attempts are rate limited and locked for 15 minutes after 5 failures; changing the PIN or disabling it ends all demo sessions.
+
+## End-to-end tests
+
+```bash
+DATABASE_URL=postgres://localhost/quickscan_e2e scripts/e2e-local.sh   # empty database
+```
+
+Builds the app, starts it in demo mode with throwaway break-glass credentials and runs the Playwright suite (`e2e/`): seeded customer and reports, running the prepared scan, downloads, triage, a new customer through the full wizard, demo reset, demo PIN login and sign out. CI runs it on every push.
 
 ## Adding a check
 
