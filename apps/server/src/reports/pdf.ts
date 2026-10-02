@@ -58,7 +58,9 @@ function pill(doc: Doc, x: number, y: number, text: string, color: string, w?: n
   doc.font('Helvetica-Bold').fontSize(7.5);
   const width = w ?? doc.widthOfString(text) + 12;
   doc.roundedRect(x, y, width, 14, 7).fill(color);
-  doc.fillColor('#ffffff').text(text, x, y + 3.5, { width, align: 'center' });
+  const keepY = doc.y;
+  doc.fillColor('#ffffff').text(text, x, y + 3.5, { width, align: 'center', lineBreak: false });
+  doc.y = keepY;
   return width;
 }
 
@@ -89,9 +91,10 @@ function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
   doc.font('Helvetica').fontSize(13).fillColor('#e0e7ff').text('Assessment against ISO/IEC 27001:2022 Annex A', M, 240);
 
   doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(24).text(m.customer.name, M, 360, { width: W - 2 * M - 140 });
-  doc.font('Helvetica').fontSize(11).fillColor(C.muted).text(`Scan date: ${fmtDate(m.scan.finishedAt ?? m.scan.startedAt)}`, M, doc.y + 8);
-  doc.text(`Scope: ${m.systems.map((s) => s.providerLabel).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`);
-  doc.text(`Report generated: ${fmtDate(m.generatedAt)}`);
+  const tw = W - 2 * M - 150;
+  doc.font('Helvetica').fontSize(11).fillColor(C.muted).text(`Scan date: ${fmtDate(m.scan.finishedAt ?? m.scan.startedAt)}`, M, doc.y + 8, { width: tw });
+  doc.text(`Scope: ${m.systems.map((s) => s.providerLabel).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`, { width: tw });
+  doc.text(`Report generated: ${fmtDate(m.generatedAt)}`, { width: tw });
 
   // Grade badge
   const cx = W - M - 60;
@@ -195,10 +198,12 @@ function isoPage(doc: Doc, m: ReportModel) {
   const counts = { effective: 0, partial: 0, not_effective: 0, not_assessed: 0 };
   for (const c of m.summary.controls) counts[c.verdict]++;
   let x = M;
+  const py = doc.y;
   for (const v of ['effective', 'partial', 'not_effective', 'not_assessed'] as ControlVerdict[]) {
-    x += pill(doc, x, doc.y, `${counts[v]}  ${VERDICT_LABELS[v].toUpperCase()}`, VERDICT[v]) + 6;
+    x += pill(doc, x, py, `${counts[v]}  ${VERDICT_LABELS[v].toUpperCase()}`, VERDICT[v]) + 6;
   }
-  doc.y += 26;
+  doc.x = M;
+  doc.y = py + 26;
 
   // table header
   const cols = { id: M, title: M + 42, verdict: M + 300, score: M + 405 };

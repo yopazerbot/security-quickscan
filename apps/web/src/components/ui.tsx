@@ -70,10 +70,13 @@ export function Field({ label, hint, error, children, className }: { label: Reac
 const inputCls =
   'block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500';
 
-export const Input = ({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) => <input {...p} className={clsx(inputCls, className)} />;
-export const Textarea = ({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={clsx(inputCls, 'min-h-20', className)} />;
+/** Lets a caller's width class (w-48, max-w-*) replace the default full width. */
+const withWidth = (cls?: string) => clsx(/(^|\s)w-/.test(cls ?? '') ? inputCls.replace('w-full ', '') : inputCls, cls);
+
+export const Input = ({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) => <input {...p} className={withWidth(className)} />;
+export const Textarea = ({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={clsx(withWidth(className), 'min-h-20')} />;
 export const Select = ({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) => (
-  <select {...p} className={clsx(inputCls, 'pr-8', className)}>
+  <select {...p} className={clsx(withWidth(className), 'pr-8')}>
     {children}
   </select>
 );

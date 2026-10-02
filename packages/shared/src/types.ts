@@ -8,6 +8,8 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   github: 'GitHub',
 };
 
+export const PROVIDER_SHORT: Record<Provider, string> = { m365: 'M365', azure: 'Azure', aws: 'AWS', github: 'GitHub' };
+
 export const DOMAINS = [
   'identity',
   'privileged',
@@ -18,6 +20,16 @@ export const DOMAINS = [
   'governance',
 ] as const;
 export type Domain = (typeof DOMAINS)[number];
+
+export const DOMAIN_SHORT: Record<Domain, string> = {
+  identity: 'Identity',
+  privileged: 'Privileged',
+  logging: 'Logging',
+  data: 'Data',
+  network: 'Network',
+  supply_chain: 'Supply chain',
+  governance: 'Governance',
+};
 
 export const DOMAIN_LABELS: Record<Domain, string> = {
   identity: 'Identity & Access',

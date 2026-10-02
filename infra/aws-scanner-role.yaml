@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Read-only role for Security QuickScan. Deploy in the customer account (us-east-1), share the RoleArn
+  output with the consultant and delete the stack after the assessment.
+Parameters:
+  ScannerPrincipalArn:
+    Type: String
+    Description: ARN of the Security QuickScan platform identity (shown in the app).
+  ExternalId:
+    Type: String
+    NoEcho: false
+    Description: Engagement-specific external ID (shown in the app).
+Resources:
+  QuickScanRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SecurityQuickScanReadOnly
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref ScannerPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+Outputs:
+  RoleArn:
+    Value: !GetAtt QuickScanRole.Arn

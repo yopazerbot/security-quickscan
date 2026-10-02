@@ -1,0 +1,21 @@
+# Local stack mirroring Railway: app (API + worker) and Postgres.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: quickscan
+    volumes: [pgdata:/var/lib/postgresql/data]
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:localdev@db:5432/quickscan
+      APP_URL: http://localhost:8080
+      COOKIE_SECURE: "false"
+    ports: ["8080:8080"]
+    read_only: true
+    tmpfs: [/tmp]
+    depends_on: [db]
+volumes:
+  pgdata:

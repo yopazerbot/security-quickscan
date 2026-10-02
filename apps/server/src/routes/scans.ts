@@ -24,7 +24,7 @@ import { assertCustomerAccess } from '../auth/session.js';
 import { scannerEnv } from '../config.js';
 import { badRequest, HttpError, notFound, type AppCtx } from '../context.js';
 import { randomToken, sha256 } from '../crypto/envelope.js';
-import { authStates, checkResults, credentials, customers, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
+import { authStates, checkResults, credentials, customerAssignments, customers, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
 import { loadScan, parse, uuidParam } from './helpers.js';
 
 type ScanRow = typeof scans.$inferSelect;
@@ -530,17 +530,15 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     // Recent scans across accessible customers (dashboard).
     const u = req.user;
     if (!u) throw new HttpError(401, 'Not signed in');
-    const rows = await db
+    const all = u.role === 'admin' || u.allCustomers;
+    const allowed = all ? null : (await db.select({ id: customerAssignments.customerId }).from(customerAssignments).where(eq(customerAssignments.userId, u.id))).map((r) => r.id);
+    if (allowed && !allowed.length) return [];
+    return db
       .select({ id: scans.id, name: scans.name, status: scans.status, score: scans.score, grade: scans.grade, createdAt: scans.createdAt, finishedAt: scans.finishedAt, customerId: scans.customerId, customerName: customers.name })
       .from(scans)
       .innerJoin(customers, eq(customers.id, scans.customerId))
+      .where(allowed ? inArray(scans.customerId, allowed) : undefined)
       .orderBy(desc(scans.createdAt))
-      .limit(200);
-    const out = [];
-    for (const r of rows) {
-      if (u.role === 'admin' || u.allCustomers || (await assertCustomerAccess(ctx, req, r.customerId).then(() => true, () => false))) out.push(r);
-      if (out.length >= 25) break;
-    }
-    return out;
+      .limit(25);
   });
 }

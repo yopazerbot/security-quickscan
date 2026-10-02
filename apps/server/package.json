@@ -7,7 +7,8 @@
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
     "build": "tsup",
     "typecheck": "tsc -p .",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

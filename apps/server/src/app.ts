@@ -48,6 +48,14 @@ export function loggerOptions(config: Config) {
       ],
       censor: '[redacted]',
     },
+    serializers: {
+      // Never log one-time OAuth codes or consent state from query strings.
+      req: (req: { method: string; url: string; ip?: string }) => ({
+        method: req.method,
+        url: /^\/(api\/auth\/callback|consent\/callback)/.test(req.url) ? req.url.split('?')[0] : req.url,
+        ip: req.ip,
+      }),
+    },
   };
 }
 
@@ -56,7 +64,6 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     logger: loggerOptions(config),
     trustProxy: config.TRUST_PROXY === 'true' ? true : config.TRUST_PROXY === 'false' ? false : config.TRUST_PROXY,
     bodyLimit: 1024 * 1024,
-    disableRequestLogging: false,
   });
   const ctx: AppCtx = { config, db, envelope: new Envelope(config.MASTER_KEY), log: app.log };
   const appOrigin = new URL(config.APP_URL).origin;
