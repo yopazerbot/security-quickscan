@@ -8,6 +8,11 @@ const bool = z
   .optional()
   .transform((v) => v === 'true' || v === '1');
 
+/** Docker: the /data volume. Elsewhere (local development): .data/ in the working directory. */
+function defaultKeyFile() {
+  return existsSync('/.dockerenv') ? '/data/master.key' : '.data/master.key';
+}
+
 const schema = z
   .object({
     NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
@@ -25,7 +30,7 @@ const schema = z
      * master key generated and stored in KEY_FILE.
      */
     LOCAL_MODE: bool,
-    KEY_FILE: z.string().default('/data/master.key'),
+    KEY_FILE: z.string().default(defaultKeyFile()),
     HOST: z.string().optional(),
     TRUST_PROXY: z.string().default('true'),
     COOKIE_SECURE: z.string().default('true').transform((v) => v !== 'false'),
@@ -84,6 +89,8 @@ function localMasterKey(file: string): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  // Empty values (e.g. "APP_URL=" in a .env file) count as unset so defaults apply.
+  env = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v !== ''));
   if (isTrue(env.LOCAL_MODE)) {
     const port = env.PORT ?? '8080';
     env = {
@@ -92,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       TRUST_PROXY: 'false',
       ...env,
     };
-    if (!env.MASTER_KEY) env = { ...env, MASTER_KEY: localMasterKey(env.KEY_FILE ?? '/data/master.key') };
+    if (!env.MASTER_KEY) env = { ...env, MASTER_KEY: localMasterKey(env.KEY_FILE || defaultKeyFile()) };
   }
   const r = schema.safeParse(env);
   if (!r.success) {

@@ -1,169 +1,294 @@
 # Security QuickScan
 
-A web application for running read-only security quick scans of customer cloud environments (Microsoft 365 / Entra ID, Azure, AWS and GitHub), with results evaluated against **ISO/IEC 27001:2022 Annex A**.
+**Read-only security quick scans of Microsoft 365 / Entra ID, Azure, AWS and GitHub, evaluated against ISO/IEC 27001:2022 Annex A, with client-ready reports.**
 
-Built for a freelance security consultant: capture the customer context, derive a risk profile, scope the systems, collect access securely with step-by-step guidance, review the evaluation criteria, watch the scan run live and hand over a branded report.
+[![CI](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml)
+[![Docker image](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-## Run it locally (no hosting, no login)
+Security QuickScan is a self-hostable web application for security consultants, internal IT teams and auditors who need a fast, repeatable and well-documented view of a company's cloud security posture. It guides you from customer context to a finished report in one flow: capture the context and risk profile, choose the systems in scope, connect with read-only access, review the evaluation criteria, watch the scan run live, and hand over a branded PDF.
 
-Anyone with Docker can run the tool on their own machine:
+Run it on your laptop with one Docker command (no login, nothing leaves your machine), or host it for a team with Microsoft Entra ID single sign-on.
+
+![Report](docs/screenshots/report.png)
+
+## Highlights
+
+- **64 automated, read-only checks** across Microsoft 365 / Entra ID (18), Azure (9), AWS (21) and GitHub (16). See the [check catalogue](docs/CHECKS.md).
+- **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control, and results roll up into a per-control verdict: effective, partially effective, not effective or not assessed. CIS and NIS2 references are included as secondary mappings.
+- **Risk-based evaluation.** A short customer questionnaire (sector, size, NIS2/DORA/ISO scope, data sensitivity, internet exposure, maturity) produces a risk profile that selects the default criteria and weights the score.
+- **Guided, least-privilege access.** Step-by-step instructions per platform, including a ready-made AWS CloudFormation role with external ID and a Microsoft admin-consent flow, so no customer secrets need to be shared. A connection test checks access before scanning.
+- **You choose how long credentials are kept** per scan: deleted right after the scan, kept for N days, or kept until you delete them. Secrets are always envelope-encrypted (AES-256-GCM) and never shown again.
+- **Live scan progress** with per-system lanes, a live score and an ETA.
+- **Reports that are ready to hand over:**
+  - an interactive web report: grade and trend, Annex A heatmap, domain radar, top risks, quick wins, filterable findings with evidence and remediation;
+  - a branded [PDF report](docs/sample-report.pdf);
+  - CSV exports of findings and of the Annex A control assessment.
+- **Triage that sticks.** Mark findings as risk accepted or false positive with a note; this carries over to later scans of the same customer and is reflected in the score.
+- **Multi-customer and multi-user** (hosted mode): admin, consultant and viewer roles, per-customer access, and an append-only audit log.
+- **Demo mode** with a realistic fictional customer, for trying the tool or giving prospects a tour, plus an optional PIN login for demo visitors.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Dashboard](docs/screenshots/dashboard.png) **Dashboard** | ![Customer](docs/screenshots/customer.png) **Customer history and trend** |
+| ![Context](docs/screenshots/wizard-context.png) **Customer context and risk profile** | ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** |
+| ![Criteria](docs/screenshots/wizard-criteria.png) **Criteria mapped to ISO 27001 controls** | ![Progress](docs/screenshots/progress.png) **Live scan progress** |
+| ![Finding](docs/screenshots/finding.png) **Findings with evidence and remediation** | ![PDF](docs/screenshots/pdf-report.png) **Branded PDF report** |
+
+All screenshots show the built-in fictional demo customer.
+
+## Quick start: run it locally with Docker
+
+Requirements: Docker with Compose.
 
 ```bash
-git clone https://github.com/yopazerbot/security-quickscan && cd security-quickscan
-docker compose up -d --build          # or without --build once the image is published on ghcr.io
+git clone https://github.com/yopazerbot/security-quickscan.git
+cd security-quickscan
+docker compose up -d --build
 ```
 
-Open http://localhost:8080. To try it with the fictional demo customer: `DEMO_MODE=true docker compose up -d --build`.
-To use another port: `PORT=9000 docker compose up -d`. Stop with `docker compose down`; data stays in Docker volumes (`docker compose down -v` removes it).
+Open **http://localhost:8080**. You are signed in automatically, with no account or configuration needed.
 
-Local mode (`LOCAL_MODE=true`, set by `docker-compose.yml`):
-- No login: the browser on this machine is signed in as the local administrator.
-- Only reachable from this machine: the port is published on 127.0.0.1 only, the app rejects requests addressed to any host other than localhost (also blocks DNS rebinding), and it refuses to start with a non-localhost `APP_URL`.
-- Zero configuration: the encryption key for stored customer secrets is generated on first start and kept in the `appdata` volume (`/data/master.key`, mode 0600). Back up that volume if you keep secrets between scans.
-- Everything else works the same: customers, scans, reports, PDF/CSV exports. The secret-less access methods (AWS role, Microsoft admin consent) need your own scanner identities via the `SCANNER_*` variables; without them use access keys, app registrations and tokens.
+To explore with the fictional demo customer and simulated systems:
 
-Do not expose local mode to a network. For a shared, hosted installation use the Microsoft sign-in setup below.
+```bash
+DEMO_MODE=true docker compose up -d --build
+```
 
-## Features
+Useful commands:
 
-- **Guided scan wizard**
-  1. Customer context questionnaire that produces a risk profile (low / medium / high / critical) with drivers and domain weights.
-  2. Scope: add any number of M365 tenants, Azure tenants, AWS accounts and GitHub organisations.
-  3. Access: per-platform guidance (CloudFormation template, admin consent link, permission lists, CLI snippets), secure credential capture, connection test, and a **per-scan credential retention choice** (delete after scan, keep N days, keep until deleted).
-  4. Criteria: 64 checks, defaults based on the risk profile, include/exclude with a recorded reason, grouped by platform or by ISO control.
-  5. Launch: record the customer authorisation (who, when, validity window, optional signed PDF). Scans cannot run outside the window.
-- **Live progress**: per-system lanes with animated check tiles, live score and grade, ETA, cancel.
-- **Reports**
-  - In-app report: grade, score trend versus previous scan, ISO 27001 Annex A control heatmap (effective / partial / not effective / not assessed), domain radar, severity chart, top risks, quick wins, filterable findings with affected resources, evidence and remediation.
-  - Branded PDF (cover, executive summary, Annex A table, priorities, detailed findings, scope, method and limitations, disclaimer, TLP marking).
-  - CSV exports for findings and for the Annex A control assessment.
-- **Triage**: mark findings as risk accepted or false positive with a note; carried over to future scans of the same customer and reflected in the score.
-- **Multi-customer** with per-customer access for associates, rescan (clones scope, criteria and still-valid credentials), customer data export and full deletion.
-- **User management**: invite-only, roles admin / consultant / viewer, sign out everywhere, append-only audit log.
+| What | Command |
+| --- | --- |
+| Use another port | `PORT=9000 docker compose up -d` |
+| Stop (keep data) | `docker compose down` |
+| Stop and delete all data | `docker compose down -v` |
+| Update to the latest version | `git pull && docker compose up -d --build` |
 
-## ISO 27001 as the central framework
+Once the image is published to the GitHub Container Registry you can skip `--build`; Compose then pulls `ghcr.io/yopazerbot/security-quickscan:latest`.
 
-Every check maps to one primary Annex A control and optional secondary controls (`packages/shared/src/catalog/*`). Control verdicts:
+### How local mode stays safe without a login
+
+`docker-compose.yml` runs the app with `LOCAL_MODE=true`:
+
+- The port is published on **127.0.0.1 only**, so other machines on your network cannot reach it.
+- The app answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]` (this also blocks DNS-rebinding attacks), and it refuses to start in local mode with a non-localhost `APP_URL`.
+- CSRF protection and same-origin checks stay active.
+- The encryption key for stored customer secrets is generated on first start and kept in the `appdata` Docker volume (`/data/master.key`, readable only by the app). Back up that volume if you keep secrets between scans.
+- The container runs as a non-root user with a read-only filesystem and all Linux capabilities dropped. The database is not exposed outside the Compose network.
+
+Do not expose local mode to a network. To share the tool with colleagues or customers, use the hosted setup below.
+
+## How a scan works
+
+1. **Customer context.** Answer a short questionnaire. The live risk profile (low, medium, high, critical) shows its drivers and the domain weights it applies.
+2. **Scope.** Add the environments to assess: Microsoft 365 tenants, Azure tenants, AWS accounts and GitHub organisations, as many of each as needed.
+3. **Access.** Follow the per-platform guidance, store the read-only credentials (or use a secret-less method) and run a connection test. Choose how long secrets are kept.
+4. **Criteria.** Review the checks selected for the risk profile, grouped by platform or by ISO control. Exclude anything out of scope with a reason; exclusions appear in the report.
+5. **Launch.** Record who authorised the assessment and the validity window (optionally upload the signed letter). Scans cannot run outside that window. Watch the scan run live, then open the report.
+
+Rescan later with one click: scope, criteria and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
+
+## What it checks
+
+| Platform | Checks | Examples |
+| --- | --- | --- |
+| Microsoft 365 / Entra ID | 18 | MFA enforcement and report-only policies, legacy authentication, phishing-resistant admin MFA, Global Administrator count, PIM, user consent and risky app permissions, stale accounts, guest settings, SPF/DMARC, Secure Score |
+| Microsoft Azure | 9 | Defender for Cloud plans, public storage, TLS and HTTPS, Key Vault purge protection, NSG management ports, SQL firewall, activity log export, subscription owners |
+| Amazon Web Services | 21 | Root MFA and keys, IAM user MFA, key rotation and unused credentials, CloudTrail, GuardDuty, Security Hub, Config, S3 Block Public Access and public buckets, security groups, IMDSv2, RDS exposure, encryption and backups, KMS rotation |
+| GitHub | 16 | Organisation 2FA, base permissions, owners, outside collaborators, branch protection and rulesets, secret scanning and push protection, Dependabot and code scanning alerts, Actions policies and token permissions, deploy keys, webhooks |
+
+The full list with severities, Annex A mappings, CIS and NIS2 references is in [docs/CHECKS.md](docs/CHECKS.md).
+
+## The ISO 27001 approach
+
+Each check names one **primary** Annex A control and optionally **secondary** controls. Per control, the verdict is:
 
 | Verdict | Rule |
 | --- | --- |
 | Effective | all evaluated checks for the control pass |
-| Not effective | a primary critical/high check fails, or less than 50% of the weighted evidence passes |
+| Not effective | a primary check of critical or high severity fails, or less than 50% of the weighted evidence passes |
 | Partially effective | anything in between |
-| Not assessed | only n/a or errored checks |
+| Not assessed | only not-applicable or errored checks |
 
-CIS benchmark and NIS2 article references are kept as secondary references. The report states clearly that the verdict covers technical evidence only.
+The overall score (0 to 100, graded A to F) weights each check by severity and by the domain weights from the customer's risk profile. Findings marked as false positive count as passed; accepted risks are excluded from the score but listed in the report.
+
+The report states clearly that verdicts reflect **technical evidence only**: organisational aspects of a control (policies, processes, awareness) are outside what an automated scan can see.
+
+## Access methods and required permissions
+
+All access is read-only. The wizard shows these steps in context, with copy buttons.
+
+| Platform | Recommended method | Alternative |
+| --- | --- | --- |
+| AWS | Cross-account IAM role with the AWS managed `SecurityAudit` and `ViewOnlyAccess` policies, assumable only by your scanner identity with a per-engagement external ID. The app generates the CloudFormation template ([infra/aws-scanner-role.yaml](infra/aws-scanner-role.yaml)). | Temporary or dedicated read-only access keys |
+| Microsoft 365 / Entra ID | Admin consent to your multi-tenant read-only scanner app. Graph application permissions: `Directory.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory`, `AuditLog.Read.All`, `Application.Read.All`, `Reports.Read.All`, `SecurityEvents.Read.All` | Customer-created app registration with a short-lived client secret |
+| Azure | Same app, plus `Reader` and `Security Reader` on the subscriptions in scope | Customer-created app registration |
+| GitHub | Fine-grained personal access token with read-only permissions, created by an organisation owner | Classic token |
+
+Some Microsoft checks need Entra ID P1/P2 licences; without them they are reported as not applicable rather than failed.
+
+## Hosted setup (team use with Microsoft sign-in)
+
+The same Docker image runs as a hosted service. It needs only a Postgres database: no Redis, no object storage. PDFs and CSVs are generated on demand.
+
+### 1. Microsoft Entra app for signing in
+
+In your own tenant: **App registrations > New registration**.
+
+1. Name it, for example `Security QuickScan`, with supported accounts **Accounts in this organizational directory only**.
+2. Under **Authentication**, add the **Web** platform with redirect URI `https://<your-domain>/api/auth/callback`. Leave implicit grant unchecked and keep **Allow public client flows** set to **No**.
+3. Under **Certificates & secrets**, create a client secret and copy its **Value**.
+4. Recommended: in **Enterprise applications**, set **Assignment required** to **Yes** and assign the people who may use the tool. Protect the app with a Conditional Access policy that requires (phishing-resistant) MFA.
+
+Users are invite-only: an administrator adds them under **Users**. The first administrator is created by signing in once with the address in `BOOTSTRAP_ADMIN_EMAIL`; remove that variable afterwards.
+
+### 2. Optional: scanner identities for secret-less customer access
+
+- **Microsoft:** register a second app, **multitenant**, with Web redirect URI `https://<your-domain>/consent/callback` and the Graph application permissions listed above. Create a client secret and set `SCANNER_MS_CLIENT_ID` and `SCANNER_MS_CLIENT_SECRET`. Customers then grant consent via a link from the wizard.
+- **AWS:** create an IAM user in your own account with only [infra/scanner-platform-policy.json](infra/scanner-platform-policy.json) attached (it may only assume `SecurityQuickScanReadOnly` roles). Set `SCANNER_AWS_ACCESS_KEY_ID` and `SCANNER_AWS_SECRET_ACCESS_KEY`.
+
+### 3. Deploy
+
+Any Docker host works. Example for [Railway](https://railway.com):
+
+1. Create a project and add **PostgreSQL**.
+2. Add **one** service from this repository. It builds the `Dockerfile` using `railway.json`: start command, health check on `/healthz`. If Railway offers to create one service per package of this monorepo, keep a single service with the repository root as root directory.
+3. Set the variables (below), generate a domain, and update the redirect URIs in Entra.
+
+Migrations run automatically on start. Enable database backups.
+
+### Configuration
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | yes | Postgres connection string (on Railway: `${{Postgres.DATABASE_URL}}`) |
+| `APP_URL` | yes (hosted) | Public URL without trailing slash, e.g. `https://scan.example.com` |
+| `MASTER_KEY` | yes (hosted) | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts stored customer secrets. |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | yes (hosted) | Sign-in app from step 1 |
+| `BOOTSTRAP_ADMIN_EMAIL` | first start | This account becomes administrator on its first sign-in |
+| `ENTRA_REQUIRE_MFA` | no | Reject tokens without an MFA claim |
+| `BREAKGLASS_ENABLED`, `BREAKGLASS_USERNAME`, `BREAKGLASS_PASSWORD_HASH`, `BREAKGLASS_TOTP_SECRET` | no | Emergency login when Entra is unavailable: password (Argon2id) plus TOTP, rate limited, audited |
+| `SCANNER_MS_CLIENT_ID`, `SCANNER_MS_CLIENT_SECRET` | no | Multi-tenant scanner app (admin consent method) |
+| `SCANNER_AWS_ACCESS_KEY_ID`, `SCANNER_AWS_SECRET_ACCESS_KEY` | no | Identity that assumes customer roles |
+| `LOCAL_MODE` | no | Single-user local installation without login (see above) |
+| `DEMO_MODE` | no | Fictional demo customer and simulated systems |
+| `MODE` | no | `all` (default), or run `api` and `worker` as separate services |
+| `SESSION_IDLE_MINUTES`, `SESSION_MAX_HOURS` | no | Session timeouts (default 30 minutes idle, 8 hours absolute) |
+| `DATABASE_SSL`, `TRUST_PROXY`, `COOKIE_SECURE`, `PORT`, `LOG_LEVEL` | no | Infrastructure settings, see [.env.example](.env.example) |
+
+Generate break-glass values with the bundled CLI:
+
+```bash
+npm ci && npm run build -w @qs/server
+node apps/server/dist/cli.js hash-password    # BREAKGLASS_PASSWORD_HASH
+node apps/server/dist/cli.js gen-totp         # BREAKGLASS_TOTP_SECRET (add the URI to an authenticator app)
+node apps/server/dist/cli.js gen-master-key   # MASTER_KEY
+```
+
+Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTER_KEY` to the new one, then running `node apps/server/dist/cli.js rotate-master-key`.
+
+## Security model
+
+- **Authentication (hosted):** Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after 30 minutes idle and 8 hours absolute, and rotate at login.
+- **Authorisation:** invite-only users; roles admin, consultant and viewer; customer scoping on every query (other customers return 404, not 403).
+- **CSRF:** SameSite=Strict cookies, a per-session CSRF token header, and Origin / `Sec-Fetch-Site` checks on every state-changing request.
+- **Customer secrets:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
+- **Least privilege:** read-only permissions only. The preferred methods (AWS role with external ID, Microsoft admin consent) avoid exchanging customer secrets at all.
+- **Hardening:**
+  - strict Content Security Policy (no inline scripts), HSTS, `frame-ancestors 'none'`, no-referrer, Permissions-Policy;
+  - rate limiting, request size limits, and input validation with zod on every endpoint;
+  - parameterised SQL;
+  - HTTP calls to the Microsoft and GitHub APIs are restricted to allow-listed hosts with redirects disabled, and no user-supplied URLs are ever fetched;
+  - secrets, cookies and OAuth codes redacted from logs;
+  - CSV formula-injection protection, PNG/JPEG-only logo upload, PDF-only authorisation upload.
+- **Audit:** an append-only audit log of logins, break-glass and demo access, credential storage, use and purge, scans, exports and admin changes. A database trigger blocks updates and deletes.
+- **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit`, CodeQL and gitleaks.
+
+Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
+
+## Demo mode
+
+With `DEMO_MODE=true` the app adds simulated systems to the wizard and, on startup, seeds the fictional customer **Noordkust Logistics NV**. It uses only reserved example domains and documentation account IDs. The seed contains:
+- two completed scans with an improving trend;
+- triaged findings;
+- a draft scan ready to run.
+
+Simulated findings are realistic for each check, for example a public invoices bucket, RDP open to the internet, or an MFA policy left in report-only mode. Administrators can reset the demo data under **Settings > Demo data**.
+
+For hosted demos, an administrator can enable a **demo PIN login** in the same place:
+- The PIN is 6 to 12 digits and stored as an Argon2 hash.
+- Visitors who enter it only see demo customers. They can only add simulated systems, cannot store credentials and cannot open administration pages.
+- Attempts are rate limited and locked for 15 minutes after 5 failures.
+- Changing the PIN or turning it off ends all demo sessions.
 
 ## Architecture
 
 ```
-apps/web         React 19 SPA (Vite, Tailwind, TanStack Query, Recharts)
-apps/server      Fastify API + scan worker, Drizzle ORM, PDFKit
-packages/shared  types, ISO catalog, check catalog, risk profiling, scoring (used by UI and server)
-packages/checks  check implementations (AWS SDK v3, Microsoft Graph, Azure Resource Manager, GitHub REST)
+apps/web         React 19 single-page app (Vite, Tailwind CSS, TanStack Query, Recharts)
+apps/server      Fastify API and scan worker, Drizzle ORM (Postgres), PDFKit reports
+packages/shared  Types, ISO 27001 catalogue, check catalogue, risk profiling, scoring
+packages/checks  Check implementations: AWS SDK v3, Microsoft Graph, Azure Resource Manager, GitHub REST
+e2e              Playwright end-to-end tests
+infra            AWS CloudFormation role and scanner policy
 ```
 
-- One Docker image. `MODE=all` runs API and worker in one process (simplest on Railway). For isolation you can run two services from the same image with `MODE=api` and `MODE=worker`.
-- Postgres is the only state: data, sessions, job queue (`FOR UPDATE SKIP LOCKED`), encrypted secrets and uploads. No S3 or volume needed; PDFs and CSVs are generated on demand.
-- Progress is streamed to the browser with Server-Sent Events.
+- One Docker image. By default the API, the built web app and the scan worker run in one process; set `MODE=api` and `MODE=worker` to split them.
+- Postgres is the only state: application data, sessions, the job queue (`FOR UPDATE SKIP LOCKED`), encrypted secrets and uploads.
+- Scan progress streams to the browser with Server-Sent Events.
 
-## Security model
+## Development
 
-- **Authentication**: Microsoft Entra ID OIDC (authorization code + PKCE, state and nonce, single tenant, `tid` validated) in a backend-for-frontend design: the browser never holds tokens. Sessions are random tokens stored hashed in Postgres, in a `__Host-` cookie that is HttpOnly, Secure and SameSite=Strict. 30 minute idle and 8 hour absolute timeout, rotation on login.
-- **Break glass**: only when `BREAKGLASS_ENABLED=true`. Username + Argon2id password hash + TOTP (single use), rate limited and locked after 5 failures, audited, and shown as a red banner during the session.
-- **Authorisation**: invite-only users, role checks on every route, customer scoping on every query (404 for customers you cannot access), viewers are read-only.
-- **CSRF**: SameSite=Strict, per-session CSRF token header, Origin and Sec-Fetch-Site checks on every mutating request.
-- **Customer secrets**: envelope encryption (AES-256-GCM data key per secret, wrapped by `MASTER_KEY`), additional authenticated data binds each ciphertext to its scan and system. Secrets are write-only in the API, decrypted in memory only for a connection test or scan, and deleted according to the chosen retention (purge job runs every minute). Key rotation: `node apps/server/dist/cli.js rotate-master-key`.
-- **Least privilege access**: preferred methods need no shared customer secret at all (AWS cross-account role with external ID, Microsoft admin consent to a read-only multi-tenant app). All permissions are read-only.
-- **Hardening**: strict CSP (no inline scripts), HSTS, frame-ancestors none, no-referrer, Permissions-Policy, rate limiting, request size limits, zod validation on all inputs, parameterised SQL, outbound requests only to allow-listed API hosts with redirects disabled, log redaction of secrets, cookies and OAuth codes, CSV formula-injection protection, PNG/JPEG-only logo upload, PDF-only authorisation upload.
-- **Audit**: append-only `audit_log` (database trigger blocks UPDATE, DELETE and TRUNCATE).
-- **Supply chain**: lockfile, Dependabot, CI with typecheck, tests, `npm audit`, CodeQL and gitleaks. The runtime image runs as a non-root user with root-owned, read-only application files.
-
-## Setup
-
-### 1. Entra app for signing in (your own tenant)
-
-1. Entra admin center, App registrations, New registration: "Security QuickScan", single tenant.
-2. Redirect URI (Web): `https://<your-domain>/api/auth/callback`.
-3. Certificates and secrets: create a client secret.
-4. Set `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` and `BOOTSTRAP_ADMIN_EMAIL` (your account). Your first sign-in creates the admin user; afterwards remove `BOOTSTRAP_ADMIN_EMAIL`.
-5. Recommended: in Enterprise applications set "Assignment required" and assign only yourself and associates, and protect the app with a Conditional Access policy requiring phishing-resistant MFA.
-
-### 2. Scanner app for Microsoft customers (optional, enables admin consent)
-
-1. New registration: "Security QuickScan Reader", **multi-tenant** (accounts in any organisational directory).
-2. Redirect URI (Web): `https://<your-domain>/consent/callback`.
-3. API permissions, Microsoft Graph, **Application** permissions: `Directory.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory`, `AuditLog.Read.All`, `Application.Read.All`, `Reports.Read.All`, `SecurityEvents.Read.All`.
-4. Create a client secret and set `SCANNER_MS_CLIENT_ID` and `SCANNER_MS_CLIENT_SECRET`.
-
-Without it, the app falls back to customer-created app registrations.
-
-### 3. AWS scanner identity (optional, enables cross-account roles)
-
-Create an IAM user in your own AWS account with only `infra/scanner-platform-policy.json` attached (it may only assume `SecurityQuickScanReadOnly` roles), create an access key and set `SCANNER_AWS_ACCESS_KEY_ID` and `SCANNER_AWS_SECRET_ACCESS_KEY`. Customers deploy `infra/aws-scanner-role.yaml` (the app shows a pre-filled version with the per-engagement external ID).
-
-### 4. Deploy on Railway
-
-1. Create a project, add the **PostgreSQL** plugin.
-2. Add a service from this repository. Railway builds the `Dockerfile` (see `railway.json`, health check `/healthz`).
-3. Variables: copy from `.env.example`. Use `DATABASE_URL=${{Postgres.DATABASE_URL}}`, set `APP_URL` to the public domain, generate `MASTER_KEY` with `openssl rand -base64 32`.
-4. Add a custom domain and update the redirect URIs in the Entra apps.
-5. Migrations run automatically on start.
-
-Optional: a second service from the same repo with `MODE=worker` and the first one with `MODE=api`.
-
-Backups: enable Railway Postgres backups. Losing `MASTER_KEY` only makes currently stored customer secrets unreadable; reports and results stay intact.
-
-## Local development
+Requirements: Node.js 22 and a Postgres database.
 
 ```bash
 npm install
-cp .env.example .env    # set DATABASE_URL, MASTER_KEY, APP_URL=http://localhost:5173, COOKIE_SECURE=false, DEMO_MODE=true
-npm run dev             # API on :8080, Vite on :5173 (proxies /api)
+cp .env.example .env    # set DATABASE_URL and LOCAL_MODE=true (no login) for the quickest start
+npm run dev             # API on :8080, Vite dev server on :5173 (proxies /api)
 ```
-
-For a quick local login without Entra, enable break glass:
-
-```bash
-npm run build -w @qs/server
-node apps/server/dist/cli.js hash-password   # BREAKGLASS_PASSWORD_HASH
-node apps/server/dist/cli.js gen-totp        # BREAKGLASS_TOTP_SECRET, add the URI to an authenticator app
-```
-
-`DEMO_MODE=true` adds a "Demo (simulated)" access method that produces realistic results without connecting anywhere.
 
 Tests:
 
 ```bash
-npm test                                                     # unit tests
-TEST_DATABASE_URL=postgres://localhost/quickscan_test npm test   # plus API authorisation tests
+npm run typecheck
+npm test                                                      # unit tests
+TEST_DATABASE_URL=postgres://localhost/quickscan_test npm test   # plus API, seeding and local-mode tests
+DATABASE_URL=postgres://localhost/quickscan_e2e scripts/e2e-local.sh   # Playwright end-to-end suite (empty database)
 ```
 
+The end-to-end suite starts the app in demo mode and covers:
+- the seeded customer and its reports;
+- running a scan to completion;
+- PDF and CSV downloads, and triage;
+- a new customer through the full wizard;
+- demo reset, demo PIN login and sign out.
 
+### Adding a check
 
-## Demo mode
-
-`DEMO_MODE=true` adds simulated systems to the wizard and seeds the fictional customer **Noordkust Logistics NV** (example domains only) on startup: two completed scans with an improving trend, triaged findings and a draft scan ready to run. Simulated findings are realistic per check (e.g. a public invoices bucket, RDP open to the internet, report-only MFA policy).
-Admins can reset the demo data under **Settings > Demo data**.
-
-**Demo PIN login** (hosted installations): under Settings > Demo data an admin can enable a PIN login (6 to 12 digits, stored as an Argon2 hash). Visitors who enter the PIN get a demo session that only sees demo customers, can only add simulated systems, cannot store credentials and cannot open administration pages. PIN attempts are rate limited and locked for 15 minutes after 5 failures; changing the PIN or disabling it ends all demo sessions.
-
-## End-to-end tests
-
-```bash
-DATABASE_URL=postgres://localhost/quickscan_e2e scripts/e2e-local.sh   # empty database
-```
-
-Builds the app, starts it in demo mode with throwaway break-glass credentials and runs the Playwright suite (`e2e/`): seeded customer and reports, running the prepared scan, downloads, triage, a new customer through the full wizard, demo reset, demo PIN login and sign out. CI runs it on every push.
-
-## Adding a check
-
-1. Add metadata to `packages/shared/src/catalog/<provider>.ts` (severity, domain, minimum risk level, effort, remediation, references, ISO 27001 controls with the primary first).
-2. Implement it in `packages/checks/src/...` returning `pass`, `fail`, `warn`, `na` or `error` with affected resources.
-3. `npm test` verifies that every catalog entry maps to known Annex A controls and has an implementation.
+1. Add its metadata to `packages/shared/src/catalog/<platform>.ts`: severity, domain, minimum risk level, effort, remediation, references and ISO 27001 controls (primary first).
+2. Implement it in `packages/checks/src/...`, returning `pass`, `fail`, `warn`, `na` or `error` with the affected resources.
+3. Add a demo scenario in `packages/checks/src/demo.ts`.
+4. Run `npm test` (it verifies that every check maps to known Annex A controls and has an implementation and a demo scenario) and `npm run docs:checks`.
 
 ## Limitations
 
-- Point-in-time, automated configuration review; no penetration testing and no organisational controls.
-- Some Microsoft checks need Entra ID P1/P2 licences and are reported as not applicable otherwise.
-- GitHub checks assume a token of an organisation owner for full visibility; repository-level checks are capped at 200 most recently pushed repositories.
+- This is a point-in-time, automated configuration review. It is not a penetration test, and it does not cover on-premises systems, endpoints or organisational controls.
+- Results depend on the permissions and licences available to the scanning identity. Checks that cannot be evaluated are reported as not assessed, never silently passed.
+- Repository-level GitHub checks look at the 200 most recently pushed repositories.
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). New checks with a clear Annex A mapping and a demo scenario are especially appreciated.
+
+## Responsible use
+
+Only scan environments you are authorised to assess. The tool records the customer's authorisation for each scan and blocks scans outside the authorised window, but the responsibility stays with you. The software is provided without warranty (see the license).
+
+Microsoft, Entra, Azure, AWS and GitHub are trademarks of their respective owners. This project is not affiliated with or endorsed by them. ISO/IEC 27001 control titles are paraphrased for reference.
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE). You may use, modify and self-host it. If you offer a modified version to others over a network, you must make your source code available to them. The app links to its source from the login page and the navigation for this reason.
+
+Developed by Yoshi Parlevliet.

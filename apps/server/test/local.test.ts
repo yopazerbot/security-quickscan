@@ -21,6 +21,19 @@ describe('local mode configuration', () => {
     expect(b.MASTER_KEY).toBe(readFileSync(keyFile, 'utf8').trim());
   });
 
+  it('works with the .env.example file as shipped (empty values are ignored)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qs-'));
+    const example = Object.fromEntries(
+      readFileSync(new URL('../../../.env.example', import.meta.url), 'utf8')
+        .split('\n')
+        .filter((l) => /^[A-Z_]+=/.test(l))
+        .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
+    );
+    const c = loadConfig({ ...example, LOCAL_MODE: 'true', DATABASE_URL: 'postgres://x/y', KEY_FILE: join(dir, 'k') } as any);
+    expect(c.APP_URL).toBe('http://localhost:8080');
+    expect(c.LOCAL_MODE).toBe(true);
+  });
+
   it('refuses to run without login on a non-localhost address', () => {
     expect(() => loadConfig({ LOCAL_MODE: 'true', DATABASE_URL: 'postgres://x/y', APP_URL: 'https://scan.example.com', MASTER_KEY: Buffer.alloc(32).toString('base64') } as any)).toThrow(/localhost/);
   });

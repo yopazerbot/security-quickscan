@@ -1,0 +1,20 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Please do not report security vulnerabilities here; see SECURITY.md. Never paste credentials, tokens or customer data."
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, description: Steps to reproduce and what you expected instead. }
+    validations: { required: true }
+  - type: dropdown
+    id: mode
+    attributes: { label: How do you run it?, options: [Local (Docker, LOCAL_MODE), Hosted (Microsoft sign-in), Development] }
+  - type: input
+    id: version
+    attributes: { label: Version or commit }
+  - type: textarea
+    id: logs
+    attributes: { label: Relevant logs (redact anything sensitive), render: text }

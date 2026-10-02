@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { signOut } from './helpers';
+import { openDemoCustomer, signOut } from './helpers';
 
 const DEMO = 'Noordkust Logistics NV';
 const DEMO_PIN = '482913';
@@ -8,8 +8,7 @@ test.describe.configure({ mode: 'serial' });
 
 test('admin sees the seeded demo customer with history and reports', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await page.getByText(DEMO).click();
+  await openDemoCustomer(page);
   await expect(page.getByRole('heading', { name: 'Score trend' })).toBeVisible();
   await expect(page.getByText('Baseline quick scan')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Triaged findings' })).toBeVisible();
@@ -23,8 +22,7 @@ test('admin sees the seeded demo customer with history and reports', async ({ pa
 
 test('run the prepared draft scan end to end and download the exports', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await page.getByText(DEMO).click();
+  await openDemoCustomer(page);
   await page.getByText('Quarterly quick scan (ready to run)').click();
   await expect(page.getByText('Customer authorisation')).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
@@ -86,8 +84,7 @@ test('reset demo data restores the original demo customer', async ({ page }) => 
   await page.getByRole('button', { name: 'Reset demo data' }).click();
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await expect(page.getByText('Demo data was reset.')).toBeVisible();
-  await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await page.getByText(DEMO).click();
+  await openDemoCustomer(page);
   await expect(page.getByText('Quarterly quick scan (ready to run)')).toBeVisible();
 });
 

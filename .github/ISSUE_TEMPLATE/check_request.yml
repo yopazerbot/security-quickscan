@@ -1,0 +1,18 @@
+name: Check request
+description: Propose a new security check or an improvement to an existing one
+labels: [check]
+body:
+  - type: dropdown
+    id: platform
+    attributes: { label: Platform, options: [Microsoft 365 / Entra ID, Azure, AWS, GitHub, Other] }
+    validations: { required: true }
+  - type: textarea
+    id: check
+    attributes: { label: What should be checked and why?, description: Include the risk and how to detect it via read-only APIs. }
+    validations: { required: true }
+  - type: input
+    id: iso
+    attributes: { label: ISO/IEC 27001:2022 Annex A control(s), placeholder: "e.g. A.8.5, A.5.17" }
+  - type: input
+    id: permissions
+    attributes: { label: Required read-only permissions or licences }

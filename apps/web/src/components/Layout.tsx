@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { Building2, LayoutDashboard, LogOut, ScrollText, Settings, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router';
 import { useAuth } from '../lib/auth';
+import { SOURCE_URL } from '../lib/constants';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -76,6 +77,9 @@ export function Layout() {
               <div className="truncate text-xs capitalize text-slate-500">{me.user.role}</div>
             </div>
           </div>
+          <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="mb-1 mt-3 block px-3 text-[11px] text-slate-500 hover:text-slate-300">
+            Source code (AGPL-3.0)
+          </a>
           {me.features.local ? (
             <div className="mt-3 px-3 text-xs text-slate-500">Local installation, no sign-in required</div>
           ) : (

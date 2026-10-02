@@ -5,6 +5,7 @@ import { Navigate, useSearchParams } from 'react-router';
 import { Alert, Button, Field, Input } from '../components/ui';
 import { get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { SOURCE_URL } from '../lib/constants';
 
 const ERRORS: Record<string, string> = {
   not_invited: 'Your account has not been invited to this workspace. Ask an administrator to add you.',
@@ -197,6 +198,10 @@ export function Login() {
           )}
           <p className="mt-12 text-xs text-slate-400">
             Developed by <span className="font-medium text-slate-600">Yoshi Parlevliet</span>
+            <span className="mx-1.5">·</span>
+            <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="hover:text-slate-600 hover:underline">
+              Open source (AGPL-3.0)
+            </a>
           </p>
         </div>
       </div>
