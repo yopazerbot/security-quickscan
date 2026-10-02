@@ -1,11 +1,12 @@
 import { CHECKS_BY_ID, ISO_BY_ID, PROVIDER_LABELS } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowRight, CircleStop, Loader2, PartyPopper } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleStop, FileText, Loader2, PartyPopper, RefreshCw, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
+import { AsyncButton } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { Button, Card, PageHeader, PageLoader, StatusBadge } from '../components/ui';
+import { Alert, Button, Card, ErrorState, LinkButton, PageHeader, PageLoader, StatusBadge } from '../components/ui';
 import { get, post } from '../lib/api';
 import { useCan } from '../lib/auth';
 import { fmtDuration, GRADE_HEX, STATUS_STYLE } from '../lib/format';
@@ -82,6 +83,14 @@ function Ring({ pct, size = 168, stroke = 14, color, children }: { pct: number; 
   );
 }
 
+/** Tile look per status: queued checks get a dashed outline so they never read as N/A (solid grey). */
+function tileClass(status: Snapshot['results'][number]['status']) {
+  if (status === 'pending') return 'border border-dashed border-slate-400 bg-white';
+  return clsx(STATUS_STYLE[status].dot, status === 'running' && 'animate-pulse ring-2 ring-brand-300', status !== 'running' && 'animate-pop');
+}
+
+const LEGEND = ['pending', 'running', 'pass', 'warn', 'fail', 'na', 'error'] as const;
+
 function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -95,12 +104,12 @@ function useNow(active: boolean) {
 export function ScanProgress() {
   const { scanId } = useParams();
   const qc = useQueryClient();
+  const nav = useNavigate();
   const can = useCan();
   const scan = useQuery({ queryKey: ['scan', scanId], queryFn: () => get<WizardScan>(`/api/scans/${scanId}`) });
   const snap = useScanStream(scanId!);
   const active = Boolean(snap && !TERMINAL.includes(snap.status));
   const now = useNow(active);
-  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (snap && TERMINAL.includes(snap.status)) {
@@ -115,6 +124,7 @@ export function ScanProgress() {
     return m;
   }, [snap]);
 
+  if (scan.error) return <ErrorState error={scan.error} onRetry={() => void scan.refetch()} />;
   if (!scan.data || !snap) return <PageLoader />;
   const total = snap.results.length;
   const done = snap.results.filter((r) => !['pending', 'running'].includes(r.status)).length;
@@ -127,42 +137,83 @@ export function ScanProgress() {
     .slice(0, 8);
   const sysLabel = new Map(scan.data.systems.map((s) => [s.id, s]));
   const finished = snap.status === 'completed' || snap.status === 'cancelled';
+  const failed = snap.status === 'failed';
+  const customerUrl = `/customers/${scan.data.customer.id}`;
+  const rescan = async () => {
+    const r = await post<{ id: string }>(`/api/scans/${scanId}/rescan`);
+    void qc.invalidateQueries({ queryKey: ['scans'] });
+    nav(`/scans/${r.id}/wizard`);
+  };
+  const title =
+    snap.status === 'completed' ? 'Scan finished' : snap.status === 'cancelled' ? 'Scan cancelled' : failed ? 'Scan failed' : snap.status === 'queued' ? 'Scan queued' : 'Scanning...';
 
   return (
     <>
       <PageHeader
-        crumbs={<Link to={`/customers/${scan.data.customer.id}`} className="hover:text-slate-700">{scan.data.customer.name}</Link>}
-        title={finished ? 'Scan finished' : snap.status === 'failed' ? 'Scan failed' : snap.status === 'queued' ? 'Scan queued' : 'Scanning...'}
+        crumbs={<Link to={customerUrl} className="hover:text-slate-700">{scan.data.customer.name}</Link>}
+        title={title}
         subtitle={scan.data.name}
         actions={
           <>
-            {active && can.write && (
-              <Button
-                variant="secondary"
-                icon={<CircleStop className="size-4" />}
-                loading={cancelling}
-                disabled={snap.cancelRequested}
-                onClick={async () => {
-                  setCancelling(true);
-                  await post(`/api/scans/${scanId}/cancel`).finally(() => setCancelling(false));
-                }}
-              >
-                {snap.cancelRequested ? 'Cancelling...' : 'Cancel scan'}
-              </Button>
-            )}
+            {active && can.write &&
+              (snap.cancelRequested ? (
+                <Button variant="secondary" icon={<Loader2 className="size-4 animate-spin" />} disabled>
+                  Cancelling...
+                </Button>
+              ) : (
+                <AsyncButton
+                  variant="secondary"
+                  icon={<CircleStop className="size-4" />}
+                  onClick={() => post(`/api/scans/${scanId}/cancel`)}
+                  success="Cancellation requested. Running checks finish first."
+                  confirm={{
+                    title: 'Cancel this scan?',
+                    body: 'Checks that are still queued will not run. Results collected so far are kept and shown as a partial report.',
+                    confirmLabel: 'Cancel scan',
+                    danger: true,
+                  }}
+                >
+                  Cancel scan
+                </AsyncButton>
+              ))}
             {finished && (
-              <Link to={`/scans/${scanId}/report`}>
-                <Button size="lg" icon={<ArrowRight className="size-4" />}>View report</Button>
-              </Link>
+              <LinkButton to={`/scans/${scanId}/report`} size="lg" icon={<ArrowRight className="size-4" />}>
+                View report
+              </LinkButton>
             )}
           </>
         }
       />
 
+      {failed && (
+        <Alert tone="error" className="mb-6" title={<span className="flex items-center gap-2"><XCircle className="size-4" aria-hidden /> The scan failed before all checks could run</span>}>
+          <p>
+            {done > 0
+              ? `${done} of ${total} checks completed before the failure. You can review their results as a partial report, or start a new scan with the same scope.`
+              : 'No checks completed. Start a new scan with the same scope, or go back to the customer to review the connected systems.'}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {done > 0 && (
+              <LinkButton to={`/scans/${scanId}/report`} icon={<FileText className="size-4" />}>
+                View partial report
+              </LinkButton>
+            )}
+            {can.write && (
+              <AsyncButton variant={done > 0 ? 'secondary' : 'primary'} icon={<RefreshCw className="size-4" />} onClick={rescan}>
+                Start a rescan
+              </AsyncButton>
+            )}
+            <LinkButton to={customerUrl} variant="ghost" icon={<ArrowLeft className="size-4" />}>
+              Back to customer
+            </LinkButton>
+          </div>
+        </Alert>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="flex flex-col items-center gap-8 p-8 sm:flex-row">
-            <Ring pct={pct} color={finished ? '#10b981' : '#4f46e5'}>
+            <Ring pct={pct} color={failed ? '#dc2626' : finished ? '#10b981' : '#4f46e5'}>
               <div className="text-4xl font-semibold tracking-tight text-slate-900">{pct}%</div>
               <div className="text-xs font-medium text-slate-500">
                 {done} of {total} checks
@@ -170,8 +221,22 @@ export function ScanProgress() {
             </Ring>
             <div className="flex-1 space-y-5">
               <div className="flex items-center gap-2 text-sm text-slate-600">
-                {active ? <Loader2 className="size-4 animate-spin text-brand-600" /> : finished ? <PartyPopper className="size-4 text-emerald-600" /> : null}
-                {snap.status === 'queued' ? 'Waiting for a scan worker...' : active ? 'Running read-only checks in parallel' : finished ? 'All checks have completed' : 'The scan stopped'}
+                {active ? (
+                  <Loader2 className="size-4 animate-spin text-brand-600" />
+                ) : snap.status === 'completed' ? (
+                  <PartyPopper className="size-4 text-emerald-600" />
+                ) : failed ? (
+                  <XCircle className="size-4 text-red-600" />
+                ) : null}
+                {snap.status === 'queued'
+                  ? 'Waiting for a scan worker...'
+                  : active
+                    ? 'Running read-only checks in parallel'
+                    : snap.status === 'completed'
+                      ? 'All checks have completed'
+                      : snap.status === 'cancelled'
+                        ? 'The scan was cancelled; results are partial'
+                        : 'The scan stopped because of an error'}
               </div>
               <div className="grid grid-cols-5 gap-2">
                 {(['pass', 'warn', 'fail', 'na', 'error'] as const).map((k) => (
@@ -217,6 +282,14 @@ export function ScanProgress() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
+          <ul aria-label="Legend" className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-500">
+            {LEGEND.map((k) => (
+              <li key={k} className="flex items-center gap-1.5">
+                <span className={clsx('size-3 rounded-sm', k === 'pending' ? 'border border-dashed border-slate-400 bg-white' : STATUS_STYLE[k].dot)} aria-hidden />
+                {STATUS_STYLE[k].label}
+              </li>
+            ))}
+          </ul>
           {[...bySystem.entries()].map(([sid, rows]) => {
             const s = sysLabel.get(sid);
             const d = rows.filter((r) => !['pending', 'running'].includes(r.status)).length;
@@ -242,13 +315,10 @@ export function ScanProgress() {
                       return (
                         <div
                           key={r.checkId}
+                          role="img"
+                          aria-label={`${m?.title}: ${STATUS_STYLE[r.status].label}`}
                           title={`${m?.title} (A.${m?.frameworks.iso27001[0]} ${ISO_BY_ID[m?.frameworks.iso27001[0] ?? '']?.title ?? ''})\n${STATUS_STYLE[r.status].label}${r.summary ? `: ${r.summary}` : ''}`}
-                          className={clsx(
-                            'size-7 rounded-md transition-colors duration-500',
-                            STATUS_STYLE[r.status].dot,
-                            r.status === 'running' && 'animate-pulse ring-2 ring-brand-300',
-                            !['pending', 'running'].includes(r.status) && 'animate-pop',
-                          )}
+                          className={clsx('size-7 rounded-md transition-colors duration-500', tileClass(r.status))}
                         />
                       );
                     })}

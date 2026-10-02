@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Navigate, useSearchParams } from 'react-router';
+import { Navigate, useLocation, useSearchParams } from 'react-router';
 import { Alert, Button, Field, Input } from '../components/ui';
 import { get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -28,6 +28,12 @@ const CODE_HINTS: Record<string, string> = {
   invalid_client: 'check ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET.',
 };
 
+/** Only same-app paths are accepted as a return target (no protocol-relative or absolute URLs). */
+function safeReturnPath(from: unknown): string | null {
+  if (typeof from !== 'string' || !from.startsWith('/') || from.startsWith('//') || from.startsWith('/\\') || from.startsWith('/login')) return null;
+  return from;
+}
+
 function MicrosoftLogo() {
   return (
     <svg viewBox="0 0 21 21" className="size-4" aria-hidden>
@@ -43,6 +49,8 @@ export function Login() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [params] = useSearchParams();
+  const location = useLocation();
+  const from = safeReturnPath((location.state as { from?: unknown } | null)?.from);
   const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean; demoLogin: boolean; local: boolean }>('/api/auth/config') });
   const [showBg, setShowBg] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', totp: '' });
@@ -57,10 +65,14 @@ export function Login() {
     if (cfg.data?.local) void qc.invalidateQueries({ queryKey: ['me'] });
   }, [cfg.data?.local, qc]);
 
-  if (me) return <Navigate to="/" replace />;
+  // After any successful sign-in (break glass, demo PIN) `me` is set and we return to the page that sent us here.
+  if (me) return <Navigate to={from ?? '/'} replace />;
   const error = params.get('error');
   const detail = params.get('code')?.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60);
   const hint = detail ? CODE_HINTS[detail] : undefined;
+  const signedOut = Boolean(params.get('signedOut'));
+  // Sent here by a protected page (not on a fresh visit to the start page, not after signing out).
+  const expired = Boolean(from) && from !== '/' && !signedOut && !error;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -99,12 +111,12 @@ export function Login() {
         <div className="relative flex h-full flex-col justify-between p-12">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-brand-600 shadow-lg shadow-brand-600/40">
-              <ShieldCheck className="size-6 text-white" />
+              <ShieldCheck className="size-6 text-white" aria-hidden />
             </div>
             <span className="text-lg font-semibold text-white">Security QuickScan</span>
           </div>
           <div className="max-w-md">
-            <h1 className="text-4xl font-semibold leading-tight tracking-tight text-white">Cloud security posture, mapped to ISO 27001.</h1>
+            <p className="text-4xl font-semibold leading-tight tracking-tight text-white">Cloud security posture, mapped to ISO 27001.</p>
             <p className="mt-4 text-base leading-relaxed text-slate-300">
               Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Risk-based criteria, live progress and client-ready reports.
             </p>
@@ -113,12 +125,25 @@ export function Login() {
         </div>
       </div>
 
-      <div className="flex items-center justify-center p-8">
+      <div className="flex items-center justify-center px-4 py-10 sm:p-8">
         <div className="w-full max-w-sm">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h2>
+          {/* Compact branding for small screens, where the left panel is hidden. */}
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-brand-600 shadow-md shadow-brand-600/30">
+              <ShieldCheck className="size-5 text-white" aria-hidden />
+            </div>
+            <span className="text-base font-semibold text-slate-900">Security QuickScan</span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h1>
           <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>
 
-          {params.get('signedOut') && !error && (
+          {expired && (
+            <Alert tone="info" className="mt-6">
+              Your session has expired, please sign in again.
+            </Alert>
+          )}
+
+          {signedOut && !error && (
             <Alert tone="success" className="mt-6">
               You have been signed out.
             </Alert>
@@ -139,7 +164,15 @@ export function Login() {
           {cfg.data?.entra !== false && (
             <a
               href="/api/auth/login"
-              className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm ring-1 ring-slate-300 transition hover:bg-slate-50"
+              onClick={() => {
+                // The SSO callback always lands on "/"; the layout picks this up and continues to the original page.
+                try {
+                  if (from && from !== '/') sessionStorage.setItem('qs_return_to', from);
+                } catch {
+                  /* storage unavailable */
+                }
+              }}
+              className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm ring-1 ring-slate-300 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
             >
               <MicrosoftLogo />
               Sign in with Microsoft
@@ -166,15 +199,19 @@ export function Login() {
                   Enter demo
                 </Button>
               </div>
-              {pinErr && <p className="mt-2 text-xs text-red-700">{pinErr}</p>}
+              {pinErr && (
+                <p role="alert" className="mt-2 text-xs text-red-700">
+                  {pinErr}
+                </p>
+              )}
             </form>
           )}
 
           {cfg.data?.breakglass && (
             <div className="mt-8 border-t border-slate-200 pt-6">
               {!showBg ? (
-                <button className="flex items-center gap-2 text-xs font-medium text-slate-500 hover:text-slate-700" onClick={() => setShowBg(true)}>
-                  <KeyRound className="size-3.5" /> Emergency access (break glass)
+                <button type="button" className="flex items-center gap-2 rounded text-xs font-medium text-slate-500 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={() => setShowBg(true)}>
+                  <KeyRound className="size-3.5" aria-hidden /> Emergency access (break glass)
                 </button>
               ) : (
                 <form onSubmit={submit} className="space-y-4">
@@ -188,7 +225,11 @@ export function Login() {
                   <Field label="Authenticator code">
                     <Input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} value={form.totp} onChange={(e) => setForm({ ...form, totp: e.target.value.replace(/\D/g, '') })} required />
                   </Field>
-                  {err && <Alert tone="error">{err}</Alert>}
+                  {err && (
+                    <div role="alert">
+                      <Alert tone="error">{err}</Alert>
+                    </div>
+                  )}
                   <Button type="submit" className="w-full" loading={busy} icon={<Lock className="size-4" />}>
                     Sign in
                   </Button>

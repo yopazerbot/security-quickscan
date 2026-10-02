@@ -1,13 +1,14 @@
 import { CHECKS_BY_ID, DOMAIN_LABELS, ISO_BY_ID, PROVIDER_LABELS, PROVIDER_SHORT, isoSort, type Provider } from '@qs/shared';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { RotateCcw, Search } from 'lucide-react';
+import { RotateCcw, Search, SearchX } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { RISK_STYLE } from '../../components/ContextForm';
 import { ProviderIcon } from '../../components/ProviderIcon';
-import { Alert, Button, Card, Input, PageLoader, SeverityBadge, Toggle } from '../../components/ui';
+import { AsyncButton } from '../../components/feedback';
+import { Button, Card, EmptyState, ErrorState, Input, PageLoader, SeverityBadge, Toggle } from '../../components/ui';
 import { get, put } from '../../lib/api';
-import { WizardFooter, type StepProps } from './ScanWizard';
+import { WizardFooter, useStepSave, type StepProps } from './ScanWizard';
 
 interface Crit {
   checkId: string;
@@ -16,14 +17,13 @@ interface Crit {
   defaultIncluded: boolean;
 }
 
-export function StepCriteria({ scan, next, back }: StepProps) {
+export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProps) {
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ['criteria', scan.id], queryFn: () => get<Crit[]>(`/api/scans/${scan.id}/criteria`) });
   const [items, setItems] = useState<Crit[]>([]);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<Provider | 'all'>('all');
   const [view, setView] = useState<'provider' | 'iso'>('provider');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (q.data) setItems(q.data);
@@ -51,19 +51,14 @@ export function StepCriteria({ scan, next, back }: StepProps) {
     return keys.map((k) => ({ key: k, rows: map.get(k)! }));
   }, [filtered, view]);
 
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await put(`/api/scans/${scan.id}/criteria`, { items: items.map(({ checkId, included, reason }) => ({ checkId, included, reason })) });
-      next();
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Saved by the wizard before it leaves this step; errors become a toast and keep the user here.
+  useStepSave(saveRef, async () => {
+    if (!q.data || JSON.stringify(items) === JSON.stringify(q.data)) return;
+    await put(`/api/scans/${scan.id}/criteria`, { items: items.map(({ checkId, included, reason }) => ({ checkId, included, reason })) });
+    qc.setQueryData(['criteria', scan.id], items);
+  });
 
+  if (q.isError && !q.data) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   if (q.isLoading) return <PageLoader />;
   const risk = RISK_STYLE[scan.riskProfile.level as keyof typeof RISK_STYLE];
 
@@ -93,27 +88,37 @@ export function StepCriteria({ scan, next, back }: StepProps) {
         title="Evaluation criteria"
         subtitle="Every check maps to an ISO/IEC 27001:2022 Annex A control. Exclude checks that are out of scope and record why; exclusions are listed in the report."
         actions={
-          <Button variant="ghost" size="sm" icon={<RotateCcw className="size-3.5" />} onClick={() => setItems((xs) => xs.map((x) => ({ ...x, included: x.defaultIncluded, reason: '' })))}>
+          <AsyncButton
+            variant="ghost"
+            size="sm"
+            icon={<RotateCcw className="size-3.5" />}
+            onClick={() => setItems((xs) => xs.map((x) => ({ ...x, included: x.defaultIncluded, reason: '' })))}
+            confirm={{
+              title: 'Reset to defaults',
+              body: 'Every check goes back to the default for this risk profile and all exclusion reasons are cleared. The change is saved when you continue.',
+              confirmLabel: 'Reset',
+            }}
+          >
             Reset to defaults
-          </Button>
+          </AsyncButton>
         }
       >
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative w-64">
-            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" />
-            <Input placeholder="Search title or control (e.g. 8.5)" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" aria-hidden />
+            <Input type="search" aria-label="Search criteria" placeholder="Search title or control (e.g. 8.5)" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <div className="flex rounded-lg bg-slate-100 p-0.5 text-sm">
+          <div role="group" aria-label="Filter by platform" className="flex rounded-lg bg-slate-100 p-0.5 text-sm">
             {(['all', ...providers] as const).map((p) => (
-              <button key={p} onClick={() => setTab(p)} className={clsx('flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium', tab === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
+              <button key={p} type="button" aria-pressed={tab === p} onClick={() => setTab(p)} className={clsx('flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium', tab === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
                 {p !== 'all' && <ProviderIcon provider={p} className="size-3.5" />}
                 {p === 'all' ? 'All' : PROVIDER_SHORT[p]}
               </button>
             ))}
           </div>
-          <div className="ml-auto flex rounded-lg bg-slate-100 p-0.5 text-sm">
+          <div role="group" aria-label="Group by" className="ml-auto flex rounded-lg bg-slate-100 p-0.5 text-sm">
             {(['provider', 'iso'] as const).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={clsx('rounded-md px-3 py-1.5 font-medium', view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={clsx('rounded-md px-3 py-1.5 font-medium', view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
                 {v === 'provider' ? 'By platform' : 'By ISO control'}
               </button>
             ))}
@@ -121,6 +126,19 @@ export function StepCriteria({ scan, next, back }: StepProps) {
         </div>
 
         <div className="-mx-6 -mb-6">
+          {!filtered.length && (
+            <EmptyState
+              icon={<SearchX className="size-6" />}
+              title="No criteria match"
+              action={
+                <Button variant="secondary" size="sm" onClick={() => { setSearch(''); setTab('all'); }}>
+                  Clear filters
+                </Button>
+              }
+            >
+              Nothing matches {search ? <>&ldquo;{search}&rdquo;</> : 'this filter'}. Try another title or control number.
+            </EmptyState>
+          )}
           {groups.map((g) => (
             <div key={g.key}>
               <div className="flex items-center gap-2 border-y border-slate-100 bg-slate-50 px-6 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -153,7 +171,7 @@ export function StepCriteria({ scan, next, back }: StepProps) {
                           </div>
                           <p className="mt-0.5 text-xs text-slate-500">{m.description}</p>
                           {!i.included && (
-                            <Input className="mt-2 max-w-lg py-1.5 text-xs" placeholder="Reason for exclusion (shown in the report)" value={i.reason} maxLength={1000} onChange={(e) => update(i.checkId, { reason: e.target.value })} />
+                            <Input className="mt-2 max-w-lg py-1.5 text-xs" aria-label={`Reason for excluding ${m.title}`} placeholder="Reason for exclusion (shown in the report)" value={i.reason} maxLength={1000} onChange={(e) => update(i.checkId, { reason: e.target.value })} />
                           )}
                         </div>
                         <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex">
@@ -175,8 +193,14 @@ export function StepCriteria({ scan, next, back }: StepProps) {
           ))}
         </div>
       </Card>
-      {err && <Alert tone="error" className="mt-4">{err}</Alert>}
-      <WizardFooter onBack={back} onNext={save} loading={busy} disabled={!included.length} nextLabel="Save and continue" />
+      <WizardFooter
+        onBack={back}
+        onNext={next}
+        loading={navigating}
+        disabled={!included.length}
+        nextLabel="Save and continue"
+        extra={!included.length && <span className="text-xs text-slate-500">Include at least one check.</span>}
+      />
     </>
   );
 }

@@ -1,7 +1,7 @@
 import { computeRiskProfile, DOMAIN_LABELS, INDUSTRIES, REGULATIONS, type CustomerContext, type RiskLevel } from '@qs/shared';
 import clsx from 'clsx';
 import { Gauge } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Field, Select, Textarea } from './ui';
 
 /** Human-readable labels for questionnaire answers (used outside the form, e.g. the customer page). */
@@ -21,9 +21,10 @@ function Choice<T extends string>({ value, onChange, options, disabled }: { valu
           key={v}
           type="button"
           disabled={disabled}
+          aria-pressed={value === v}
           onClick={() => onChange(v)}
           className={clsx(
-            'rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition',
+            'rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60',
             value === v ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:ring-slate-300',
           )}
         >
@@ -39,11 +40,18 @@ function YesNo({ value, onChange, disabled }: { value: boolean; onChange(v: bool
 }
 
 function Q({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const id = useId();
   return (
-    <div className="py-4">
+    <div role="group" aria-labelledby={`${id}-label`} aria-describedby={hint ? `${id}-hint` : undefined} className="py-4">
       <div className="mb-2">
-        <div className="text-sm font-medium text-slate-800">{label}</div>
-        {hint && <div className="text-xs text-slate-500">{hint}</div>}
+        <div id={`${id}-label`} className="text-sm font-medium text-slate-800">
+          {label}
+        </div>
+        {hint && (
+          <div id={`${id}-hint`} className="text-xs text-slate-500">
+            {hint}
+          </div>
+        )}
       </div>
       {children}
     </div>
@@ -81,9 +89,10 @@ export function ContextForm({ value, onChange, disabled }: { value: CustomerCont
                 key={id}
                 type="button"
                 disabled={disabled}
+                aria-pressed={on}
                 onClick={() => set('regulations', on ? value.regulations.filter((r) => r !== id) : [...value.regulations, id])}
                 className={clsx(
-                  'rounded-full px-3 py-1 text-xs font-medium ring-1 transition',
+                  'rounded-full px-3 py-1 text-xs font-medium ring-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60',
                   on ? 'bg-brand-50 text-brand-700 ring-brand-300' : 'bg-white text-slate-600 ring-slate-200 hover:ring-slate-300',
                 )}
               >

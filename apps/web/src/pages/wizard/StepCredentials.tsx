@@ -3,11 +3,12 @@ import clsx from 'clsx';
 import { BookOpen, CheckCircle2, ChevronDown, ExternalLink, KeyRound, Link2, Lock, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { ProviderIcon } from '../../components/ProviderIcon';
+import { AsyncButton, useAction, useToast } from '../../components/feedback';
 import { Alert, Button, Card, CopyButton, Field, Input } from '../../components/ui';
 import { del, patch, post, put } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
 import { AwsKeysGuide, AwsRoleGuide, GithubGuide, MsAppGuide, MsConsentGuide } from './guidance';
-import { WizardFooter, type StepProps, type WizardScan, type WizardSystem } from './ScanWizard';
+import { WizardFooter, systemReady, type StepProps, type WizardScan, type WizardSystem } from './ScanWizard';
 import { authModes, usePlatform } from './StepScope';
 
 const RETENTION = [
@@ -17,35 +18,64 @@ const RETENTION = [
 ] as const;
 
 function Retention({ scan, refresh }: { scan: WizardScan; refresh(): Promise<unknown> }) {
-  const [days, setDays] = useState(scan.retentionDays ?? 30);
-  const save = async (mode: string, d = days) => {
-    await patch(`/api/scans/${scan.id}`, { retention: { mode, days: mode === 'days' ? d : undefined } });
-    await refresh();
+  const run = useAction();
+  const [mode, setMode] = useState(scan.retentionMode);
+  const [days, setDays] = useState(String(scan.retentionDays ?? 30));
+  const save = async (m: WizardScan['retentionMode'], d?: number) => {
+    const prev = mode;
+    setMode(m);
+    const ok = await run(async () => {
+      await patch(`/api/scans/${scan.id}`, { retention: { mode: m, days: m === 'days' ? (d ?? scan.retentionDays ?? 30) : undefined } });
+      await refresh();
+    });
+    if (!ok) setMode(prev);
+  };
+  const commitDays = () => {
+    const n = Math.min(365, Math.max(1, Math.round(Number(days)) || 1));
+    setDays(String(n));
+    if (n !== scan.retentionDays) void save('days', n);
   };
   return (
     <Card title="Credential retention" subtitle="Choose how long secrets for this scan are kept. Secrets are always encrypted (AES-256-GCM envelope encryption) and never shown again.">
-      <div className="grid gap-3 md:grid-cols-3">
+      <div role="radiogroup" aria-label="Credential retention" className="grid gap-3 md:grid-cols-3">
         {RETENTION.map((r) => (
-          <button
+          <label
             key={r.id}
-            type="button"
-            onClick={() => save(r.id)}
-            className={clsx('rounded-xl p-4 text-left ring-1 transition', scan.retentionMode === r.id ? 'bg-brand-50 ring-2 ring-brand-500' : 'bg-white ring-slate-200 hover:ring-slate-300')}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-900">{r.title}</span>
-              {'badge' in r && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">{r.badge}</span>}
-            </div>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">{r.desc}</p>
-            {r.id === 'days' && scan.retentionMode === 'days' && (
-              <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                <Input type="number" min={1} max={365} value={days} className="w-20" onChange={(e) => setDays(Number(e.target.value))} onBlur={() => save('days', days)} />
-                <span className="text-xs text-slate-500">days</span>
-              </div>
+            className={clsx(
+              'cursor-pointer rounded-xl p-4 text-left ring-1 transition focus-within:ring-2 focus-within:ring-brand-500',
+              mode === r.id ? 'bg-brand-50 ring-2 ring-brand-500' : 'bg-white ring-slate-200 hover:ring-slate-300',
             )}
-          </button>
+          >
+            <input type="radio" name={`retention-${scan.id}`} value={r.id} checked={mode === r.id} onChange={() => void save(r.id)} className="sr-only" />
+            <span className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span aria-hidden className={clsx('size-4 shrink-0 rounded-full border-4', mode === r.id ? 'border-brand-600 bg-white' : 'border-slate-200')} />
+                {r.title}
+              </span>
+              {'badge' in r && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">{r.badge}</span>}
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-500">{r.desc}</span>
+          </label>
         ))}
       </div>
+      {mode === 'days' && (
+        <div className="mt-4 flex items-center gap-2">
+          <label htmlFor={`retention-days-${scan.id}`} className="text-sm font-medium text-slate-700">Keep secrets for</label>
+          <Input
+            id={`retention-days-${scan.id}`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={365}
+            value={days}
+            className="w-24"
+            onChange={(e) => setDays(e.target.value)}
+            onBlur={commitDays}
+            onKeyDown={(e) => e.key === 'Enter' && commitDays()}
+          />
+          <span className="text-sm text-slate-500">days (1 to 365)</span>
+        </div>
+      )}
     </Card>
   );
 }
@@ -72,18 +102,17 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
   const [clientId, setClientId] = useState(s.config.clientId ?? '');
   const [secret, setSecret] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const toast = useToast();
   const [consentUrl, setConsentUrl] = useState<string | null>(null);
   const base = `/api/scans/${scan.id}/systems/${s.id}`;
   const isMs = s.provider === 'm365' || s.provider === 'azure';
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
-    setErr(null);
     try {
       await fn();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'The action failed.');
     } finally {
       setBusy(false);
       await refresh();
@@ -107,10 +136,10 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
       await post(`${base}/test`);
     });
 
-  const secretInput = (key: string, label: string, opts: { placeholder?: string; optional?: boolean; multiline?: boolean } = {}) => (
+  const secretInput = (key: string, label: string, opts: { placeholder?: string; optional?: boolean; plain?: boolean } = {}) => (
     <Field label={<>{label}{opts.optional && <span className="font-normal text-slate-400"> (optional)</span>}</>}>
       <Input
-        type="password"
+        type={opts.plain ? 'text' : 'password'}
         autoComplete="off"
         spellCheck={false}
         placeholder={s.credential ? 'Stored (enter a new value to replace)' : opts.placeholder}
@@ -143,7 +172,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
     guide = <AwsKeysGuide />;
     form = (
       <>
-        {secretInput('accessKeyId', 'Access key ID', { placeholder: 'AKIA... or ASIA...' })}
+        {secretInput('accessKeyId', 'Access key ID', { placeholder: 'AKIA... or ASIA...', plain: true })}
         {secretInput('secretAccessKey', 'Secret access key')}
         {secretInput('sessionToken', 'Session token', { optional: true })}
       </>
@@ -169,7 +198,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
         <Button
           variant="secondary"
           icon={<Link2 className="size-4" />}
-          disabled={!s.config.tenantId}
+          disabled={!s.config.tenantId || busy}
           onClick={() =>
             run(async () => {
               const r = await post<{ url: string }>(`${base}/consent-url`);
@@ -223,7 +252,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
       <div className={clsx('grid gap-0', guide && 'lg:grid-cols-5')}>
         {guide && (
           <div className="border-b border-slate-100 p-6 lg:col-span-3 lg:border-b-0 lg:border-r">
-            <button className="mb-4 flex w-full items-center gap-2 text-sm font-semibold text-slate-800" onClick={() => setShowGuide(!showGuide)}>
+            <button type="button" aria-expanded={showGuide} className="mb-4 flex w-full items-center gap-2 text-sm font-semibold text-slate-800" onClick={() => setShowGuide(!showGuide)}>
               <BookOpen className="size-4 text-brand-600" /> How to get access
               <ChevronDown className={clsx('ml-auto size-4 text-slate-400 transition', showGuide && 'rotate-180')} />
             </button>
@@ -239,9 +268,25 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
                 Stored encrypted: {s.credential.hint}
                 {s.credential.expiresAt && <> · auto-delete {fmtDateTime(s.credential.expiresAt)}</>}
               </span>
-              <button title="Delete secret now" className="rounded p-1 hover:bg-emerald-100" onClick={() => run(() => del(`${base}/credentials`))}>
-                <Trash2 className="size-3.5" />
-              </button>
+              <AsyncButton
+                variant="ghost"
+                size="sm"
+                className="px-1.5 py-1 text-emerald-800 hover:bg-emerald-100"
+                title="Delete secret now"
+                aria-label={`Delete stored secret for ${s.label}`}
+                icon={<Trash2 className="size-3.5" />}
+                onClick={async () => {
+                  await del(`${base}/credentials`);
+                  await refresh();
+                }}
+                success="Stored secret deleted."
+                confirm={{
+                  title: 'Delete stored secret',
+                  body: <>The stored secret for <strong>{s.label}</strong> is deleted now. You need to enter it again before the connection can be tested or the scan can run.</>,
+                  confirmLabel: 'Delete secret',
+                  danger: true,
+                }}
+              />
             </div>
           )}
           {s.connection && (
@@ -250,7 +295,6 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
               <div className="mt-1 text-[11px] opacity-70">Tested {fmtDateTime(s.connection.checkedAt)}</div>
             </Alert>
           )}
-          {err && <Alert tone="error">{err}</Alert>}
           <Button className="w-full" onClick={saveAndTest} loading={busy} icon={mode === 'demo' ? <ShieldCheck className="size-4" /> : <KeyRound className="size-4" />}>
             {s.needsSecret && Object.values(secret).some(Boolean) ? 'Save securely and test' : 'Test connection'}
           </Button>
@@ -260,19 +304,28 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
   );
 }
 
-export function StepCredentials({ scan, refresh, next, back }: StepProps) {
-  const ready = scan.systems.every((s) => s.config.authMode === 'demo' || s.connection?.ok);
+export function StepCredentials({ scan, refresh, next, back, navigating }: StepProps) {
+  const pending = scan.systems.filter((s) => !systemReady(s));
+  const ready = scan.systems.length > 0 && !pending.length;
   return (
     <div className="space-y-6">
       <Retention scan={scan} refresh={refresh} />
+      {!scan.systems.length && <Alert tone="warn">No systems in scope yet. Go back to the Scope step and add at least one system.</Alert>}
       {scan.systems.map((s) => (
         <SystemAccess key={s.id} scan={scan} s={s} refresh={refresh} />
       ))}
       <WizardFooter
         onBack={back}
         onNext={next}
+        loading={navigating}
         disabled={!ready}
-        extra={!ready && <span className="text-xs text-slate-500">Every system needs a successful connection test.</span>}
+        extra={
+          !ready && (
+            <span className="truncate text-xs text-slate-600" title={pending.map((s) => s.label).join(', ')}>
+              {scan.systems.length ? <>Still to test: <span className="font-medium text-slate-800">{pending.map((s) => s.label).join(', ')}</span></> : 'Add at least one system first.'}
+            </span>
+          )
+        }
       />
     </div>
   );

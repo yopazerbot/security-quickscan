@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { Building2, LayoutDashboard, LogOut, Menu, ScrollText, Settings, ShieldAlert, ShieldCheck, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../lib/auth';
 import { SOURCE_URL } from '../lib/constants';
 
@@ -51,8 +51,20 @@ export function Layout() {
   const { me, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
+  const navigate = useNavigate();
   // Close the mobile menu after navigating.
   useEffect(() => setOpen(false), [loc.pathname]);
+  // After Microsoft sign-in, continue to the page that asked for the login.
+  useEffect(() => {
+    let to: string | null = null;
+    try {
+      to = sessionStorage.getItem('qs_return_to');
+      sessionStorage.removeItem('qs_return_to');
+    } catch {
+      /* storage unavailable */
+    }
+    if (to && to.startsWith('/') && !to.startsWith('//') && !to.startsWith('/\\') && !to.startsWith('/login')) navigate(to, { replace: true });
+  }, [navigate]);
   if (!me) return null;
   const initials = me.user.name
     .split(/\s+/)

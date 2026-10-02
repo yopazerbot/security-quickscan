@@ -1,12 +1,16 @@
 import { PROVIDER_LABELS } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
-import { FileCheck2, Rocket, ShieldCheck, Upload } from 'lucide-react';
+import clsx from 'clsx';
+import { CircleDashed, FileCheck2, FlaskConical, Loader2, Rocket, ShieldCheck, Upload, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ProviderIcon } from '../../components/ProviderIcon';
-import { Alert, Button, Card, Field, Input } from '../../components/ui';
+import { useAction, useToast } from '../../components/feedback';
+import { Alert, Card, Field, Input, buttonClass } from '../../components/ui';
 import { fileToBase64, get, patch, post, put } from '../../lib/api';
-import { WizardFooter, type StepProps } from './ScanWizard';
+import { useAuth } from '../../lib/auth';
+import { fmtDateTime } from '../../lib/format';
+import { WizardFooter, systemReady, useStepSave, type StepProps, type WizardSystem } from './ScanWizard';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const plusDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
@@ -17,8 +21,24 @@ const RETENTION_LABEL: Record<string, string> = {
   manual: 'Kept until manually deleted',
 };
 
-export function StepLaunch({ scan, refresh, back }: StepProps) {
+const MAX_DOC_BYTES = 5 * 1024 * 1024;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function SystemStatus({ s }: { s: WizardSystem }) {
+  if (s.config.authMode === 'demo') return <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700"><FlaskConical className="size-3.5" aria-hidden /> Simulated</span>;
+  if (!s.connection) return <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500"><CircleDashed className="size-3.5" aria-hidden /> Not tested</span>;
+  return s.connection.ok ? (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700" title={`Tested ${fmtDateTime(s.connection.checkedAt)}`}><ShieldCheck className="size-3.5" aria-hidden /> Connected</span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700" title={s.connection.message}><XCircle className="size-3.5" aria-hidden /> Test failed</span>
+  );
+}
+
+export function StepLaunch({ scan, refresh, back, saveRef, navigating }: StepProps) {
   const nav = useNavigate();
+  const run = useAction();
+  const toast = useToast();
+  const { me } = useAuth();
   const crit = useQuery({ queryKey: ['criteria', scan.id], queryFn: () => get<any[]>(`/api/scans/${scan.id}/criteria`) });
   const a = scan.authorization ?? {};
   const [form, setForm] = useState({
@@ -31,35 +51,52 @@ export function StepLaunch({ scan, refresh, back }: StepProps) {
   });
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const set = (k: keyof typeof form, v: any) => setForm({ ...form, [k]: v });
   const included = (crit.data ?? []).filter((c) => c.included).length;
 
+  const dateError = form.authorizedOn && form.validUntil && form.validUntil < form.authorizedOn ? '"Valid until" must be on or after the authorisation date.' : undefined;
+  const missing = [
+    !form.authorizerName.trim() && 'name',
+    !form.authorizerRole.trim() && 'role',
+    !EMAIL_RE.test(form.authorizerEmail.trim()) && (form.authorizerEmail.trim() ? 'a valid e-mail' : 'e-mail'),
+    !form.authorizedOn && 'authorisation date',
+    !form.validUntil && 'end date',
+    !form.confirmed && 'confirmation',
+  ].filter(Boolean) as string[];
+  const complete = !missing.length && !dateError;
+  const unreadySystems = scan.systems.filter((s) => !systemReady(s));
+
+  // The server only accepts a complete authorisation, so an unfinished form is kept local when leaving the step.
+  useStepSave(saveRef, async () => {
+    if (!complete || (Object.keys(form) as (keyof typeof form)[]).every((k) => form[k] === a[k])) return;
+    await patch(`/api/scans/${scan.id}`, { authorization: form });
+    await refresh();
+  });
+
   const start = async () => {
     setBusy(true);
-    setErr(null);
-    try {
+    const ok = await run(async () => {
       await patch(`/api/scans/${scan.id}`, { authorization: form });
       await post(`/api/scans/${scan.id}/start`);
-      nav(`/scans/${scan.id}/progress`);
-    } catch (e: any) {
-      setErr(e.message);
-      setBusy(false);
-    }
+    });
+    if (ok) nav(`/scans/${scan.id}/progress`);
+    else setBusy(false);
   };
 
-  const upload = async (file?: File) => {
+  const upload = async (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = '';
     if (!file) return;
+    if (file.size > MAX_DOC_BYTES) {
+      toast.error(`${file.name} is too large. The maximum is 5 MB.`);
+      return;
+    }
     setUploading(true);
-    setErr(null);
-    try {
+    await run(async () => {
       await put(`/api/scans/${scan.id}/authorization-doc`, { filename: file.name, contentBase64: await fileToBase64(file) });
       await refresh();
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setUploading(false);
-    }
+    }, 'Authorisation letter uploaded.');
+    setUploading(false);
   };
 
   return (
@@ -79,25 +116,34 @@ export function StepLaunch({ scan, refresh, back }: StepProps) {
             <Field label="Authorised on">
               <Input type="date" value={form.authorizedOn} onChange={(e) => set('authorizedOn', e.target.value)} />
             </Field>
-            <Field label="Valid until">
-              <Input type="date" value={form.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
+            <Field label="Valid until" error={dateError}>
+              <Input type="date" value={form.validUntil} min={form.authorizedOn || undefined} aria-invalid={Boolean(dateError)} onChange={(e) => set('validUntil', e.target.value)} />
             </Field>
           </div>
-          <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-                {scan.hasAuthorizationDoc ? <FileCheck2 className="size-5 text-emerald-600" /> : <Upload className="size-5" />}
+          {!me?.user.isDemo && (
+            <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                  {scan.hasAuthorizationDoc ? <FileCheck2 className="size-5 text-emerald-600" aria-hidden /> : <Upload className="size-5" aria-hidden />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-slate-800">{scan.hasAuthorizationDoc ? scan.authorizationDocName : 'Signed authorisation letter (optional)'}</div>
+                  <div className="text-xs text-slate-500">PDF, max 5 MB. Stored encrypted.</div>
+                </div>
+                <label
+                  className={clsx(
+                    buttonClass('secondary', 'sm'),
+                    'focus-within:ring-2 focus-within:ring-brand-500 focus-within:ring-offset-2',
+                    uploading ? 'pointer-events-none opacity-50' : 'cursor-pointer',
+                  )}
+                >
+                  {uploading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Upload className="size-3.5" aria-hidden />}
+                  {uploading ? 'Uploading...' : scan.hasAuthorizationDoc ? 'Replace PDF' : 'Upload PDF'}
+                  <input type="file" accept="application/pdf,.pdf" className="sr-only" disabled={uploading} onChange={(e) => void upload(e.currentTarget)} />
+                </label>
               </div>
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-800">{scan.hasAuthorizationDoc ? scan.authorizationDocName : 'Signed authorisation letter (optional)'}</div>
-                <div className="text-xs text-slate-500">PDF, max 5 MB. Stored encrypted.</div>
-              </div>
-              <label className="cursor-pointer rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50">
-                {uploading ? 'Uploading...' : scan.hasAuthorizationDoc ? 'Replace' : 'Upload PDF'}
-                <input type="file" accept="application/pdf" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
-              </label>
             </div>
-          </div>
+          )}
           <label className="mt-5 flex items-start gap-3 rounded-xl bg-brand-50 p-4 text-sm text-brand-950 ring-1 ring-brand-100">
             <input type="checkbox" className="mt-0.5 size-4 rounded border-slate-300 text-brand-600" checked={form.confirmed} onChange={(e) => set('confirmed', e.target.checked)} />
             <span>I confirm that the customer has authorised this read-only security assessment of the systems listed, and that the access granted is limited to what is needed.</span>
@@ -114,7 +160,7 @@ export function StepLaunch({ scan, refresh, back }: StepProps) {
                     <div className="truncate text-sm font-medium text-slate-800">{s.label}</div>
                     <div className="text-xs text-slate-500">{PROVIDER_LABELS[s.provider]}</div>
                   </div>
-                  <ShieldCheck className="size-4 text-emerald-500" />
+                  <SystemStatus s={s} />
                 </li>
               ))}
             </ul>
@@ -133,19 +179,29 @@ export function StepLaunch({ scan, refresh, back }: StepProps) {
               </div>
             </dl>
           </Card>
+          {unreadySystems.length > 0 && (
+            <Alert tone="warn" title="Connection not verified">
+              Test the connection for {unreadySystems.map((s) => s.label).join(', ')} in the Access step before starting.
+            </Alert>
+          )}
           <Alert tone="info" title="What happens next">
             The scanner connects with read-only access, runs each check and streams results live. Nothing is changed in the customer environments.
           </Alert>
         </div>
       </div>
-      {err && <Alert tone="error" className="mt-4">{err}</Alert>}
       <WizardFooter
-        onBack={back}
+        onBack={navigating || busy ? undefined : back}
         onNext={start}
         loading={busy}
-        disabled={!form.confirmed || !form.authorizerName || !form.authorizerEmail || !form.authorizerRole}
+        disabled={!complete || unreadySystems.length > 0 || navigating}
         nextLabel="Start scan"
-        extra={<Rocket className="size-5 text-brand-500" />}
+        extra={
+          complete ? (
+            <Rocket className="size-5 text-brand-500" aria-hidden />
+          ) : (
+            <span className="text-xs text-slate-600">{missing.length ? <>Missing: <span className="font-medium text-slate-800">{missing.join(', ')}</span></> : 'Fix the authorisation dates.'}</span>
+          )
+        }
       />
     </>
   );

@@ -128,7 +128,12 @@ function summaryPage(doc: Doc, m: ReportModel) {
       (crit + high > 0
         ? `${crit} critical and ${high} high severity issue(s) need prompt attention.`
         : 'No critical or high severity failures were found.') +
-      ` Based on the customer context the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.`,
+      ` Based on the customer context the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
+      (m.scan.status === 'failed'
+        ? ' Note: this scan did not complete, so the results are partial and the score may not reflect the full environment.'
+        : m.scan.status === 'cancelled'
+          ? ' Note: this scan was cancelled before it completed, so the results are partial.'
+          : ''),
   );
 
   // KPI tiles

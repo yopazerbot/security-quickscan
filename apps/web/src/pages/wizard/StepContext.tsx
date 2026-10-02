@@ -1,28 +1,18 @@
 import { DEFAULT_CONTEXT, type CustomerContext } from '@qs/shared';
 import { useState } from 'react';
 import { ContextForm, RiskProfilePanel } from '../../components/ContextForm';
-import { Alert, Card } from '../../components/ui';
+import { Card } from '../../components/ui';
 import { patch } from '../../lib/api';
-import { WizardFooter, type StepProps } from './ScanWizard';
+import { WizardFooter, useStepSave, type StepProps } from './ScanWizard';
 
-export function StepContext({ scan, refresh, next }: StepProps) {
+export function StepContext({ scan, refresh, next, saveRef, navigating }: StepProps) {
   const [ctx, setCtx] = useState<CustomerContext>({ ...DEFAULT_CONTEXT, ...scan.context });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await patch(`/api/scans/${scan.id}`, { context: ctx });
-      await refresh();
-      next();
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Errors propagate to the wizard, which shows a toast and stays on this step.
+  useStepSave(saveRef, async () => {
+    await patch(`/api/scans/${scan.id}`, { context: ctx });
+    await refresh();
+  });
 
   return (
     <>
@@ -40,8 +30,7 @@ export function StepContext({ scan, refresh, next }: StepProps) {
           </div>
         </div>
       </div>
-      {err && <Alert tone="error" className="mt-4">{err}</Alert>}
-      <WizardFooter onNext={save} loading={busy} nextLabel="Save and continue" />
+      <WizardFooter onNext={next} loading={navigating} nextLabel="Save and continue" />
     </>
   );
 }

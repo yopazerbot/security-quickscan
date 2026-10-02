@@ -1,8 +1,9 @@
 import type { Branding } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, ImageUp, RotateCcw, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Field, Input, Modal, Toggle, PageHeader, PageLoader, Select, Textarea } from '../components/ui';
+import { useEffect, useId, useRef, useState } from 'react';
+import { AsyncButton, useToast } from '../components/feedback';
+import { Alert, Button, Card, ErrorState, Field, Input, Modal, Toggle, PageHeader, PageLoader, Select, Textarea, Spinner } from '../components/ui';
 import { del, fileToBase64, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
@@ -12,6 +13,10 @@ export function SettingsPage() {
   const [form, setForm] = useState<Branding | null>(null);
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [logoKey, setLogoKey] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const fileId = useId();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
   const { me } = useAuth();
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -21,34 +26,52 @@ export function SettingsPage() {
       setForm(b);
     }
   }, [q.data]);
+  if (q.isError && !form) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (!form) return <PageLoader />;
   const set = (k: keyof Branding, v: string) => setForm({ ...form, [k]: v });
 
+  // Errors are reported by AsyncButton as a toast.
   const save = async () => {
-    setMsg(null);
-    try {
-      await put('/api/settings/branding', form);
-      setMsg({ tone: 'success', text: 'Saved. New reports use these settings.' });
-      await qc.invalidateQueries({ queryKey: ['branding'] });
-    } catch (e: any) {
-      setMsg({ tone: 'error', text: e.message });
-    }
+    await put('/api/settings/branding', form);
+    await qc.invalidateQueries({ queryKey: ['branding'] });
   };
-  const uploadLogo = async (f?: File) => {
+  const uploadLogo = async (input: HTMLInputElement) => {
+    const f = input.files?.[0];
     if (!f) return;
+    setUploading(true);
     try {
       await put('/api/settings/logo', { contentBase64: await fileToBase64(f) });
       await qc.invalidateQueries({ queryKey: ['branding'] });
       setLogoKey((k) => k + 1);
-    } catch (e: any) {
-      setMsg({ tone: 'error', text: e.message });
+      toast.success('Logo uploaded.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'The logo could not be uploaded.');
+    } finally {
+      // Allows selecting the same file again (e.g. after fixing it).
+      input.value = '';
+      setUploading(false);
     }
   };
+  const hasLogo = q.data?.hasLogo;
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="Branding and defaults for client-facing reports." actions={<Button onClick={save}>Save settings</Button>} />
-      {msg && <Alert tone={msg.tone} className="mb-6">{msg.text}</Alert>}
+      <PageHeader
+        title="Settings"
+        subtitle="Branding and defaults for client-facing reports."
+        actions={
+          <AsyncButton onClick={save} success="Saved. New reports use these settings.">
+            Save settings
+          </AsyncButton>
+        }
+      />
+      {msg && (
+        <div role={msg.tone === 'error' ? 'alert' : 'status'}>
+          <Alert tone={msg.tone} className="mb-6">
+            {msg.text}
+          </Alert>
+        </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2" title="Report branding">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -74,14 +97,46 @@ export function SettingsPage() {
         </Card>
         <Card title="Logo" subtitle="PNG or JPEG, max 500 KB. Shown on the report cover.">
           <div className="flex h-32 items-center justify-center rounded-xl bg-slate-50 ring-1 ring-slate-200">
-            {q.data?.hasLogo ? <img key={logoKey} src={`/api/settings/logo?v=${logoKey}`} alt="Logo" className="max-h-24 max-w-[80%] object-contain" /> : <span className="text-sm text-slate-400">No logo</span>}
+            {uploading ? (
+              <Spinner />
+            ) : hasLogo ? (
+              <img key={logoKey} src={`/api/settings/logo?v=${logoKey}`} alt="Current report logo" className="max-h-24 max-w-[80%] object-contain" />
+            ) : (
+              <span className="text-sm text-slate-400">No logo</span>
+            )}
           </div>
-          <div className="mt-4 flex gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50">
-              <ImageUp className="size-4" /> Upload
-              <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+          <div className="mt-4 flex flex-wrap gap-2">
+            <input
+              ref={fileRef}
+              id={fileId}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="peer sr-only"
+              disabled={uploading}
+              onChange={(e) => void uploadLogo(e.currentTarget)}
+            />
+            <label
+              htmlFor={fileId}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500 peer-focus-visible:ring-offset-2 peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
+            >
+              <ImageUp className="size-4" aria-hidden /> {hasLogo ? 'Replace logo' : 'Upload logo'}
             </label>
-            {q.data?.hasLogo && <Button variant="ghost" icon={<Trash2 className="size-4" />} onClick={async () => { await del('/api/settings/logo'); await qc.invalidateQueries({ queryKey: ['branding'] }); }}>Remove</Button>}
+            {hasLogo && (
+              <AsyncButton
+                variant="ghost"
+                icon={<Trash2 className="size-4" aria-hidden />}
+                disabled={uploading}
+                success="Logo removed."
+                confirm={{ title: 'Remove logo?', body: 'New reports are generated without a logo on the cover. You can upload a logo again at any time.', confirmLabel: 'Remove logo', danger: true }}
+                onClick={async () => {
+                  await del('/api/settings/logo');
+                  await qc.invalidateQueries({ queryKey: ['branding'] });
+                  if (fileRef.current) fileRef.current.value = '';
+                }}
+              >
+                Remove
+              </AsyncButton>
+            )}
           </div>
           <div className="mt-6 rounded-xl p-4 text-white" style={{ backgroundColor: form.accentColor }}>
             <div className="text-xs opacity-80">{form.classification}</div>
@@ -106,15 +161,20 @@ export function SettingsPage() {
       )}
       <Modal
         open={confirmReset}
+        busy={resetting}
         onClose={() => setConfirmReset(false)}
         title="Reset demo data?"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setConfirmReset(false)}>Cancel</Button>
+            <Button variant="secondary" disabled={resetting} onClick={() => setConfirmReset(false)}>
+              Cancel
+            </Button>
             <Button
+              variant="danger"
               loading={resetting}
               onClick={async () => {
                 setResetting(true);
+                setMsg(null);
                 try {
                   await post('/api/admin/demo/reset');
                   await qc.invalidateQueries();
@@ -144,7 +204,19 @@ function DemoLoginSettings() {
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  if (!q.data) return null;
+  const descId = useId();
+  if (q.isError)
+    return (
+      <div className="mt-6 border-t border-slate-100 pt-6">
+        <ErrorState error={q.error} onRetry={() => q.refetch()} className="py-8" />
+      </div>
+    );
+  if (!q.data)
+    return (
+      <div className="mt-6 flex justify-center border-t border-slate-100 pt-6">
+        <Spinner />
+      </div>
+    );
 
   const save = async (enabled: boolean, newPin?: string) => {
     setBusy(true);
@@ -165,13 +237,15 @@ function DemoLoginSettings() {
     <div className="mt-6 border-t border-slate-100 pt-6">
       <div className="flex items-start justify-between gap-6">
         <div>
-          <div className="text-sm font-semibold text-slate-900">Demo login with PIN</div>
-          <p className="mt-0.5 max-w-xl text-sm text-slate-500">
+          <div className="text-sm font-semibold text-slate-900">
+            Demo login with PIN
+          </div>
+          <p id={descId} className="mt-0.5 max-w-xl text-sm text-slate-500">
             Lets prospects sign in with a PIN, without a Microsoft account. They only see demo customers, cannot enter real credentials and cannot open administration pages.
             Changing the PIN or turning this off signs out all demo sessions.
           </p>
         </div>
-        <Toggle checked={q.data.enabled} disabled={busy || (!q.data.pinSet && !q.data.enabled)} onChange={(v) => save(v)} label="Demo login enabled" />
+        <Toggle checked={q.data.enabled} disabled={busy || (!q.data.pinSet && !q.data.enabled)} onChange={(v) => void save(v)} label="Demo login enabled" describedBy={descId} />
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <Field label={q.data.pinSet ? 'New PIN' : 'PIN'} hint="8 to 12 digits. Stored as a one-way hash.">
@@ -186,7 +260,13 @@ function DemoLoginSettings() {
           Last changed {new Date(q.data.updatedAt).toLocaleString('en-GB')} by {q.data.updatedBy}
         </p>
       )}
-      {msg && <Alert tone={msg.tone} className="mt-3">{msg.text}</Alert>}
+      {msg && (
+        <div role={msg.tone === 'error' ? 'alert' : 'status'}>
+          <Alert tone={msg.tone} className="mt-3">
+            {msg.text}
+          </Alert>
+        </div>
+      )}
     </div>
   );
 }

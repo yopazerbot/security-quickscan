@@ -11,9 +11,10 @@ import { loadScan, parse } from './helpers.js';
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'customer';
 
 export function reportRoutes(app: FastifyInstance, ctx: AppCtx) {
+  /** Finished scans only; failed and cancelled scans give a partial report of the checks that did complete. */
   async function completedScan(req: any) {
     const scan = await loadScan(ctx, req);
-    if (!['completed', 'cancelled'].includes(scan.status)) throw new HttpError(409, 'The report is available once the scan has finished');
+    if (!['completed', 'cancelled', 'failed'].includes(scan.status)) throw new HttpError(409, 'The report is available once the scan has finished');
     return scan;
   }
 

@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ContextForm, RiskProfilePanel } from '../components/ContextForm';
-import { Alert, Button, Card, Field, Input, PageHeader, PageLoader, Textarea } from '../components/ui';
+import { useToast } from '../components/feedback';
+import { Alert, Button, Card, ErrorState, Field, Input, PageHeader, PageLoader, Textarea } from '../components/ui';
 import { get, post, put } from '../lib/api';
 
 export function CustomerEdit() {
@@ -15,6 +16,7 @@ export function CustomerEdit() {
   const [context, setContext] = useState<CustomerContext>(DEFAULT_CONTEXT);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     if (existing.data) {
@@ -24,6 +26,7 @@ export function CustomerEdit() {
     }
   }, [existing.data]);
 
+  if (customerId && existing.isError) return <ErrorState error={existing.error} onRetry={() => existing.refetch()} />;
   if (customerId && existing.isLoading) return <PageLoader />;
 
   const submit = async (e: FormEvent) => {
@@ -32,12 +35,15 @@ export function CustomerEdit() {
     setErr(null);
     try {
       const body = { ...form, context };
-      const c = customerId ? await put(`/api/customers/${customerId}`, body) : await post('/api/customers', body);
+      const c = customerId ? await put<{ id: string }>(`/api/customers/${customerId}`, body) : await post<{ id: string }>('/api/customers', body);
       await qc.invalidateQueries({ queryKey: ['customers'] });
       await qc.invalidateQueries({ queryKey: ['customer', c.id] });
+      toast.success(customerId ? 'Customer saved.' : 'Customer created.');
       nav(`/customers/${c.id}`);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'The customer could not be saved.';
+      setErr(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -82,7 +88,13 @@ export function CustomerEdit() {
                 <RiskProfilePanel context={context} />
               </div>
             </Card>
-            {err && <Alert tone="error">{err}</Alert>}
+            {err && (
+              <div role="alert">
+                <Alert tone="error" title="Not saved">
+                  {err}
+                </Alert>
+              </div>
+            )}
             <Button type="submit" size="lg" className="w-full" loading={busy}>
               {customerId ? 'Save changes' : 'Create customer'}
             </Button>

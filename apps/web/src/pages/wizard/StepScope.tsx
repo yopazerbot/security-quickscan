@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { ProviderIcon } from '../../components/ProviderIcon';
+import { AsyncButton } from '../../components/feedback';
 import { Alert, Button, Card, Field, Input, Modal } from '../../components/ui';
 import { del, get, patch, post } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -169,7 +170,7 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
   );
 }
 
-export function StepScope({ scan, refresh, next, back }: StepProps) {
+export function StepScope({ scan, refresh, next, back, navigating }: StepProps) {
   const [adding, setAdding] = useState<Provider | null>(null);
   const [editing, setEditing] = useState<WizardSystem | null>(null);
 
@@ -182,6 +183,7 @@ export function StepScope({ scan, refresh, next, back }: StepProps) {
             return (
               <button
                 key={p}
+                type="button"
                 onClick={() => setAdding(p)}
                 className={clsx(
                   'group flex flex-col rounded-2xl p-5 text-left ring-1 transition hover:-translate-y-0.5 hover:shadow-md',
@@ -218,19 +220,27 @@ export function StepScope({ scan, refresh, next, back }: StepProps) {
                     {[s.config.tenantId, s.config.accountId, s.config.org, authModes(s.provider).find((m) => m.id === s.config.authMode)?.label].filter(Boolean).join(' · ')}
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(s)}>Edit</Button>
-                <Button
+                <Button variant="ghost" size="sm" icon={<Pencil className="size-3.5" />} aria-label={`Edit ${s.label}`} onClick={() => setEditing(s)}>Edit</Button>
+                <AsyncButton
                   variant="ghost"
                   size="sm"
                   className="text-red-600 hover:bg-red-50"
                   icon={<Trash2 className="size-3.5" />}
+                  aria-label={`Remove ${s.label}`}
                   onClick={async () => {
                     await del(`/api/scans/${scan.id}/systems/${s.id}`);
                     await refresh();
                   }}
+                  success={`${s.label} removed.`}
+                  confirm={{
+                    title: 'Remove system',
+                    body: <><strong>{s.label}</strong> is removed from this scan. Any stored credentials for it are deleted.</>,
+                    confirmLabel: 'Remove',
+                    danger: true,
+                  }}
                 >
                   Remove
-                </Button>
+                </AsyncButton>
               </li>
             ))}
           </ul>
@@ -239,7 +249,13 @@ export function StepScope({ scan, refresh, next, back }: StepProps) {
 
       {adding && <SystemForm provider={adding} scanId={scan.id} onClose={() => setAdding(null)} onSaved={async () => { setAdding(null); await refresh(); }} />}
       {editing && <SystemForm provider={editing.provider} system={editing} scanId={scan.id} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} />}
-      <WizardFooter onBack={back} onNext={next} disabled={!scan.systems.length} />
+      <WizardFooter
+        onBack={back}
+        onNext={next}
+        loading={navigating}
+        disabled={!scan.systems.length}
+        extra={!scan.systems.length && <span className="text-xs text-slate-500">Add at least one system to continue.</span>}
+      />
     </>
   );
 }

@@ -27,13 +27,13 @@ test('run the prepared draft scan end to end and download the exports', async ({
   await expect(page.getByText('Customer authorisation')).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
   await expect(page).toHaveURL(/\/progress/);
-  await expect(page.getByRole('button', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
-  await page.getByRole('button', { name: 'View report' }).click();
+  await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
+  await page.getByRole('link', { name: 'View report' }).click();
   await expect(page.getByRole('heading', { name: 'Security quick scan report' })).toBeVisible();
 
   for (const label of ['PDF report', 'Findings CSV', 'ISO controls CSV']) {
     const dl = page.waitForEvent('download');
-    await page.getByRole('button', { name: label }).click();
+    await page.getByRole('link', { name: label }).click();
     const file = await dl;
     const path = await file.path();
     expect(path, label).toBeTruthy();
@@ -75,7 +75,7 @@ test('new customer through the full wizard with demo systems', async ({ page }) 
   await page.getByLabel('E-mail').fill('cto@example.com');
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Start scan' }).click();
-  await expect(page.getByRole('button', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
+  await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
 });
 
 test('reset demo data restores the original demo customer', async ({ page }) => {

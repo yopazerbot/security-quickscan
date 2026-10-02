@@ -107,21 +107,41 @@ export const Select = ({ className, children, ...p }: SelectHTMLAttributes<HTMLS
   </select>
 );
 
-export function Toggle({ checked, onChange, disabled, label }: { checked: boolean; onChange(v: boolean): void; disabled?: boolean; label?: string }) {
+/**
+ * Accessible on/off switch. Named by the visible text referenced by `labelledBy` when given,
+ * otherwise by `label` (as aria-label).
+ */
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+  labelledBy,
+  describedBy,
+}: {
+  checked: boolean;
+  onChange(v: boolean): void;
+  disabled?: boolean;
+  label?: string;
+  labelledBy?: string;
+  describedBy?: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={clsx(
-        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50',
+        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
         checked ? 'bg-brand-600' : 'bg-slate-300',
       )}
     >
-      <span className={clsx('pointer-events-none mt-0.5 inline-block size-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-4.5' : 'translate-x-0.5')} />
+      <span aria-hidden className={clsx('pointer-events-none mt-0.5 inline-block size-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-4.5' : 'translate-x-0.5')} />
     </button>
   );
 }
@@ -143,8 +163,13 @@ export function StatusBadge({ status }: { status: ResultStatus | 'pending' | 'ru
 }
 
 export function GradeBadge({ grade, score, size = 'md' }: { grade?: string | null; score?: number | null; size?: 'sm' | 'md' | 'lg' }) {
-  if (!grade) return <span className="text-sm text-slate-400">-</span>;
   const dim = size === 'lg' ? 'size-24 text-5xl' : size === 'md' ? 'size-10 text-lg' : 'size-7 text-sm';
+  if (!grade)
+    return (
+      <span role="img" aria-label="Not graded" title="Not graded" className={clsx('inline-flex shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 font-bold text-slate-400', dim)}>
+        <span aria-hidden>-</span>
+      </span>
+    );
   return (
     <span className="inline-flex items-center gap-2">
       <span className={clsx('inline-flex items-center justify-center rounded-xl font-bold text-white shadow-sm', dim)} style={{ backgroundColor: GRADE_HEX[grade] ?? '#334155' }}>
