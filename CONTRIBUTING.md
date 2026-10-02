@@ -36,4 +36,4 @@ Update `docs/CHECKS.md` with `npm run docs:checks`.
 - Follow the existing code style (TypeScript, zod validation at the API boundary, no secrets in logs).
 - Security-relevant changes (authentication, authorisation, crypto, credential handling) get extra review; explain the threat model in the PR.
 
-By contributing you agree that your contributions are licensed under the [AGPL-3.0](LICENSE).
+By contributing you agree that your contributions are licensed under the [MIT license](LICENSE) of this project.

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "description": "Read-only security quick scans of Microsoft 365 / Entra ID, Azure, AWS and GitHub, evaluated against ISO/IEC 27001:2022 Annex A.",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/yopazerbot/security-quickscan.git"

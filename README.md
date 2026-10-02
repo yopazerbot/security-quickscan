@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml)
 [![Docker image](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Security QuickScan is a self-hostable web application for security consultants, internal IT teams and auditors who need a fast, repeatable and well-documented view of a company's cloud security posture. It guides you from customer context to a finished report in one flow: capture the context and risk profile, choose the systems in scope, connect with read-only access, review the evaluation criteria, watch the scan run live, and hand over a branded PDF.
 
@@ -287,8 +287,10 @@ Only scan environments you are authorised to assess. The tool records the custom
 
 Microsoft, Entra, Azure, AWS and GitHub are trademarks of their respective owners. This project is not affiliated with or endorsed by them. ISO/IEC 27001 control titles are paraphrased for reference.
 
-## License
+## License and credit
 
-[GNU Affero General Public License v3.0](LICENSE). You may use, modify and self-host it. If you offer a modified version to others over a network, you must make your source code available to them. The app links to its source from the login page and the navigation for this reason.
+[MIT](LICENSE), Copyright (c) 2026 Yoshi Parlevliet.
+
+You are free to use, modify, self-host and redistribute Security QuickScan, including commercially, **as long as you credit the author**: keep the copyright and license notice in all copies or substantial portions of the software, and please keep the "Developed by Yoshi Parlevliet" credit visible in the app.
 
 Developed by Yoshi Parlevliet.

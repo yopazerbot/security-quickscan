@@ -1,2 +1,2 @@
-/** AGPL-3.0 section 13: users of a hosted instance can obtain the source. */
+/** Link to the public source repository. */
 export const SOURCE_URL = 'https://github.com/yopazerbot/security-quickscan';
