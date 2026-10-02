@@ -12,6 +12,9 @@ test('admin sees the seeded demo organisation with history and reports', async (
   await expect(page.getByRole('heading', { name: 'Score trend' })).toBeVisible();
   await expect(page.getByText('Baseline quick scan')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Triaged findings' })).toBeVisible();
+  // Admins manage access to every organisation, including ones they do not own.
+  await expect(page.getByRole('heading', { name: 'Access', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Share by e-mail address')).toBeVisible();
 
   await page.getByText('Follow-up quick scan').click();
   await expect(page.getByRole('heading', { name: 'Security quick scan report' })).toBeVisible();
@@ -24,7 +27,8 @@ test('run the prepared draft scan end to end and download the exports', async ({
   await page.goto('/');
   await openDemoOrganisation(page);
   await page.getByText('Quarterly quick scan (ready to run)').click();
-  await expect(page.getByText('Assessment authorisation')).toBeVisible();
+  // The last wizard step is a short review with no form.
+  await expect(page.getByRole('heading', { name: 'Summary', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
   await expect(page).toHaveURL(/\/progress/);
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
@@ -70,10 +74,7 @@ test('new organisation through the full wizard with demo systems', async ({ page
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Evaluation criteria')).toBeVisible();
   await page.getByRole('button', { name: 'Save and continue' }).click();
-  await page.getByLabel('Authorised by (name)').fill('Test Person');
-  await page.getByLabel('Role / title').fill('CTO');
-  await page.getByLabel('E-mail').fill('cto@example.com');
-  await page.getByRole('checkbox').check();
+  await expect(page.getByRole('heading', { name: 'Summary', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
 });

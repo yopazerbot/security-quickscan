@@ -3,7 +3,8 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { assertCustomerAccess, requireRole, requireUser } from '../auth/session.js';
+import { takeAttempt } from '../auth/routes.js';
+import { accessibleCustomerIds, assertCustomerAccess, customerAccess, requireRole, requireUser } from '../auth/session.js';
 import { HttpError, notFound, type AppCtx } from '../context.js';
 import { checkResults, customerAssignments, customers, findingTriage, scans, scanSystems, users } from '../db/schema.js';
 import { refreshCustomerScores } from '../scoring.js';
@@ -12,15 +13,9 @@ import { parse, uuidParam } from './helpers.js';
 export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   const { db } = ctx;
 
-  async function accessibleCustomerIds(userId: string, all: boolean) {
-    if (all) return null;
-    const r = await db.select({ id: customerAssignments.customerId }).from(customerAssignments).where(eq(customerAssignments.userId, userId));
-    return r.map((x) => x.id);
-  }
-
   app.get('/api/customers', async (req) => {
     const u = requireUser(req);
-    const ids = await accessibleCustomerIds(u.id, u.role === 'admin' || u.allCustomers);
+    const ids = await accessibleCustomerIds(ctx, u);
     if (ids && !ids.length) return [];
     const rows = await db
       .select()
@@ -41,8 +36,12 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
           .where(inArray(scans.customerId, rows.map((r) => r.id)))
           .groupBy(scans.customerId)
       : [];
+    const ownerIds = [...new Set(rows.map((r) => r.ownerId).filter((x): x is string => Boolean(x)))];
+    const owners = ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : [];
     return rows.map((c) => ({
       id: c.id,
+      owned: c.ownerId === u.id,
+      ownerName: owners.find((o) => o.id === c.ownerId)?.name ?? null,
       name: c.name,
       contactName: c.contactName,
       country: c.country,
@@ -62,8 +61,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       if (n >= 15) throw new HttpError(429, 'Demo limit reached. An administrator can reset the demo data.');
     }
     // Organisations created by the demo visitor are demo data (removed by "Reset demo data").
-    const [c] = await db.insert(customers).values({ ...body, createdBy: u.id, isDemo: u.isDemo }).returning();
-    if (u.role !== 'admin' && !u.allCustomers) await db.insert(customerAssignments).values({ userId: u.id, customerId: c.id });
+    const [c] = await db.insert(customers).values({ ...body, createdBy: u.id, ownerId: u.id, isDemo: u.isDemo }).returning();
     await audit(ctx, req, 'customer.create', { type: 'customer', id: c.id }, { name: c.name });
     return c;
   });
@@ -71,6 +69,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get('/api/customers/:customerId', async (req) => {
     const id = uuidParam(req, 'customerId');
     const u = await assertCustomerAccess(ctx, req, id);
+    const myAccess = (await customerAccess(ctx, u, id))!;
     const c = (await db.select().from(customers).where(eq(customers.id, id)).limit(1))[0];
     if (!c) throw notFound();
     const scanRows = await db
@@ -90,15 +89,25 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       .where(eq(scans.customerId, id))
       .orderBy(desc(scans.createdAt));
     const triage = await db.select().from(findingTriage).where(eq(findingTriage.customerId, id));
-    const assigned =
-      u.role === 'admin'
-        ? await db
-            .select({ id: users.id, name: users.name, email: users.email })
-            .from(customerAssignments)
-            .innerJoin(users, eq(users.id, customerAssignments.userId))
-            .where(eq(customerAssignments.customerId, id))
-        : [];
-    return { ...c, scans: scanRows, triage, assigned };
+    const owner = c.ownerId ? (await db.select({ id: users.id, name: users.name, email: users.email }).from(users).where(eq(users.id, c.ownerId)).limit(1))[0] ?? null : null;
+    const manage = myAccess === 'owner' || myAccess === 'admin';
+    // Need-to-know: only those who manage an organisation see who else has access to it.
+    const shares = manage
+      ? await db
+          .select({ userId: users.id, name: users.name, email: users.email, role: users.role, permission: customerAssignments.permission, grantedAt: customerAssignments.createdAt })
+          .from(customerAssignments)
+          .innerJoin(users, eq(users.id, customerAssignments.userId))
+          .where(eq(customerAssignments.customerId, id))
+          .orderBy(users.name)
+      : [];
+    return {
+      ...c,
+      scans: scanRows,
+      triage,
+      myAccess,
+      owner: owner && (manage ? owner : { id: owner.id, name: owner.name, email: '' }),
+      shares,
+    };
   });
 
   app.put('/api/customers/:customerId', async (req) => {
@@ -118,8 +127,8 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   });
 
   app.delete('/api/customers/:customerId', async (req) => {
-    requireRole(req, 'admin');
     const id = uuidParam(req, 'customerId');
+    await assertCustomerAccess(ctx, req, id, 'manage');
     const c = (await db.select({ name: customers.name }).from(customers).where(eq(customers.id, id)).limit(1))[0];
     if (!c) throw notFound();
     // Cascades to scans, systems, credentials, results and triage.
@@ -128,22 +137,91 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     return { ok: true };
   });
 
-  app.put('/api/customers/:customerId/assignments', async (req) => {
-    requireRole(req, 'admin');
+  // ---------- sharing (need-to-know) ----------
+
+  const permissionSchema = z.enum(['view', 'edit']);
+
+  app.post('/api/customers/:customerId/shares', async (req) => {
     const id = uuidParam(req, 'customerId');
-    const { userIds } = parse(z.object({ userIds: z.array(z.uuid()).max(200) }), req.body);
-    // The shared demo visitor account may only ever see demo customers.
-    const target = (await db.select({ isDemo: customers.isDemo }).from(customers).where(eq(customers.id, id)).limit(1))[0];
-    if (!target) throw notFound();
-    if (!target.isDemo && userIds.length) {
-      const demoUsers = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, userIds), eq(users.isDemo, true)));
-      if (demoUsers.length) throw new HttpError(400, 'The demo visitor account cannot be given access to real organisations');
-    }
+    const u = await assertCustomerAccess(ctx, req, id, 'manage');
+    if (u.isDemo) throw new HttpError(403, 'Sharing is not available in a demo session');
+    const body = parse(z.object({ email: z.email().max(320), permission: permissionSchema }), req.body);
+    // Limits probing which email addresses have an account.
+    if (!(await takeAttempt(ctx, `share:${u.id}`, 30))) throw new HttpError(429, 'Too many share attempts. Try again in 15 minutes.');
+    const target = (
+      await db
+        .select({ id: users.id, name: users.name, email: users.email, active: users.active, isDemo: users.isDemo, isBreakglass: users.isBreakglass })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${body.email.toLowerCase()}`)
+        .limit(1)
+    )[0];
+    if (!target || !target.active || target.isDemo || target.isBreakglass) throw new HttpError(404, 'No active account with this email address');
+    const c = (await db.select({ ownerId: customers.ownerId }).from(customers).where(eq(customers.id, id)).limit(1))[0];
+    if (target.id === c?.ownerId) throw new HttpError(400, 'This person owns the organisation');
+    await db
+      .insert(customerAssignments)
+      .values({ userId: target.id, customerId: id, permission: body.permission, grantedBy: u.id })
+      .onConflictDoUpdate({ target: [customerAssignments.userId, customerAssignments.customerId], set: { permission: body.permission, grantedBy: u.id } });
+    await audit(ctx, req, 'customer.share', { type: 'customer', id }, { userId: target.id, permission: body.permission });
+    return { ok: true, name: target.name };
+  });
+
+  app.patch('/api/customers/:customerId/shares/:userId', async (req) => {
+    const id = uuidParam(req, 'customerId');
+    const userId = uuidParam(req, 'userId');
+    await assertCustomerAccess(ctx, req, id, 'manage');
+    const { permission } = parse(z.object({ permission: permissionSchema }), req.body);
+    const r = await db
+      .update(customerAssignments)
+      .set({ permission })
+      .where(and(eq(customerAssignments.customerId, id), eq(customerAssignments.userId, userId)))
+      .returning();
+    if (!r.length) throw notFound();
+    await audit(ctx, req, 'customer.share_update', { type: 'customer', id }, { userId, permission });
+    return { ok: true };
+  });
+
+  /** Removes a share; the owner or an admin can remove anyone, everyone can remove themselves (leave). */
+  app.delete('/api/customers/:customerId/shares/:userId', async (req) => {
+    const id = uuidParam(req, 'customerId');
+    const userId = uuidParam(req, 'userId');
+    const u = await assertCustomerAccess(ctx, req, id, userId === requireUser(req).id ? 'view' : 'manage');
+    const r = await db
+      .delete(customerAssignments)
+      .where(and(eq(customerAssignments.customerId, id), eq(customerAssignments.userId, userId)))
+      .returning();
+    if (!r.length) throw notFound();
+    await audit(ctx, req, userId === u.id ? 'customer.leave' : 'customer.unshare', { type: 'customer', id }, { userId });
+    return { ok: true };
+  });
+
+  /** Hands ownership to someone who already has access; the previous owner keeps edit access. */
+  app.put('/api/customers/:customerId/owner', async (req) => {
+    const id = uuidParam(req, 'customerId');
+    const u = await assertCustomerAccess(ctx, req, id, 'manage');
+    const { userId } = parse(z.object({ userId: z.uuid() }), req.body);
+    const share = (
+      await db
+        .select({ role: users.role })
+        .from(customerAssignments)
+        .innerJoin(users, eq(users.id, customerAssignments.userId))
+        .where(and(eq(customerAssignments.customerId, id), eq(customerAssignments.userId, userId), eq(users.active, true)))
+        .limit(1)
+    )[0];
+    if (!share) throw new HttpError(400, 'Share the organisation with this person first');
+    if (share.role === 'viewer') throw new HttpError(400, 'A read-only account cannot own an organisation');
+    const c = (await db.select({ ownerId: customers.ownerId }).from(customers).where(eq(customers.id, id)).limit(1))[0];
     await db.transaction(async (tx) => {
-      await tx.delete(customerAssignments).where(eq(customerAssignments.customerId, id));
-      if (userIds.length) await tx.insert(customerAssignments).values(userIds.map((userId) => ({ userId, customerId: id })));
+      await tx.update(customers).set({ ownerId: userId, updatedAt: new Date() }).where(eq(customers.id, id));
+      await tx.delete(customerAssignments).where(and(eq(customerAssignments.customerId, id), eq(customerAssignments.userId, userId)));
+      if (c?.ownerId) {
+        await tx
+          .insert(customerAssignments)
+          .values({ userId: c.ownerId, customerId: id, permission: 'edit', grantedBy: u.id })
+          .onConflictDoUpdate({ target: [customerAssignments.userId, customerAssignments.customerId], set: { permission: 'edit' } });
+      }
     });
-    await audit(ctx, req, 'customer.assignments', { type: 'customer', id }, { userIds });
+    await audit(ctx, req, 'customer.owner_change', { type: 'customer', id }, { from: c?.ownerId ?? null, to: userId });
     return { ok: true };
   });
 
@@ -178,7 +256,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     return {
       exportedAt: new Date().toISOString(),
       customer: c,
-      scans: s.map(({ authorizationDoc, ...rest }) => ({ ...rest, hasAuthorizationDoc: Boolean(authorizationDoc) })),
+      scans: s,
       systems,
       results,
       triage,

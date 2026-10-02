@@ -24,6 +24,7 @@ export const scanStatusEnum = pgEnum('scan_status', ['draft', 'queued', 'running
 export const resultStatusEnum = pgEnum('result_status', ['pending', 'running', 'pass', 'fail', 'warn', 'na', 'error']);
 export const retentionEnum = pgEnum('retention_mode', ['purge_on_completion', 'days', 'manual']);
 export const triageEnum = pgEnum('triage_status', ['open', 'accepted', 'false_positive']);
+export const sharePermissionEnum = pgEnum('share_permission', ['view', 'edit']);
 
 export const users = pgTable(
   'users',
@@ -32,7 +33,6 @@ export const users = pgTable(
     email: text('email').notNull(),
     name: text('name').notNull(),
     role: roleEnum('role').notNull().default('viewer'),
-    allCustomers: boolean('all_customers').notNull().default(false),
     active: boolean('active').notNull().default(true),
     entraOid: text('entra_oid'),
     isBreakglass: boolean('is_breakglass').notNull().default(false),
@@ -89,10 +89,13 @@ export const customers = pgTable('customers', {
   /** Seeded fictional organisation (only created when DEMO_MODE=true). */
   isDemo: boolean('is_demo').notNull().default(false),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  /** Need-to-know: only the owner, users it is shared with and admins can see an organisation. */
+  ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
 
+/** Organisation shares: who else may view or edit an organisation, granted by its owner or an admin. */
 export const customerAssignments = pgTable(
   'customer_assignments',
   {
@@ -102,6 +105,9 @@ export const customerAssignments = pgTable(
     customerId: uuid('customer_id')
       .notNull()
       .references(() => customers.id, { onDelete: 'cascade' }),
+    permission: sharePermissionEnum('permission').notNull().default('view'),
+    grantedBy: uuid('granted_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.customerId] })],
 );
@@ -120,10 +126,6 @@ export const scans = pgTable(
     riskProfile: jsonb('risk_profile').notNull(),
     retentionMode: retentionEnum('retention_mode').notNull().default('purge_on_completion'),
     retentionDays: integer('retention_days'),
-    authorization: jsonb('authorization'),
-    /** Encrypted signed authorisation letter (PDF), optional. */
-    authorizationDoc: bytea('authorization_doc'),
-    authorizationDocName: text('authorization_doc_name'),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     workerId: text('worker_id'),
     heartbeatAt: ts('heartbeat_at'),

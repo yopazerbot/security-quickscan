@@ -88,7 +88,6 @@ function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
       /* ignore broken logo */
     }
   }
-  doc.fillColor('#ffffff').font('Helvetica').fontSize(11).text(m.branding.classification, W - M - 150, 55, { width: 150, align: 'right' });
   doc.font('Helvetica-Bold').fontSize(30).text('Cloud Security', M, 150);
   doc.text('Quick Scan Report');
   doc.font('Helvetica').fontSize(13).fillColor('#e0e7ff').text('Assessment against ISO/IEC 27001:2022 Annex A', M, 240);
@@ -307,11 +306,6 @@ function appendix(doc: Doc, m: ReportModel) {
   for (const s of m.systems) {
     para(doc, `${s.label}  -  ${s.providerLabel}${s.identity ? `  -  ${s.identity}` : ''}`);
   }
-  if (m.scan.authorization) {
-    const a = m.scan.authorization;
-    h2(doc, 'Authorisation');
-    para(doc, `Authorised by ${a.authorizerName} (${a.authorizerRole}, ${a.authorizerEmail}) on ${fmtDate(a.authorizedOn)}, valid until ${fmtDate(a.validUntil)}.`);
-  }
   h2(doc, 'Method');
   para(
     doc,
@@ -392,7 +386,7 @@ export function renderPdf(m: ReportModel, logo: Buffer | null): Promise<Buffer> 
       doc.page.margins.bottom = 0;
       doc.moveTo(M, y - 8).lineTo(doc.page.width - M, y - 8).strokeColor(C.line).lineWidth(0.5).stroke();
       doc.fillColor(C.muted).font('Helvetica').fontSize(7.5);
-      doc.text(`${m.branding.classification}  |  ${m.customer.name}  |  Cloud Security Quick Scan`, M, y, { width: 350, lineBreak: false });
+      doc.text(`${m.customer.name}  |  Cloud Security Quick Scan`, M, y, { width: 350, lineBreak: false });
       doc.text(`Page ${i + 1} of ${range.count}`, doc.page.width - M - 100, y, { width: 100, align: 'right', lineBreak: false });
     }
     doc.end();

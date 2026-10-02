@@ -16,7 +16,6 @@ export interface SessionUser {
   email: string;
   name: string;
   role: Role;
-  allCustomers: boolean;
   isBreakglass: boolean;
   isDemo: boolean;
 }

@@ -7,7 +7,7 @@ import { audit } from '../audit.js';
 import { requireRole, requireUser } from '../auth/session.js';
 import { scannerEnv } from '../config.js';
 import { badRequest, notFound, type AppCtx } from '../context.js';
-import { auditLog, customerAssignments, sessions, settings, users } from '../db/schema.js';
+import { auditLog, sessions, settings, users } from '../db/schema.js';
 import { resetDemo } from '../demo/seed.js';
 import { parse, uuidParam } from './helpers.js';
 
@@ -68,14 +68,12 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get('/api/users', async (req) => {
     requireRole(req, 'admin');
     const rows = await db.select().from(users).orderBy(users.name);
-    const assigned = await db.select().from(customerAssignments);
     const active = await db
       .select({ userId: sessions.userId, n: sql<number>`count(*)::int`, last: sql<Date>`max(${sessions.lastSeenAt})` })
       .from(sessions)
       .groupBy(sessions.userId);
     return rows.map((u) => ({
       ...u,
-      customerIds: assigned.filter((a) => a.userId === u.id).map((a) => a.customerId),
       activeSessions: active.find((a) => a.userId === u.id)?.n ?? 0,
       lastSeenAt: active.find((a) => a.userId === u.id)?.last ?? null,
     }));

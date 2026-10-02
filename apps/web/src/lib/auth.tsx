@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { ApiError, get, post, setCsrfToken } from './api';
 
 export interface Me {
-  user: { id: string; email: string; name: string; role: Role; allCustomers: boolean; isBreakglass: boolean; isDemo: boolean };
+  user: { id: string; email: string; name: string; role: Role; isBreakglass: boolean; isDemo: boolean };
   csrfToken: string;
   authMethod: string;
   sessionExpiresAt: string;
@@ -48,8 +48,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export const useAuth = () => useContext(AuthCtx);
 
+/** Role-based checks for global actions (creating an organisation, admin pages). */
 export function useCan() {
   const { me } = useAuth();
   const role = me?.user.role;
   return { write: role === 'admin' || role === 'consultant', admin: role === 'admin' };
+}
+
+/** A user's access to one organisation, as returned by the API (`myAccess`). */
+export type CustomerAccess = 'admin' | 'owner' | 'edit' | 'view';
+
+/** Per-organisation checks: edit covers scans, triage and details; manage covers sharing, transfer and delete. */
+export function accessCan(access: CustomerAccess | null | undefined) {
+  return { edit: Boolean(access) && access !== 'view', manage: access === 'owner' || access === 'admin' };
 }

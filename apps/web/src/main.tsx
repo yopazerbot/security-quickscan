@@ -6,6 +6,7 @@ import { ToastProvider } from './components/feedback';
 import { Layout } from './components/Layout';
 import { PageLoader } from './components/ui';
 import './index.css';
+import { ApiError } from './lib/api';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuditPage } from './pages/Audit';
 import { ConsentCallback } from './pages/ConsentCallback';
@@ -20,7 +21,10 @@ import { SettingsPage } from './pages/Settings';
 import { UsersPage } from './pages/Users';
 import { ScanWizard } from './pages/wizard/ScanWizard';
 
-const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } } });
+// No retry for answers that will not change (signed out, no access, not found).
+const qc = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false, retry: (n, e) => n < 1 && !(e instanceof ApiError && [401, 403, 404].includes(e.status)) } },
+});
 
 function Protected({ children, admin }: { children: ReactNode; admin?: boolean }) {
   const { me, loading } = useAuth();

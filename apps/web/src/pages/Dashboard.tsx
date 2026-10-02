@@ -35,7 +35,7 @@ export function Dashboard() {
     <>
       <PageHeader
         title={`Welcome back, ${me?.user.name.split(' ')[0]}`}
-        subtitle="Overview of your organisations and recent quick scans."
+        subtitle={can.admin ? 'All organisations and recent quick scans.' : 'Your organisations and those shared with you.'}
         actions={
           can.write && (
             <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>

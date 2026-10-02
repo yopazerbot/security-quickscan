@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, ImageUp, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { AsyncButton, useToast } from '../components/feedback';
-import { Alert, Button, Card, ErrorState, Field, Input, Modal, Toggle, PageHeader, PageLoader, Select, Textarea, Spinner } from '../components/ui';
+import { Alert, Button, Card, ErrorState, Field, Input, Modal, Toggle, PageHeader, PageLoader, Textarea, Spinner } from '../components/ui';
 import { del, fileToBase64, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
@@ -85,11 +85,6 @@ export function SettingsPage() {
                 <Input value={form.accentColor} onChange={(e) => set('accentColor', e.target.value)} className="font-mono" />
               </div>
             </Field>
-            <Field label="Default classification" hint="Traffic Light Protocol marking on every page.">
-              <Select value={form.classification} onChange={(e) => set('classification', e.target.value)}>
-                {['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'].map((t) => <option key={t}>{t}</option>)}
-              </Select>
-            </Field>
             <Field label="Disclaimer" className="sm:col-span-2" hint="Printed at the end of the PDF report.">
               <Textarea rows={5} value={form.disclaimer} onChange={(e) => set('disclaimer', e.target.value)} />
             </Field>
@@ -139,8 +134,7 @@ export function SettingsPage() {
             )}
           </div>
           <div className="mt-6 rounded-xl p-4 text-white" style={{ backgroundColor: form.accentColor }}>
-            <div className="text-xs opacity-80">{form.classification}</div>
-            <div className="mt-6 text-lg font-semibold">Cloud Security Quick Scan</div>
+            <div className="mt-8 text-lg font-semibold">Cloud Security Quick Scan</div>
             <div className="text-xs opacity-80">Preview of the cover colour</div>
           </div>
         </Card>

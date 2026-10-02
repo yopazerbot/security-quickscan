@@ -10,7 +10,7 @@ import { AsyncButton, useToast } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { Alert, AnchorButton, Button, Card, EmptyState, ErrorState, Input, PageHeader, PageLoader, Select, SeverityBadge, StatusBadge, Textarea } from '../components/ui';
 import { get, post, put } from '../lib/api';
-import { useCan } from '../lib/auth';
+import { accessCan } from '../lib/auth';
 import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX, VERDICT_STYLE } from '../lib/format';
 
 type Item = any;
@@ -257,7 +257,6 @@ export function Report() {
   const { scanId } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const can = useCan();
   const q = useQuery({ queryKey: ['report', scanId], queryFn: () => get(`/api/scans/${scanId}/report`) });
   const [sev, setSev] = useState<string>('all');
   const [platform, setPlatform] = useState<string>('all');
@@ -310,6 +309,7 @@ export function Report() {
   if (q.isLoading) return <PageLoader />;
   if (q.error || !m) return <ErrorState error={q.error ?? new Error('Report not available')} onRetry={() => void q.refetch()} />;
 
+  const can = accessCan(m.myAccess);
   const s = m.summary;
   const radar = s.domainScores.filter((d: any) => d.score !== null).map((d: any) => ({ domain: DOMAIN_SHORT[d.domain as keyof typeof DOMAIN_SHORT], score: d.score }));
   const sevData = (['critical', 'high', 'medium', 'low'] as Severity[]).map((k) => ({ name: k[0].toUpperCase() + k.slice(1), value: s.severityCounts[k], fill: SEVERITY_HEX[k] }));
@@ -342,7 +342,7 @@ export function Report() {
             <Button variant="ghost" icon={<Printer className="size-4" />} onClick={() => window.print()}>
               Print
             </Button>
-            {can.write && (
+            {can.edit && (
               <AsyncButton variant="ghost" icon={<RefreshCw className="size-4" />} onClick={rescan}>
                 Rescan
               </AsyncButton>
@@ -555,7 +555,7 @@ export function Report() {
         </div>
         <div className="space-y-2">
           {findings.map((f: Item) => (
-            <FindingCard key={f.key} f={f} customerId={m.customer.id} canWrite={can.write} onTriaged={refresh} focused={focusKey === f.key} />
+            <FindingCard key={f.key} f={f} customerId={m.customer.id} canWrite={can.edit} onTriaged={refresh} focused={focusKey === f.key} />
           ))}
           {findings.length === 0 && (
             <div className="rounded-xl bg-white ring-1 ring-slate-200">
@@ -621,7 +621,7 @@ export function Report() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card title="Scope and authorisation">
+        <Card title="Scope">
           <dl className="space-y-2 text-sm">
             {m.systems.map((x: any) => (
               <div key={x.id} className="flex justify-between gap-4">
@@ -629,14 +629,6 @@ export function Report() {
                 <dd className="text-right font-medium text-slate-800">{x.identity ?? PROVIDER_LABELS[x.provider as keyof typeof PROVIDER_LABELS]}</dd>
               </div>
             ))}
-            {m.scan.authorization && (
-              <div className="flex justify-between gap-4 border-t border-slate-100 pt-2">
-                <dt className="text-slate-500">Authorised by</dt>
-                <dd className="text-right font-medium text-slate-800">
-                  {m.scan.authorization.authorizerName} ({m.scan.authorization.authorizerRole}), {fmtDate(m.scan.authorization.authorizedOn)}
-                </dd>
-              </div>
-            )}
           </dl>
         </Card>
         <Card title="Method and limitations">

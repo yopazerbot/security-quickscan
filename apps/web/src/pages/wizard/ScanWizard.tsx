@@ -6,7 +6,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import { AsyncButton, useAction } from '../../components/feedback';
 import { Button, ErrorState, PageHeader, PageLoader } from '../../components/ui';
 import { del, get, patch } from '../../lib/api';
-import { useCan } from '../../lib/auth';
+import { accessCan, type CustomerAccess } from '../../lib/auth';
 import { StepCredentials } from './StepCredentials';
 import { StepCriteria } from './StepCriteria';
 import { StepLaunch } from './StepLaunch';
@@ -21,10 +21,7 @@ export interface WizardScan {
   riskProfile: any;
   retentionMode: 'purge_on_completion' | 'days' | 'manual';
   retentionDays: number | null;
-  authorization: any;
-  hasAuthorizationDoc: boolean;
-  authorizationDocName: string | null;
-  customer: { id: string; name: string };
+  customer: { id: string; name: string; myAccess: CustomerAccess | null };
   systems: WizardSystem[];
 }
 
@@ -81,7 +78,7 @@ const STEPS = [
   { label: 'Scope', desc: 'Systems', icon: Server },
   { label: 'Access', desc: 'Credentials', icon: KeyRound },
   { label: 'Criteria', desc: 'What to evaluate', icon: ListChecks },
-  { label: 'Launch', desc: 'Authorise & run', icon: Rocket },
+  { label: 'Review', desc: 'Check and start', icon: Rocket },
 ];
 
 export function WizardFooter({ onBack, onNext, nextLabel = 'Continue', disabled, loading, extra }: { onBack?: () => void; onNext(): void; nextLabel?: string; disabled?: boolean; loading?: boolean; extra?: ReactNode }) {
@@ -103,7 +100,6 @@ export function ScanWizard() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const run = useAction();
-  const can = useCan();
   const q = useQuery({ queryKey: ['scan', scanId], queryFn: () => get<WizardScan>(`/api/scans/${scanId}`) });
   const [step, setStep] = useState<number | null>(null);
   const [navigating, setNavigating] = useState(false);
@@ -120,6 +116,8 @@ export function ScanWizard() {
   if (q.isLoading || !q.data || step === null) return <PageLoader />;
   const scan = q.data;
   if (scan.status !== 'draft') return <Navigate to={`/scans/${scan.id}/${scan.status === 'completed' || scan.status === 'cancelled' ? 'report' : 'progress'}`} replace />;
+  // View-only access cannot edit a draft, so send the user back to the organisation.
+  if (!accessCan(scan.customer.myAccess).edit) return <Navigate to={`/organisations/${scan.customer.id}`} replace />;
 
   const go = async (n: number) => {
     if (n === step || n < 0 || n >= STEPS.length || navigating || lockReason(scan, n)) return;
@@ -158,24 +156,22 @@ export function ScanWizard() {
         title="New quick scan"
         subtitle={scan.name}
         actions={
-          can.write && (
-            <AsyncButton
-              variant="ghost"
-              size="sm"
-              className="text-red-600 hover:bg-red-50"
-              icon={<Trash2 className="size-3.5" />}
-              onClick={discard}
-              success="Draft discarded."
-              confirm={{
-                title: 'Discard draft',
-                body: <>The draft scan <strong>{scan.name}</strong> is deleted, together with its systems and any stored credentials. This cannot be undone.</>,
-                confirmLabel: 'Discard',
-                danger: true,
-              }}
-            >
-              Discard draft
-            </AsyncButton>
-          )
+          <AsyncButton
+            variant="ghost"
+            size="sm"
+            className="text-red-600 hover:bg-red-50"
+            icon={<Trash2 className="size-3.5" />}
+            onClick={discard}
+            success="Draft discarded."
+            confirm={{
+              title: 'Discard draft',
+              body: <>The draft scan <strong>{scan.name}</strong> is deleted, together with its systems and any stored credentials. This cannot be undone.</>,
+              confirmLabel: 'Discard',
+              danger: true,
+            }}
+          >
+            Discard draft
+          </AsyncButton>
         }
       />
       <nav aria-label="Scan wizard steps" className="mb-8 rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200/70">

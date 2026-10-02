@@ -8,7 +8,6 @@ import { checkResults, customerAssignments, customers, findingTriage, scanCriter
 import { storeScanScore } from '../scoring.js';
 
 const DAY = 86_400_000;
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
 export const DEMO_CONTEXT: CustomerContext = {
   industry: 'logistics',
@@ -87,7 +86,7 @@ type Tx = Parameters<Parameters<AppCtx['db']['transaction']>[0]>[0];
 async function createScan(
   tx: Tx,
   customerId: string,
-  opts: { name: string; maturity: number; finishedAt?: Date; draft?: boolean; authorization: Record<string, unknown> },
+  opts: { name: string; maturity: number; finishedAt?: Date; draft?: boolean },
 ) {
   const profile = computeRiskProfile(DEMO_CONTEXT);
   const startedAt = opts.finishedAt ? new Date(opts.finishedAt.getTime() - 6 * 60_000) : null;
@@ -100,7 +99,6 @@ async function createScan(
       wizardStep: opts.draft ? 4 : 4,
       context: DEMO_CONTEXT,
       riskProfile: profile,
-      authorization: opts.authorization,
       createdAt: startedAt ? new Date(startedAt.getTime() - 3 * DAY) : new Date(),
       queuedAt: startedAt,
       startedAt,
@@ -155,14 +153,6 @@ async function createScan(
 export async function seedDemo(ctx: AppCtx): Promise<boolean> {
   const now = Date.now();
   const firstScan = new Date(now - 124 * DAY);
-  const authorization = {
-    authorizerName: 'Els Vandenberghe',
-    authorizerRole: 'CEO',
-    authorizerEmail: `els.vandenberghe@${DEMO_COMPANY.domain}`,
-    authorizedOn: isoDate(new Date(firstScan.getTime() - 7 * DAY)),
-    validUntil: isoDate(new Date(now + 90 * DAY)),
-    confirmed: true,
-  };
 
   const completed = await ctx.db.transaction(async (tx) => {
     // Serialise concurrent seeders (several replicas starting at once).
@@ -186,9 +176,9 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
       })
       .returning();
 
-    const first = await createScan(tx, c.id, { name: 'Baseline quick scan', maturity: 0.25, finishedAt: firstScan, authorization });
-    const second = await createScan(tx, c.id, { name: 'Follow-up quick scan', maturity: 0.55, finishedAt: new Date(now - 14 * DAY), authorization });
-    await createScan(tx, c.id, { name: 'Quarterly quick scan (ready to run)', maturity: 0.75, draft: true, authorization });
+    const first = await createScan(tx, c.id, { name: 'Baseline quick scan', maturity: 0.25, finishedAt: firstScan });
+    const second = await createScan(tx, c.id, { name: 'Follow-up quick scan', maturity: 0.55, finishedAt: new Date(now - 14 * DAY) });
+    await createScan(tx, c.id, { name: 'Quarterly quick scan (ready to run)', maturity: 0.75, draft: true });
     await tx.insert(findingTriage).values(TRIAGE.map((t) => ({ customerId: c.id, ...t, updatedAt: new Date(now - 13 * DAY) })));
     return { customerId: c.id, scanIds: [first, second] };
   });
@@ -196,7 +186,7 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
   if (!completed) return false;
   // Give an existing demo visitor account access to the new demo customer.
   const visitor = await ctx.db.select({ id: users.id }).from(users).where(eq(users.isDemo, true)).limit(1);
-  if (visitor.length) await ctx.db.insert(customerAssignments).values({ userId: visitor[0].id, customerId: completed.customerId }).onConflictDoNothing();
+  if (visitor.length) await ctx.db.insert(customerAssignments).values({ userId: visitor[0].id, customerId: completed.customerId, permission: 'edit' }).onConflictDoNothing();
   for (const id of completed.scanIds) await storeScanScore(ctx, id);
   await audit(ctx, null, 'demo.seed', { type: 'customer', id: completed.customerId }, { name: DEMO_COMPANY.name }, { id: '', email: 'system' });
   ctx.log.info({ customerId: completed.customerId }, 'demo data seeded');

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
+import { customerAccess } from '../auth/session.js';
 import { HttpError, type AppCtx } from '../context.js';
 import { controlsCsv, findingsCsv } from '../reports/csv.js';
 import { buildReport } from '../reports/model.js';
@@ -20,7 +21,7 @@ export function reportRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   app.get('/api/scans/:scanId/report', async (req) => {
     const scan = await completedScan(req);
-    return buildReport(ctx, scan.id);
+    return { ...(await buildReport(ctx, scan.id)), myAccess: await customerAccess(ctx, req.user!, scan.customerId) };
   });
 
   app.get('/api/scans/:scanId/report.pdf', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {

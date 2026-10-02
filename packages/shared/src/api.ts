@@ -67,21 +67,10 @@ export const retentionSchema = z.object({
   days: z.number().int().min(1).max(365).optional(),
 });
 
-export const authorizationSchema = z.object({
-  authorizerName: z.string().trim().min(1).max(200),
-  authorizerRole: z.string().trim().min(1).max(200),
-  authorizerEmail: z.email().max(320),
-  authorizedOn: z.iso.date(),
-  validUntil: z.iso.date(),
-  confirmed: z.literal(true),
-});
-export type Authorization = z.infer<typeof authorizationSchema>;
-
 export const userInputSchema = z.object({
   email: z.email().max(320),
   name: z.string().trim().min(1).max(200),
   role: z.enum(ROLES),
-  allCustomers: z.boolean().default(false),
   active: z.boolean().default(true),
 });
 
@@ -99,6 +88,5 @@ export const brandingSchema = z.object({
   website: z.string().trim().max(200).default(''),
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#4f46e5'),
   disclaimer: z.string().max(4000).default(''),
-  classification: z.enum(['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED']).default('TLP:AMBER'),
 });
 export type Branding = z.infer<typeof brandingSchema>;

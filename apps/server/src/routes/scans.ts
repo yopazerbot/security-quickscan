@@ -1,6 +1,5 @@
 import { IMPLEMENTED_CHECKS, testConnection, verifyMsConsent } from '@qs/checks';
 import {
-  authorizationSchema,
   awsSecretSchema,
   CHECKS,
   CHECKS_BY_ID,
@@ -20,11 +19,11 @@ import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { assertCustomerAccess, sessionStillValid } from '../auth/session.js';
+import { accessibleCustomerIds, assertCustomerAccess, customerAccess, requireUser, sessionStillValid } from '../auth/session.js';
 import { scannerEnv } from '../config.js';
 import { badRequest, HttpError, notFound, type AppCtx } from '../context.js';
 import { randomToken, sha256 } from '../crypto/envelope.js';
-import { authStates, checkResults, credentials, customerAssignments, customers, msTenantBindings, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
+import { authStates, checkResults, credentials, customers, msTenantBindings, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
 import { applyRetention } from '../retention.js';
 import { loadScan, parse, uuidParam } from './helpers.js';
 
@@ -50,7 +49,6 @@ export async function resolveTenantGuid(tenantRef: string): Promise<string | nul
 type SystemRow = typeof scanSystems.$inferSelect;
 
 export const credAad = (scanId: string, systemId: string) => `cred:${scanId}:${systemId}`;
-const docAad = (scanId: string) => `doc:${scanId}`;
 
 export function needsSecret(provider: Provider, mode: string) {
   return (provider === 'aws' && mode === 'access_keys') || ((provider === 'm365' || provider === 'azure') && mode === 'app_secret') || (provider === 'github' && mode === 'token');
@@ -193,15 +191,13 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get('/api/scans/:scanId', async (req) => {
     const scan = await loadScan(ctx, req);
     const c = (await db.select({ id: customers.id, name: customers.name }).from(customers).where(eq(customers.id, scan.customerId)))[0];
-    const { authorizationDoc, ...rest } = scan;
-    return { ...rest, hasAuthorizationDoc: Boolean(authorizationDoc), customer: c, systems: await systemsOf(scan.id) };
+    return { ...scan, customer: { ...c, myAccess: await customerAccess(ctx, req.user!, scan.customerId) }, systems: await systemsOf(scan.id) };
   });
 
   const patchSchema = z.object({
     name: z.string().trim().min(1).max(200).optional(),
     context: customerContextSchema.optional(),
     retention: retentionSchema.optional(),
-    authorization: authorizationSchema.optional(),
     wizardStep: z.number().int().min(0).max(10).optional(),
   });
 
@@ -221,10 +217,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       set.retentionMode = body.retention.mode;
       set.retentionDays = body.retention.mode === 'days' ? (body.retention.days ?? 30) : null;
     }
-    if (body.authorization) {
-      if (body.authorization.validUntil < body.authorization.authorizedOn) throw badRequest('"Valid until" must be after the authorisation date');
-      set.authorization = body.authorization;
-    }
     const [updated] = await db.update(scans).set(set).where(eq(scans.id, scan.id)).returning();
     if (body.retention) {
       const ids = (await db.select({ id: scanSystems.id }).from(scanSystems).where(eq(scanSystems.scanId, scan.id))).map((r) => r.id);
@@ -232,7 +224,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       await audit(ctx, req, 'scan.retention', { type: 'scan', id: scan.id }, body.retention);
     }
     if (body.context || body.name) await audit(ctx, req, 'scan.update', { type: 'scan', id: scan.id }, { name: body.name, contextChanged: Boolean(body.context) });
-    if (body.authorization) await audit(ctx, req, 'scan.authorization', { type: 'scan', id: scan.id }, { authorizer: body.authorization.authorizerEmail, validUntil: body.authorization.validUntil });
     return { ok: true };
   });
 
@@ -403,29 +394,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     return { ok: true, scanId: data.scanId, systemId: s.id };
   });
 
-  // ---------- authorisation document ----------
-
-  app.put('/api/scans/:scanId/authorization-doc', { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
-    if (req.user?.isDemo) throw new HttpError(403, 'Uploads are not available in a demo session');
-    const scan = await loadScan(ctx, req, { write: true, draft: true });
-    const { filename, contentBase64 } = parse(z.object({ filename: z.string().max(200), contentBase64: z.string().max(7_500_000) }), req.body);
-    const buf = Buffer.from(contentBase64, 'base64');
-    if (buf.length > 5 * 1024 * 1024) throw badRequest('File too large (max 5 MB)');
-    if (buf.subarray(0, 5).toString('latin1') !== '%PDF-') throw badRequest('Only PDF files are accepted');
-    const name = filename.replace(/[^\w.\- ]/g, '_').slice(0, 120) || 'authorisation.pdf';
-    await db.update(scans).set({ authorizationDoc: envelope.encrypt(buf, docAad(scan.id)), authorizationDocName: name }).where(eq(scans.id, scan.id));
-    await audit(ctx, req, 'scan.authorization_doc', { type: 'scan', id: scan.id }, { filename: name, bytes: buf.length });
-    return { ok: true };
-  });
-
-  app.get('/api/scans/:scanId/authorization-doc', async (req, reply) => {
-    const scan = await loadScan(ctx, req);
-    if (!scan.authorizationDoc) throw notFound();
-    const pdf = envelope.decrypt(scan.authorizationDoc, docAad(scan.id));
-    reply.header('Content-Type', 'application/pdf').header('Content-Disposition', `attachment; filename="${scan.authorizationDocName ?? 'authorisation.pdf'}"`);
-    return reply.send(pdf);
-  });
-
   // ---------- criteria ----------
 
   app.get('/api/scans/:scanId/criteria', async (req) => {
@@ -459,10 +427,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.post('/api/scans/:scanId/start', async (req) => {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     if (req.user!.isDemo) await demoQuota('running');
-    const auth = authorizationSchema.safeParse(scan.authorization);
-    if (!auth.success) throw badRequest('Record the assessment authorisation before starting the scan');
-    const d = today();
-    if (d < auth.data.authorizedOn || d > auth.data.validUntil) throw badRequest('Today is outside the authorised testing window');
     const sys = await db.select().from(scanSystems).where(eq(scanSystems.scanId, scan.id));
     if (!sys.length) throw badRequest('Add at least one system to scan');
     const creds = new Set((await db.select({ id: credentials.systemId }).from(credentials).where(inArray(credentials.systemId, sys.map((s) => s.id)))).map((r) => r.id));
@@ -525,7 +489,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
           riskProfile: computeRiskProfile(context),
           retentionMode: scan.retentionMode,
           retentionDays: scan.retentionDays,
-          authorization: scan.authorization,
           createdBy: req.user!.id,
         })
         .returning();
@@ -613,7 +576,8 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     while (!closed && ticks++ < MAX_TICKS) {
       try {
         // A revoked session or deactivated user must not keep streaming.
-        if (ticks % 15 === 0 && !(await sessionStillValid(ctx, req.session!.idHash))) break;
+        // Stop streaming once the session ends or access to the organisation is withdrawn.
+        if (ticks % 15 === 0 && (!(await sessionStillValid(ctx, req.session!.idHash)) || !(await customerAccess(ctx, req.user!, scan.customerId)))) break;
         const snap = await snapshot(scan.id);
         const json = JSON.stringify(snap);
         if (json !== last) {
@@ -633,10 +597,8 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   app.get('/api/scans', async (req) => {
     // Recent scans across accessible customers (dashboard).
-    const u = req.user;
-    if (!u) throw new HttpError(401, 'Not signed in');
-    const all = u.role === 'admin' || u.allCustomers;
-    const allowed = all ? null : (await db.select({ id: customerAssignments.customerId }).from(customerAssignments).where(eq(customerAssignments.userId, u.id))).map((r) => r.id);
+    const u = requireUser(req);
+    const allowed = await accessibleCustomerIds(ctx, u);
     if (allowed && !allowed.length) return [];
     return db
       .select({ id: scans.id, name: scans.name, status: scans.status, score: scans.score, grade: scans.grade, createdAt: scans.createdAt, finishedAt: scans.finishedAt, customerId: scans.customerId, customerName: customers.name, isDemo: customers.isDemo })

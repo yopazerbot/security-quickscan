@@ -2,7 +2,6 @@ import {
   CHECKS_BY_ID,
   PROVIDER_LABELS,
   SEVERITIES,
-  type Authorization,
   type Branding,
   type CustomerContext,
   type Provider,
@@ -44,7 +43,7 @@ export interface ReportItem {
 
 export interface ReportModel {
   generatedAt: string;
-  scan: { id: string; name: string; status: string; startedAt: Date | null; finishedAt: Date | null; retentionMode: string; authorization: Authorization | null };
+  scan: { id: string; name: string; status: string; startedAt: Date | null; finishedAt: Date | null; retentionMode: string };
   customer: { id: string; name: string; country: string; context: CustomerContext };
   riskProfile: RiskProfile;
   branding: Branding;
@@ -138,7 +137,6 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
       startedAt: scan.startedAt,
       finishedAt: scan.finishedAt,
       retentionMode: scan.retentionMode,
-      authorization: (scan.authorization as Authorization) ?? null,
     },
     customer: { id: customer.id, name: customer.name, country: customer.country, context: customer.context as CustomerContext },
     riskProfile: scan.riskProfile as RiskProfile,

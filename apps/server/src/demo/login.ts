@@ -37,14 +37,14 @@ export async function ensureDemoUser(ctx: AppCtx): Promise<string> {
   if (!u) {
     [u] = await ctx.db
       .insert(users)
-      .values({ email: DEMO_EMAIL, name: 'Demo visitor', role: 'consultant', allCustomers: false, isDemo: true })
+      .values({ email: DEMO_EMAIL, name: 'Demo visitor', role: 'consultant', isDemo: true })
       .returning();
   }
   const demoCustomers = await ctx.db.select({ id: customers.id }).from(customers).where(eq(customers.isDemo, true));
   if (demoCustomers.length) {
     await ctx.db
       .insert(customerAssignments)
-      .values(demoCustomers.map((c) => ({ userId: u.id, customerId: c.id })))
+      .values(demoCustomers.map((c) => ({ userId: u.id, customerId: c.id, permission: 'edit' as const })))
       .onConflictDoNothing();
   }
   return u.id;

@@ -1,7 +1,7 @@
 import { DEFAULT_CONTEXT, type CustomerContext } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import { ContextForm, RiskProfilePanel } from '../components/ContextForm';
 import { useToast } from '../components/feedback';
 import { Alert, Button, Card, ErrorState, Field, Input, PageHeader, PageLoader, Textarea } from '../components/ui';
@@ -28,6 +28,8 @@ export function CustomerEdit() {
 
   if (customerId && existing.isError) return <ErrorState error={existing.error} onRetry={() => existing.refetch()} />;
   if (customerId && existing.isLoading) return <PageLoader />;
+  // View-only access: nothing to edit here.
+  if (customerId && existing.data?.myAccess === 'view') return <Navigate to={`/organisations/${customerId}`} replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

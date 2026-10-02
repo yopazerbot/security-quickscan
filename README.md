@@ -24,7 +24,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
   - a branded [PDF report](docs/sample-report.pdf);
   - CSV exports of findings and of the Annex A control assessment.
 - **Triage that sticks.** Mark findings as risk accepted or false positive with a note; this carries over to later scans of the same organisation and is reflected in the score.
-- **Multi-organisation and multi-user** (hosted mode): admin, analyst and viewer roles, per-organisation access, and an append-only audit log.
+- **Private by default** (hosted mode): each user sees only the organisations they own; the owner shares an organisation with specific colleagues as view or edit, on a need-to-know basis. Admin, analyst and viewer roles and an append-only audit log.
 - **Demo mode** with a realistic fictional organisation, for trying the tool or giving others a tour, plus an optional PIN login for demo visitors.
 
 ## Screenshots
@@ -85,7 +85,7 @@ Do not expose local mode to a network. To share the tool with colleagues or a wi
 2. **Scope.** Add the environments to assess: Microsoft 365 tenants, Azure tenants, AWS accounts and GitHub organisations, as many of each as needed.
 3. **Access.** Follow the per-platform guidance, store the read-only credentials (or use a secret-less method) and run a connection test. Choose how long secrets are kept.
 4. **Criteria.** Review the checks selected for the risk profile, grouped by platform or by ISO control. Exclude anything out of scope with a reason; exclusions appear in the report.
-5. **Launch.** Record who authorised the assessment and the validity window (optionally upload the signed letter). Scans cannot run outside that window. Watch the scan run live, then open the report.
+5. **Review and start.** Check that every system is connected, see how many checks will run and how secrets are retained, then start the scan. Watch it run live, then open the report.
 
 Rescan later with one click: scope, criteria and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
 
@@ -191,7 +191,7 @@ Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTE
 ## Security model
 
 - **Authentication (hosted):** Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after 30 minutes idle and 8 hours absolute, and rotate at login.
-- **Authorisation:** invite-only users; roles admin, analyst and viewer; organisation scoping on every query (other organisations return 404, not 403).
+- **Access control (need-to-know):** invite-only users with roles admin, analyst and viewer. Every organisation has an owner, who decides who else may view or edit it; other users get 404, not 403, so they cannot even tell it exists. Shares go to existing accounts by email (no user directory is exposed), viewer accounts always stay read-only, and admins can see and manage all organisations. Access is checked on every request and re-checked on live progress streams.
 - **CSRF:** SameSite=Strict cookies, a per-session CSRF token header, and Origin / `Sec-Fetch-Site` checks on every state-changing request.
 - **Stored credentials:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
 - **Least privilege:** read-only permissions only. The preferred methods (AWS role with external ID, Microsoft admin consent) avoid exchanging secrets at all.
@@ -201,7 +201,7 @@ Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTE
   - parameterised SQL;
   - HTTP calls to the Microsoft and GitHub APIs are restricted to allow-listed hosts with redirects disabled, and no user-supplied URLs are ever fetched;
   - secrets, cookies and OAuth codes redacted from logs;
-  - CSV formula-injection protection, PNG/JPEG-only logo upload, PDF-only authorisation upload.
+  - CSV formula-injection protection and PNG/JPEG-only logo upload.
 - **Audit:** an append-only audit log of logins, break-glass and demo access, credential storage, use and purge, scans, exports and admin changes. A database trigger blocks updates and deletes.
 - **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit` and gitleaks, plus CodeQL code scanning.
 
@@ -309,7 +309,7 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Ne
 
 ## Responsible use
 
-Only scan environments you are authorised to assess. The tool records who authorised each scan and blocks scans outside the authorised window, but the responsibility stays with you. The software is provided without warranty (see the license).
+Only scan environments you are authorised to assess; obtaining that permission is your responsibility. The software is provided without warranty (see the license).
 
 Microsoft, Entra, Azure, AWS and GitHub are trademarks of their respective owners. This project is not affiliated with or endorsed by them. ISO/IEC 27001 control titles are paraphrased for reference.
 

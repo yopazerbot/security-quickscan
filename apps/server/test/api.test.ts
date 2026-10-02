@@ -8,7 +8,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { randomToken, sha256 } from '../src/crypto/envelope.js';
 import { createDb, runMigrations } from '../src/db/index.js';
-import { customerAssignments, sessions, users } from '../src/db/schema.js';
+import { sessions, users } from '../src/db/schema.js';
 import { DEFAULT_CONTEXT } from '@qs/shared';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -29,14 +29,14 @@ d('API authorisation', () => {
   } as any);
   const { db, pool } = createDb(config);
   let app: Awaited<ReturnType<typeof buildApp>>['app'];
-  const S: Record<string, { cookie: string; csrf: string; id: string }> = {};
+  const S: Record<string, { cookie: string; csrf: string; id: string; email: string }> = {};
 
   async function login(role: 'admin' | 'consultant' | 'viewer', name: string) {
     const [u] = await db.insert(users).values({ email: `${name}-${randomToken(4)}@test.local`, name, role }).returning();
     const token = randomToken();
     const csrf = randomToken();
     await db.insert(sessions).values({ idHash: sha256(token), userId: u.id, csrfToken: csrf, authMethod: 'test', expiresAt: new Date(Date.now() + 3600_000) });
-    S[name] = { cookie: `qs_session=${token}`, csrf, id: u.id };
+    S[name] = { cookie: `qs_session=${token}`, csrf, id: u.id, email: u.email };
   }
   const req = (who: string, method: string, path: string, payload?: unknown, extra: Record<string, string> = {}) =>
     app.inject({ method: method as any, url: path, payload: payload as any, headers: { cookie: S[who].cookie, 'x-csrf-token': S[who].csrf, origin: 'http://localhost:8080', ...extra } });
@@ -48,6 +48,7 @@ d('API authorisation', () => {
     await login('consultant', 'alice');
     await login('consultant', 'bob');
     await login('viewer', 'victor');
+    await login('consultant', 'carol');
   });
   afterAll(async () => {
     await app.close();
@@ -60,23 +61,84 @@ d('API authorisation', () => {
     expect((await app.inject({ method: 'GET', url: '/api/customers' })).statusCode).toBe(401);
   });
 
-  it('isolates customers between consultants', async () => {
+  it('isolates organisations: only the owner and admins see them by default', async () => {
     const created = await req('alice', 'POST', '/api/customers', customer('Alice Corp'));
     expect(created.statusCode).toBe(200);
     const id = created.json().id;
-    expect((await req('alice', 'GET', `/api/customers/${id}`)).statusCode).toBe(200);
+    const mine = await req('alice', 'GET', `/api/customers/${id}`);
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json().myAccess).toBe('owner');
     expect((await req('bob', 'GET', `/api/customers/${id}`)).statusCode).toBe(404);
     expect((await req('bob', 'GET', '/api/customers')).json().some((c: any) => c.id === id)).toBe(false);
     expect((await req('bob', 'POST', `/api/customers/${id}/scans`, {})).statusCode).toBe(404);
+    const sid = (await req('alice', 'POST', `/api/customers/${id}/scans`, {})).json().id;
+    expect((await req('bob', 'GET', `/api/scans/${sid}`)).statusCode).toBe(404);
+    expect((await req('bob', 'GET', '/api/scans')).json().some((s: any) => s.id === sid)).toBe(false);
+    const admin = await req('admin', 'GET', `/api/customers/${id}`);
+    expect(admin.statusCode).toBe(200);
+    expect(admin.json().myAccess).toBe('admin');
+  });
+
+  it('shares an organisation with view or edit access, and revokes it', async () => {
+    const id = (await req('alice', 'POST', '/api/customers', customer('Share Corp'))).json().id;
+    const share = (who: string, permission: string, email = S[who].email) => req('alice', 'POST', `/api/customers/${id}/shares`, { email: email.toUpperCase(), permission });
+    expect((await share('bob', 'view')).statusCode).toBe(200);
+    const asBob = await req('bob', 'GET', `/api/customers/${id}`);
+    expect(asBob.statusCode).toBe(200);
+    expect(asBob.json().myAccess).toBe('view');
+    expect(asBob.json().shares).toEqual([]);
+    expect(asBob.json().owner.email).toBe('');
+    expect((await req('bob', 'GET', '/api/customers')).json().find((c: any) => c.id === id)).toMatchObject({ owned: false, ownerName: 'alice' });
+    expect((await req('bob', 'POST', `/api/customers/${id}/scans`, {})).statusCode).toBe(403);
+    expect((await req('bob', 'PUT', `/api/customers/${id}`, customer('Renamed'))).statusCode).toBe(403);
+    // Only the owner (or an admin) manages access.
+    expect((await req('bob', 'POST', `/api/customers/${id}/shares`, { email: S.carol.email, permission: 'view' })).statusCode).toBe(403);
+    expect((await req('bob', 'DELETE', `/api/customers/${id}`)).statusCode).toBe(403);
+
+    expect((await req('alice', 'PATCH', `/api/customers/${id}/shares/${S.bob.id}`, { permission: 'edit' })).statusCode).toBe(200);
+    expect((await req('bob', 'POST', `/api/customers/${id}/scans`, {})).statusCode).toBe(200);
+    expect((await req('alice', 'GET', `/api/customers/${id}`)).json().shares.map((x: any) => [x.userId, x.permission])).toEqual([[S.bob.id, 'edit']]);
+
+    expect((await req('alice', 'DELETE', `/api/customers/${id}/shares/${S.bob.id}`)).statusCode).toBe(200);
+    expect((await req('bob', 'GET', `/api/customers/${id}`)).statusCode).toBe(404);
     expect((await req('admin', 'GET', `/api/customers/${id}`)).statusCode).toBe(200);
   });
 
-  it('keeps viewers read-only', async () => {
-    const id = (await req('alice', 'POST', '/api/customers', customer('Shared Corp'))).json().id;
-    await db.insert(customerAssignments).values({ userId: S.victor.id, customerId: id });
-    expect((await req('victor', 'GET', `/api/customers/${id}`)).statusCode).toBe(200);
+  it('only shares with existing active accounts', async () => {
+    const id = (await req('alice', 'POST', '/api/customers', customer('Lookup Corp'))).json().id;
+    const r = await req('alice', 'POST', `/api/customers/${id}/shares`, { email: 'nobody@test.local', permission: 'view' });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error).toMatch(/no active account/i);
+    expect((await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.alice.email, permission: 'view' })).statusCode).toBe(400);
+  });
+
+  it('keeps viewer accounts read-only, even when shared with edit', async () => {
+    const id = (await req('alice', 'POST', '/api/customers', customer('Viewer Corp'))).json().id;
+    expect((await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.victor.email, permission: 'edit' })).statusCode).toBe(200);
+    const v = await req('victor', 'GET', `/api/customers/${id}`);
+    expect(v.statusCode).toBe(200);
+    expect(v.json().myAccess).toBe('view');
     expect((await req('victor', 'POST', `/api/customers/${id}/scans`, {})).statusCode).toBe(403);
     expect((await req('victor', 'POST', '/api/customers', customer('Nope'))).statusCode).toBe(403);
+    // A read-only account cannot become owner.
+    expect((await req('alice', 'PUT', `/api/customers/${id}/owner`, { userId: S.victor.id })).statusCode).toBe(400);
+  });
+
+  it('lets a user leave a shared organisation', async () => {
+    const id = (await req('alice', 'POST', '/api/customers', customer('Leave Corp'))).json().id;
+    await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.carol.email, permission: 'view' });
+    expect((await req('carol', 'DELETE', `/api/customers/${id}/shares/${S.carol.id}`)).statusCode).toBe(200);
+    expect((await req('carol', 'GET', `/api/customers/${id}`)).statusCode).toBe(404);
+  });
+
+  it('transfers ownership to someone with access', async () => {
+    const id = (await req('alice', 'POST', '/api/customers', customer('Transfer Corp'))).json().id;
+    expect((await req('alice', 'PUT', `/api/customers/${id}/owner`, { userId: S.carol.id })).statusCode).toBe(400);
+    await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.carol.email, permission: 'view' });
+    expect((await req('alice', 'PUT', `/api/customers/${id}/owner`, { userId: S.carol.id })).statusCode).toBe(200);
+    expect((await req('carol', 'GET', `/api/customers/${id}`)).json().myAccess).toBe('owner');
+    expect((await req('alice', 'GET', `/api/customers/${id}`)).json().myAccess).toBe('edit');
+    expect((await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.bob.email, permission: 'view' })).statusCode).toBe(403);
   });
 
   it('restricts admin endpoints', async () => {
@@ -103,13 +165,13 @@ d('API authorisation', () => {
     expect(audit).not.toContain(token);
   });
 
-  it('refuses to start without authorisation and a tested connection', async () => {
+  it('refuses to start without credentials', async () => {
     const cid = (await req('alice', 'POST', '/api/customers', customer('Start Corp'))).json().id;
     const sid = (await req('alice', 'POST', `/api/customers/${cid}/scans`, {})).json().id;
     await req('alice', 'POST', `/api/scans/${sid}/systems`, { provider: 'github', label: 'GH', config: { authMode: 'token', org: 'acme' } });
     const r = await req('alice', 'POST', `/api/scans/${sid}/start`);
     expect(r.statusCode).toBe(400);
-    expect(r.json().error).toMatch(/authorisation/i);
+    expect(r.json().error).toMatch(/credentials/i);
   });
 
   it('applies customer context changes to draft scans only', async () => {

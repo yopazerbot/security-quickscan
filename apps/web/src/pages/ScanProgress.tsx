@@ -8,7 +8,7 @@ import { AsyncButton } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { Alert, Button, Card, ErrorState, LinkButton, PageHeader, PageLoader, StatusBadge } from '../components/ui';
 import { get, post } from '../lib/api';
-import { useCan } from '../lib/auth';
+import { accessCan } from '../lib/auth';
 import { fmtDuration, GRADE_HEX, STATUS_STYLE } from '../lib/format';
 import type { WizardScan } from './wizard/ScanWizard';
 
@@ -105,7 +105,6 @@ export function ScanProgress() {
   const { scanId } = useParams();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const can = useCan();
   const scan = useQuery({ queryKey: ['scan', scanId], queryFn: () => get<WizardScan>(`/api/scans/${scanId}`) });
   const snap = useScanStream(scanId!);
   const active = Boolean(snap && !TERMINAL.includes(snap.status));
@@ -139,6 +138,7 @@ export function ScanProgress() {
   const finished = snap.status === 'completed' || snap.status === 'cancelled';
   const failed = snap.status === 'failed';
   const customerUrl = `/organisations/${scan.data.customer.id}`;
+  const can = accessCan(scan.data.customer.myAccess);
   const rescan = async () => {
     const r = await post<{ id: string }>(`/api/scans/${scanId}/rescan`);
     void qc.invalidateQueries({ queryKey: ['scans'] });
@@ -155,7 +155,7 @@ export function ScanProgress() {
         subtitle={scan.data.name}
         actions={
           <>
-            {active && can.write &&
+            {active && can.edit &&
               (snap.cancelRequested ? (
                 <Button variant="secondary" icon={<Loader2 className="size-4 animate-spin" />} disabled>
                   Cancelling...
@@ -198,7 +198,7 @@ export function ScanProgress() {
                 View partial report
               </LinkButton>
             )}
-            {can.write && (
+            {can.edit && (
               <AsyncButton variant={done > 0 ? 'secondary' : 'primary'} icon={<RefreshCw className="size-4" />} onClick={rescan}>
                 Start a rescan
               </AsyncButton>

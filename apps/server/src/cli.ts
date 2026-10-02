@@ -68,13 +68,6 @@ async function main() {
           await tx.update(credentials).set({ blob: oldEnv.rewrap(r.c.blob, aad, newEnv), keyVersion: r.c.keyVersion + 1 }).where(eq(credentials.systemId, r.c.systemId));
           n++;
         }
-        const docs = await tx.select({ id: scans.id, doc: scans.authorizationDoc }).from(scans);
-        for (const d of docs) {
-          if (!d.doc) continue;
-          if (decryptsWith(newEnv, d.doc, `doc:${d.id}`)) continue;
-          await tx.update(scans).set({ authorizationDoc: oldEnv.rewrap(d.doc, `doc:${d.id}`, newEnv) }).where(eq(scans.id, d.id));
-          n++;
-        }
       });
       await pool.end();
       console.log(`Re-encrypted ${n} item(s). Remove MASTER_KEY_PREVIOUS now.`);

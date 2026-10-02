@@ -170,7 +170,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       if (byEmail && !byEmail.entraOid && !byEmail.isBreakglass) {
         [user] = await ctx.db.update(users).set({ entraOid: oid, name: String(claims.name ?? byEmail.name) }).where(eq(users.id, byEmail.id)).returning();
       } else if (!byEmail && config.BOOTSTRAP_ADMIN_EMAIL && email === config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && !(await realAdminExists(ctx))) {
-        [user] = await ctx.db.insert(users).values({ email, name: String(claims.name ?? email), role: 'admin', allCustomers: true, entraOid: oid }).returning();
+        [user] = await ctx.db.insert(users).values({ email, name: String(claims.name ?? email), role: 'admin', entraOid: oid }).returning();
         await audit(ctx, req, 'user.bootstrap_admin', { type: 'user', id: user.id }, undefined, { id: user.id, email });
       }
     }
@@ -224,7 +224,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (!user) {
       [user] = await ctx.db
         .insert(users)
-        .values({ email: 'breakglass@local', name: 'Break-glass administrator', role: 'admin', allCustomers: true, isBreakglass: true })
+        .values({ email: 'breakglass@local', name: 'Break-glass administrator', role: 'admin', isBreakglass: true })
         .returning();
     }
     await createSession(ctx, req, reply, user.id, 'breakglass');
@@ -245,6 +245,6 @@ const LOCAL_EMAIL = 'local-admin@localhost';
 async function ensureLocalAdmin(ctx: AppCtx): Promise<string> {
   const u = (await ctx.db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${LOCAL_EMAIL}`).limit(1))[0];
   if (u) return u.id;
-  const [created] = await ctx.db.insert(users).values({ email: LOCAL_EMAIL, name: 'Local administrator', role: 'admin', allCustomers: true }).returning();
+  const [created] = await ctx.db.insert(users).values({ email: LOCAL_EMAIL, name: 'Local administrator', role: 'admin' }).returning();
   return created.id;
 }

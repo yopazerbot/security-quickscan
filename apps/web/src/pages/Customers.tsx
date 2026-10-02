@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { Building2, Plus, Search, SearchX, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, Input, LinkButton, PageHeader, PageLoader } from '../components/ui';
+import { Badge, Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, Input, LinkButton, PageHeader, PageLoader } from '../components/ui';
 import { get } from '../lib/api';
 import { useCan } from '../lib/auth';
 import { fmtDate } from '../lib/format';
@@ -62,7 +62,9 @@ export function Customers() {
               )
             }
           >
-            Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan.
+            {can.write
+              ? 'Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan. Only you can see it until you share it.'
+              : 'Organisations appear here once their owner shares them with you.'}
           </EmptyState>
         </Card>
       ) : (
@@ -116,6 +118,15 @@ export function Customers() {
                         {c.isDemo && <DemoBadge />}
                       </div>
                       <div className="mt-0.5 truncate text-sm text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
+                      {!c.owned &&
+                        (can.admin ? (
+                          c.ownerName && <div className="mt-1.5 truncate text-xs text-slate-500">Owner: {c.ownerName}</div>
+                        ) : (
+                          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                            <Badge className="bg-brand-50 text-brand-700 ring-1 ring-brand-100">Shared with you</Badge>
+                            {c.ownerName && <span className="truncate">by {c.ownerName}</span>}
+                          </div>
+                        ))}
                     </div>
                     <GradeBadge grade={c.latestScan?.grade} />
                   </div>

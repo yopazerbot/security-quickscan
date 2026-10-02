@@ -4,7 +4,7 @@ import type { Role } from '@qs/shared';
 import type { AppCtx, SessionUser } from '../context.js';
 import { forbidden, HttpError } from '../context.js';
 import { randomToken, safeEqual, sha256 } from '../crypto/envelope.js';
-import { customerAssignments, sessions, users } from '../db/schema.js';
+import { customerAssignments, customers, sessions, users } from '../db/schema.js';
 
 export const cookieName = (ctx: AppCtx) => (ctx.config.COOKIE_SECURE ? '__Host-qs_session' : 'qs_session');
 
@@ -67,7 +67,6 @@ export async function loadSession(ctx: AppCtx, req: FastifyRequest) {
     email: row.u.email,
     name: row.u.name,
     role: row.u.role,
-    allCustomers: row.u.allCustomers,
     isBreakglass: row.u.isBreakglass,
     isDemo: row.u.isDemo,
   };
@@ -97,21 +96,46 @@ export function requireRole(req: FastifyRequest, ...roles: Role[]): SessionUser 
   return u;
 }
 
-export async function canAccessCustomer(ctx: AppCtx, user: SessionUser, customerId: string): Promise<boolean> {
-  if (user.role === 'admin' || user.allCustomers) return true;
+/** A user's access to one organisation: admins see everything, otherwise owner or an explicit share (need-to-know). */
+export type CustomerAccess = 'admin' | 'owner' | 'edit' | 'view';
+export type AccessNeed = 'view' | 'edit' | 'manage';
+
+export async function customerAccess(ctx: AppCtx, user: SessionUser, customerId: string): Promise<CustomerAccess | null> {
   const r = await ctx.db
-    .select({ one: sql`1` })
-    .from(customerAssignments)
-    .where(and(eq(customerAssignments.userId, user.id), eq(customerAssignments.customerId, customerId)))
+    .select({ ownerId: customers.ownerId, permission: customerAssignments.permission })
+    .from(customers)
+    .leftJoin(customerAssignments, and(eq(customerAssignments.customerId, customers.id), eq(customerAssignments.userId, user.id)))
+    .where(eq(customers.id, customerId))
     .limit(1);
-  return r.length > 0;
+  if (!r[0]) return null;
+  if (user.role === 'admin') return 'admin';
+  const access: CustomerAccess | null = r[0].ownerId === user.id ? 'owner' : r[0].permission;
+  // A viewer account stays read-only, whatever it was shared with.
+  return access && user.role === 'viewer' ? 'view' : access;
 }
 
-/** Throws 404 (not 403) so the existence of other customers is not revealed. */
-export async function assertCustomerAccess(ctx: AppCtx, req: FastifyRequest, customerId: string, write = false) {
+export function allows(access: CustomerAccess | null, need: AccessNeed): boolean {
+  if (!access) return false;
+  if (need === 'view') return true;
+  if (need === 'edit') return access !== 'view';
+  return access === 'owner' || access === 'admin';
+}
+
+/** Organisation ids a user may see; null means all (admins). */
+export async function accessibleCustomerIds(ctx: AppCtx, user: SessionUser): Promise<string[] | null> {
+  if (user.role === 'admin') return null;
+  const owned = await ctx.db.select({ id: customers.id }).from(customers).where(eq(customers.ownerId, user.id));
+  const shared = await ctx.db.select({ id: customerAssignments.customerId }).from(customerAssignments).where(eq(customerAssignments.userId, user.id));
+  return [...new Set([...owned, ...shared].map((r) => r.id))];
+}
+
+/** Throws 404 (not 403) without any access, so the existence of other organisations is not revealed. */
+export async function assertCustomerAccess(ctx: AppCtx, req: FastifyRequest, customerId: string, need: AccessNeed | boolean = 'view') {
   const u = requireUser(req);
-  if (write && u.role === 'viewer') throw forbidden('Read-only account');
-  if (!(await canAccessCustomer(ctx, u, customerId))) throw new HttpError(404, 'Not found');
+  const n: AccessNeed = need === true ? 'edit' : need === false ? 'view' : need;
+  const access = await customerAccess(ctx, u, customerId);
+  if (!access) throw new HttpError(404, 'Not found');
+  if (!allows(access, n)) throw forbidden(u.role === 'viewer' ? 'Read-only account' : n === 'manage' ? 'Only the owner can do this' : 'You have view-only access');
   return u;
 }
 
