@@ -12,7 +12,7 @@ export interface ScoreInput {
   checkId: string;
   status: ResultStatus;
   severity: Severity;
-  /** Consultant triage carried across scans for the same customer. */
+  /** Triage carried across scans for the same organisation. */
   triage?: 'open' | 'accepted' | 'false_positive' | null;
 }
 

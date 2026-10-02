@@ -39,12 +39,12 @@ export function Customers() {
   return (
     <>
       <PageHeader
-        title="Customers"
-        subtitle="Each customer has its own context, risk profile and scan history."
+        title="Organisations"
+        subtitle="Each organisation has its own context, risk profile and scan history."
         actions={
           can.write && (
-            <LinkButton to="/customers/new" icon={<Plus className="size-4" aria-hidden />}>
-              New customer
+            <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
+              New organisation
             </LinkButton>
           )
         }
@@ -53,16 +53,16 @@ export function Customers() {
         <Card>
           <EmptyState
             icon={<Building2 className="size-6" />}
-            title="No customers yet"
+            title="No organisations yet"
             action={
               can.write && (
-                <LinkButton to="/customers/new" icon={<Plus className="size-4" aria-hidden />}>
-                  Add your first customer
+                <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
+                  Add your first organisation
                 </LinkButton>
               )
             }
           >
-            Capture the customer context once; it drives the risk profile and evaluation criteria of every scan.
+            Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan.
           </EmptyState>
         </Card>
       ) : (
@@ -71,8 +71,8 @@ export function Customers() {
             <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" aria-hidden />
             <Input
               type="search"
-              aria-label="Search customers"
-              placeholder="Search customers"
+              aria-label="Search organisations"
+              placeholder="Search organisations"
               className={q ? 'px-9' : 'pl-9'}
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -95,20 +95,20 @@ export function Customers() {
             <Card>
               <EmptyState
                 icon={<SearchX className="size-6" />}
-                title="No customers match"
+                title="No organisations match"
                 action={
                   <Button variant="secondary" icon={<X className="size-4" aria-hidden />} onClick={() => setQ('')}>
                     Clear search
                   </Button>
                 }
               >
-                No customer name contains "{q.trim()}". Check the spelling or clear the search to see all customers.
+                No organisation name contains "{q.trim()}". Check the spelling or clear the search to see all organisations.
               </EmptyState>
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {rows.map((c) => (
-                <Link key={c.id} to={`/customers/${c.id}`} className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
+                <Link key={c.id} to={`/organisations/${c.id}`} className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">

@@ -24,10 +24,10 @@ export const DEMO_CONTEXT: CustomerContext = {
   crownJewels: 'Transport management system (TMS), EDI connections with shippers, driver planning data and invoicing. Ransomware on the TMS would stop operations within hours.',
 };
 
-/** Criteria excluded in the seeded scans, with the consultant's reason. */
+/** Criteria excluded in the seeded scans, with the reason for each exclusion. */
 const EXCLUSIONS: Record<string, string> = {
   'm365.device-compliance': 'Intune roll-out is planned for Q1 2027; agreed out of scope for this assessment.',
-  'aws.kms-rotation': 'Only AWS managed keys are used for production data according to the customer.',
+  'aws.kms-rotation': 'Only AWS managed keys are used for production data according to the IT team.',
 };
 
 const TRIAGE = [
@@ -151,7 +151,7 @@ async function createScan(
   return scan.id;
 }
 
-/** Creates the fictional demo customer with history. Returns false when demo data already exists. */
+/** Creates the fictional demo organisation with history. Returns false when demo data already exists. */
 export async function seedDemo(ctx: AppCtx): Promise<boolean> {
   const now = Date.now();
   const firstScan = new Date(now - 124 * DAY);
@@ -178,7 +178,7 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
         contactEmail: `els.vandenberghe@${DEMO_COMPANY.domain}`,
         country: 'Belgium',
         notes:
-          'Fictional demo customer. Regional logistics company (road transport and warehousing, 140 employees, 3 sites). IT partly outsourced to an MSP; in-house team builds the route planner and driver app. Preparing for NIS2 and ISO 27001 certification in 2027.',
+          'Fictional demo organisation. Regional logistics company (road transport and warehousing, 140 employees, 3 sites). IT partly outsourced to an MSP; in-house team builds the route planner and driver app. Preparing for NIS2 and ISO 27001 certification in 2027.',
         context: DEMO_CONTEXT,
         isDemo: true,
         createdAt: new Date(firstScan.getTime() - 10 * DAY),
@@ -203,7 +203,7 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
   return true;
 }
 
-/** Deletes all demo customers (cascade) and seeds them again. */
+/** Deletes all demo organisations (cascade) and seeds them again. */
 export async function resetDemo(ctx: AppCtx) {
   await ctx.db.delete(customers).where(eq(customers.isDemo, true));
   await seedDemo(ctx);

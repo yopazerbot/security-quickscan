@@ -52,10 +52,10 @@ export async function signOut(page: Page) {
   await expect(page.getByText('You have been signed out.')).toBeVisible();
 }
 
-/** Opens the seeded demo customer from the customer list (waits for the list, not the dashboard). */
-export async function openDemoCustomer(page: Page) {
-  await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
+/** Opens the seeded demo organisation from the organisation list (waits for the list, not the dashboard). */
+export async function openDemoOrganisation(page: Page) {
+  await page.getByRole('link', { name: 'Organisations', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Organisations' })).toBeVisible();
   await page.getByRole('link', { name: /Noordkust Logistics NV/ }).first().click();
   await expect(page.getByRole('heading', { name: /Noordkust Logistics NV/ })).toBeVisible();
 }

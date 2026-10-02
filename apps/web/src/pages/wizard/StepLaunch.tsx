@@ -102,7 +102,7 @@ export function StepLaunch({ scan, refresh, back, saveRef, navigating }: StepPro
   return (
     <>
       <div className="grid gap-6 lg:grid-cols-5">
-        <Card className="lg:col-span-3" title="Customer authorisation" subtitle="Record who authorised this assessment. Scans can only run inside the authorised window.">
+        <Card className="lg:col-span-3" title="Assessment authorisation" subtitle="Record who authorised this assessment. Scans can only run inside the authorised window.">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Authorised by (name)">
               <Input value={form.authorizerName} onChange={(e) => set('authorizerName', e.target.value)} maxLength={200} />
@@ -146,7 +146,7 @@ export function StepLaunch({ scan, refresh, back, saveRef, navigating }: StepPro
           )}
           <label className="mt-5 flex items-start gap-3 rounded-xl bg-brand-50 p-4 text-sm text-brand-950 ring-1 ring-brand-100">
             <input type="checkbox" className="mt-0.5 size-4 rounded border-slate-300 text-brand-600" checked={form.confirmed} onChange={(e) => set('confirmed', e.target.checked)} />
-            <span>I confirm that the customer has authorised this read-only security assessment of the systems listed, and that the access granted is limited to what is needed.</span>
+            <span>I confirm that this read-only security assessment of the systems listed is authorised by the organisation (for example the system owner or management), and that the access granted is limited to what is needed.</span>
           </label>
         </Card>
 
@@ -185,7 +185,7 @@ export function StepLaunch({ scan, refresh, back, saveRef, navigating }: StepPro
             </Alert>
           )}
           <Alert tone="info" title="What happens next">
-            The scanner connects with read-only access, runs each check and streams results live. Nothing is changed in the customer environments.
+            The scanner connects with read-only access, runs each check and streams results live. Nothing is changed in the scanned environments.
           </Alert>
         </div>
       </div>

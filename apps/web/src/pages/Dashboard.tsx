@@ -35,27 +35,27 @@ export function Dashboard() {
     <>
       <PageHeader
         title={`Welcome back, ${me?.user.name.split(' ')[0]}`}
-        subtitle="Overview of your customers and recent quick scans."
+        subtitle="Overview of your organisations and recent quick scans."
         actions={
           can.write && (
-            <LinkButton to="/customers/new" icon={<Plus className="size-4" aria-hidden />}>
-              New customer
+            <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
+              New organisation
             </LinkButton>
           )
         }
       />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Customers" value={cs.length} />
+        <Stat label="Organisations" value={cs.length} />
         <Stat label="Completed scans" value={ss.filter((s) => s.status === 'completed').length} sub="among the 25 most recent scans" />
         <Stat label="Running now" value={running.length} tone={running.length ? '#4f46e5' : undefined} />
-        <Stat label="Average score" value={avg ?? '-'} tone={avg !== null ? scoreHex(avg) : undefined} sub="latest scan per customer" />
+        <Stat label="Average score" value={avg ?? '-'} tone={avg !== null ? scoreHex(avg) : undefined} sub="latest scan per organisation" />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" title="Recent scans" actions={<Link to="/customers" className="text-sm font-medium text-brand-600 hover:text-brand-700">All customers</Link>}>
+        <Card className="lg:col-span-2" title="Recent scans" actions={<Link to="/organisations" className="text-sm font-medium text-brand-600 hover:text-brand-700">All organisations</Link>}>
           {ss.length === 0 ? (
             <EmptyState icon={<Radar className="size-6" />} title="No scans yet">
-              Create a customer and start your first quick scan.
+              Create an organisation and start your first quick scan.
             </EmptyState>
           ) : (
             <div className="-mx-6 -my-6 divide-y divide-slate-100">
@@ -83,14 +83,14 @@ export function Dashboard() {
           )}
         </Card>
 
-        <Card title="Needs attention" subtitle="Lowest scoring customers">
+        <Card title="Needs attention" subtitle="Lowest scoring organisations">
           {attention.length === 0 ? (
             <p className="text-sm text-slate-500">No completed scans yet.</p>
           ) : (
             <ul className="space-y-3">
               {attention.map((c) => (
                 <li key={c.id}>
-                  <Link to={`/customers/${c.id}`} className="group flex items-center gap-3">
+                  <Link to={`/organisations/${c.id}`} className="group flex items-center gap-3">
                     <div className="flex size-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
                       <Building2 className="size-4" />
                     </div>

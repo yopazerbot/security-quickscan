@@ -61,6 +61,13 @@ export type RiskLevel = (typeof RISK_LEVELS)[number];
 export const ROLES = ['admin', 'consultant', 'viewer'] as const;
 export type Role = (typeof ROLES)[number];
 
+/** Display labels for roles. The stored value 'consultant' is shown as "Analyst". */
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: 'Admin',
+  consultant: 'Analyst',
+  viewer: 'Viewer',
+};
+
 export const SCAN_STATUSES = ['draft', 'queued', 'running', 'completed', 'failed', 'cancelled'] as const;
 export type ScanStatus = (typeof SCAN_STATUSES)[number];
 
@@ -81,7 +88,7 @@ export interface CheckMeta {
   title: string;
   description: string;
   severity: Severity;
-  /** Lowest customer risk level at which this check is included by default. */
+  /** Lowest organisation risk level at which this check is included by default. */
   minRisk: RiskLevel;
   effort: 'low' | 'medium' | 'high';
   remediation: string;

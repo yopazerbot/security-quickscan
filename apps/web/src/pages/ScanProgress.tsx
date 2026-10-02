@@ -138,7 +138,7 @@ export function ScanProgress() {
   const sysLabel = new Map(scan.data.systems.map((s) => [s.id, s]));
   const finished = snap.status === 'completed' || snap.status === 'cancelled';
   const failed = snap.status === 'failed';
-  const customerUrl = `/customers/${scan.data.customer.id}`;
+  const customerUrl = `/organisations/${scan.data.customer.id}`;
   const rescan = async () => {
     const r = await post<{ id: string }>(`/api/scans/${scanId}/rescan`);
     void qc.invalidateQueries({ queryKey: ['scans'] });
@@ -190,7 +190,7 @@ export function ScanProgress() {
           <p>
             {done > 0
               ? `${done} of ${total} checks completed before the failure. You can review their results as a partial report, or start a new scan with the same scope.`
-              : 'No checks completed. Start a new scan with the same scope, or go back to the customer to review the connected systems.'}
+              : 'No checks completed. Start a new scan with the same scope, or go back to the organisation to review the connected systems.'}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {done > 0 && (
@@ -204,7 +204,7 @@ export function ScanProgress() {
               </AsyncButton>
             )}
             <LinkButton to={customerUrl} variant="ghost" icon={<ArrowLeft className="size-4" />}>
-              Back to customer
+              Back to organisation
             </LinkButton>
           </div>
         </Alert>

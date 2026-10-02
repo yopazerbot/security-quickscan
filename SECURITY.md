@@ -1,6 +1,6 @@
 # Security policy
 
-Security QuickScan handles access to other organisations' cloud environments, so security reports are taken seriously.
+Security QuickScan handles read access to cloud environments, so security reports are taken seriously.
 
 ## Reporting a vulnerability
 

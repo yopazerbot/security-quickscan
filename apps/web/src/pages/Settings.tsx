@@ -58,7 +58,7 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        subtitle="Branding and defaults for client-facing reports."
+        subtitle="Branding and defaults for reports."
         actions={
           <AsyncButton onClick={save} success="Saved. New reports use these settings.">
             Save settings
@@ -76,7 +76,7 @@ export function SettingsPage() {
         <Card className="lg:col-span-2" title="Report branding">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Company name"><Input value={form.companyName} onChange={(e) => set('companyName', e.target.value)} /></Field>
-            <Field label="Consultant name"><Input value={form.consultantName} onChange={(e) => set('consultantName', e.target.value)} /></Field>
+            <Field label="Prepared by (name or team)"><Input value={form.consultantName} onChange={(e) => set('consultantName', e.target.value)} /></Field>
             <Field label="Contact e-mail"><Input type="email" value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} /></Field>
             <Field label="Website"><Input value={form.website} onChange={(e) => set('website', e.target.value)} /></Field>
             <Field label="Accent colour">
@@ -149,11 +149,11 @@ export function SettingsPage() {
         <Card
           className="mt-6"
           title={<span className="flex items-center gap-2"><FlaskConical className="size-4 text-amber-600" /> Demo data</span>}
-          subtitle="Demo mode is on. The fictional customer Noordkust Logistics NV is seeded with two completed scans, triaged findings and a draft scan ready to run."
+          subtitle="Demo mode is on. The fictional organisation Noordkust Logistics NV is seeded with two completed scans, triaged findings and a draft scan ready to run."
           actions={<Button variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => setConfirmReset(true)}>Reset demo data</Button>}
         >
           <p className="text-sm text-slate-600">
-            Use it to try the full flow: open the customer, run the draft scan from the wizard, review the report and download the PDF and CSV exports. Demo systems never connect to real environments.
+            Use it to try the full flow: open the organisation, run the draft scan from the wizard, review the report and download the PDF and CSV exports. Demo systems never connect to real environments.
             Turn demo mode off in production by setting <code className="rounded bg-slate-100 px-1">DEMO_MODE=false</code>.
           </p>
           <DemoLoginSettings />
@@ -192,7 +192,7 @@ export function SettingsPage() {
           </>
         }
       >
-        <p className="text-sm text-slate-600">All demo customers, including scans you ran on them, are deleted and the original demo data is created again. Real customers are not affected.</p>
+        <p className="text-sm text-slate-600">All demo organisations, including scans you ran on them, are deleted and the original demo data is created again. Real organisations are not affected.</p>
       </Modal>
     </>
   );
@@ -241,7 +241,7 @@ function DemoLoginSettings() {
             Demo login with PIN
           </div>
           <p id={descId} className="mt-0.5 max-w-xl text-sm text-slate-500">
-            Lets prospects sign in with a PIN, without a Microsoft account. They only see demo customers, cannot enter real credentials and cannot open administration pages.
+            Lets visitors sign in with a PIN, without a Microsoft account. They only see demo organisations, cannot enter real credentials and cannot open administration pages.
             Changing the PIN or turning this off signs out all demo sessions.
           </p>
         </div>

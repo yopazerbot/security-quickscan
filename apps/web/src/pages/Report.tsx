@@ -116,7 +116,7 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
   });
   return (
     <div className="rounded-xl bg-slate-50 p-4">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Consultant triage (applies to future scans of this customer)</div>
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Triage (applies to future scans of this organisation)</div>
       <div className="flex flex-wrap items-start gap-3">
         <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44" aria-label="Triage status">
           <option value="open">Open</option>
@@ -324,7 +324,7 @@ export function Report() {
   return (
     <>
       <PageHeader
-        crumbs={<Link to={`/customers/${m.customer.id}`} className="hover:text-slate-700">{m.customer.name}</Link>}
+        crumbs={<Link to={`/organisations/${m.customer.id}`} className="hover:text-slate-700">{m.customer.name}</Link>}
         title="Security quick scan report"
         subtitle={`${m.scan.name} · ${m.scan.status === 'failed' ? 'failed' : m.scan.status === 'cancelled' ? 'cancelled' : 'completed'} ${fmtDateTime(m.scan.finishedAt)}`}
         actions={
@@ -358,7 +358,7 @@ export function Report() {
       {m.scan.status === 'cancelled' && <Alert tone="warn" className="mb-6">This scan was cancelled; results are partial.</Alert>}
       {m.systems.some((x: any) => x.credentialsStored) && (
         <Alert tone="info" className="no-print mb-6">
-          Credentials for this scan are still stored (encrypted) per the retention you chose. Remember to have the customer revoke scanner access when it is no longer needed.
+          Credentials for this scan are still stored (encrypted) per the retention you chose. Remember to remove scanner access when it is no longer needed.
         </Alert>
       )}
 

@@ -82,8 +82,8 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           <div className="mt-2">
             <span className={clsx('rounded-lg px-2.5 py-1 text-sm font-semibold ring-1', risk.cls)}>{risk.label}</span>
           </div>
-          <Link to={`/customers/${scan.customer.id}/edit`} className="mt-3 inline-block text-xs font-medium text-brand-700 hover:underline">
-            From the customer context. Edit customer
+          <Link to={`/organisations/${scan.customer.id}/edit`} className="mt-3 inline-block text-xs font-medium text-brand-700 hover:underline">
+            From the organisation context. Edit organisation
           </Link>
         </div>
       </div>

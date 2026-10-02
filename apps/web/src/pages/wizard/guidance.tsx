@@ -71,15 +71,15 @@ Outputs:
 export function AwsRoleGuide({ principal, externalId }: { principal: string | null; externalId: string }) {
   return (
     <Steps>
-      <Step title="Deploy the read-only role in the customer account">
+      <Step title="Deploy the read-only role in the AWS account to assess">
         <p>
-          Ask the customer (or do it together) to create a CloudFormation stack in <strong>us-east-1</strong> from the template below. It grants only the {AWS_SCANNER_ACTIONS.length} read
-          actions the checks use (no access to data such as S3 objects or secrets), and only our platform identity can assume it, with this engagement's unique external ID.
+          Deploy it yourself or ask the account owner to create a CloudFormation stack in <strong>us-east-1</strong> from the template below. It grants only the {AWS_SCANNER_ACTIONS.length} read
+          actions the checks use (no access to data such as S3 objects or secrets), and only the Security QuickScan platform identity can assume it, with this scan's unique external ID.
         </p>
         {principal ? <CodeBlock>{cloudFormation(principal, externalId)}</CodeBlock> : <p className="text-red-600">The platform AWS identity is not configured.</p>}
       </Step>
       <Step title="Copy the RoleArn output and paste it below" />
-      <Step title="Test the connection">The role is assumed for at most one hour per scan; no long-lived customer secret is shared.</Step>
+      <Step title="Test the connection">The role is assumed for at most one hour per scan; no long-lived secret is shared.</Step>
       <Step title="After the assessment">Delete the stack to remove access.</Step>
     </Steps>
   );
@@ -104,12 +104,12 @@ export function AwsKeysGuide() {
 export function MsConsentGuide({ azure }: { azure: boolean }) {
   return (
     <Steps>
-      <Step title="Enter the customer tenant ID or primary domain">Find it in the Entra admin center, Overview page (Tenant ID).</Step>
+      <Step title="Enter the ID or primary domain of the tenant to assess">Find it in the Entra admin center, Overview page (Tenant ID).</Step>
       <Step title="Generate the admin consent link">
-        Send the link to a Global Administrator or Privileged Role Administrator of the customer, or open it yourself during a screen share. It grants our read-only
+        Open the link yourself as a Global Administrator or Privileged Role Administrator of the tenant, or send it to one. It grants the read-only Security QuickScan
         scanner application these Microsoft Graph application permissions:
         <Perms list={GRAPH_PERMISSIONS} />
-        No secret of the customer is exchanged.
+        No secret is exchanged.
       </Step>
       {azure && (
         <Step title="Grant Azure read access">
@@ -121,7 +121,7 @@ az role assignment create --assignee <scanner-client-id> --role "Security Reader
       )}
       <Step title="Test the connection" />
       <Step title="After the assessment">
-        Remove the enterprise application "Security QuickScan" from the customer tenant{azure ? ' and delete the role assignments' : ''}.
+        Remove the enterprise application "Security QuickScan" from the tenant{azure ? ' and delete the role assignments' : ''}.
       </Step>
     </Steps>
   );
@@ -130,7 +130,7 @@ az role assignment create --assignee <scanner-client-id> --role "Security Reader
 export function MsAppGuide({ azure }: { azure: boolean }) {
   return (
     <Steps>
-      <Step title="Register an application in the customer tenant">Entra admin center, App registrations, New registration. Name it "Security QuickScan (temporary)", single tenant, no redirect URI.</Step>
+      <Step title="Register an application in the tenant to assess">Entra admin center, App registrations, New registration. Name it "Security QuickScan (temporary)", single tenant, no redirect URI.</Step>
       <Step title="Add Microsoft Graph application permissions">
         API permissions, Add a permission, Microsoft Graph, <strong>Application permissions</strong>:
         <Perms list={GRAPH_PERMISSIONS} />

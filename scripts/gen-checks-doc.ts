@@ -6,7 +6,7 @@ const esc = (s: string) => s.replace(/\|/g, '\\|');
 const lines: string[] = [];
 lines.push('# Check catalogue', '');
 lines.push(`Security QuickScan runs **${CHECKS.length} read-only checks**. Each check maps to one primary ISO/IEC 27001:2022 Annex A control (bold) and optional secondary controls.`);
-lines.push('The "Default from" column is the lowest customer risk profile at which the check is included by default; the consultant can include or exclude any check per scan.', '');
+lines.push('The "Default from" column is the lowest risk profile at which the check is included by default; any check can be included or excluded per scan.', '');
 lines.push('_This file is generated from `packages/shared/src/catalog` by `npm run docs:checks`._', '');
 
 for (const p of PROVIDERS) {

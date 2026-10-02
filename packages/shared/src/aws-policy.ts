@@ -1,5 +1,5 @@
 /**
- * Exact read-only AWS actions used by the checks (least privilege for the customer role).
+ * Exact read-only AWS actions used by the checks (least privilege for the scanner role).
  * Keep in sync with packages/checks/src/aws and infra/aws-scanner-role.yaml (a unit test verifies this).
  * Note: iam:GenerateCredentialReport only (re)generates IAM's own credential report; it changes no configuration.
  */

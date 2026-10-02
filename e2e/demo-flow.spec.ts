@@ -1,14 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { openDemoCustomer, signOut } from './helpers';
+import { openDemoOrganisation, signOut } from './helpers';
 
 const DEMO = 'Noordkust Logistics NV';
 const DEMO_PIN = '48291357';
 
 test.describe.configure({ mode: 'serial' });
 
-test('admin sees the seeded demo customer with history and reports', async ({ page }) => {
+test('admin sees the seeded demo organisation with history and reports', async ({ page }) => {
   await page.goto('/');
-  await openDemoCustomer(page);
+  await openDemoOrganisation(page);
   await expect(page.getByRole('heading', { name: 'Score trend' })).toBeVisible();
   await expect(page.getByText('Baseline quick scan')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Triaged findings' })).toBeVisible();
@@ -22,9 +22,9 @@ test('admin sees the seeded demo customer with history and reports', async ({ pa
 
 test('run the prepared draft scan end to end and download the exports', async ({ page }) => {
   await page.goto('/');
-  await openDemoCustomer(page);
+  await openDemoOrganisation(page);
   await page.getByText('Quarterly quick scan (ready to run)').click();
-  await expect(page.getByText('Customer authorisation')).toBeVisible();
+  await expect(page.getByText('Assessment authorisation')).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
   await expect(page).toHaveURL(/\/progress/);
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
@@ -50,14 +50,14 @@ test('run the prepared draft scan end to end and download the exports', async ({
   await expect(page.getByTestId('finding').getByText('Risk accepted').first()).toBeVisible();
 });
 
-test('new customer through the full wizard with demo systems', async ({ page }) => {
+test('new organisation through the full wizard with demo systems', async ({ page }) => {
   await page.goto('/');
-  await page.goto('/customers/new');
-  await page.getByLabel('Customer name').fill(`E2E Customer ${Date.now()}`);
-  await page.getByRole('button', { name: 'Create customer' }).click();
+  await page.goto('/organisations/new');
+  await page.getByLabel('Organisation name').fill(`E2E Organisation ${Date.now()}`);
+  await page.getByRole('button', { name: 'Create organisation' }).click();
   await page.getByRole('button', { name: 'New scan' }).click();
-  // The wizard starts at Scope: the context and risk profile come from the customer record.
-  await expect(page.getByText('Confirm the customer context')).toHaveCount(0);
+  // The wizard starts at Scope: the context and risk profile come from the organisation record.
+  await expect(page.getByText('Confirm the organisation context')).toHaveCount(0);
   for (const p of ['Microsoft 365 / Entra ID', 'GitHub']) {
     await page.locator('button', { hasText: p }).first().click();
     await page.getByRole('button', { name: /Demo \(simulated\)/ }).click();
@@ -78,13 +78,13 @@ test('new customer through the full wizard with demo systems', async ({ page }) 
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
 });
 
-test('reset demo data restores the original demo customer', async ({ page }) => {
+test('reset demo data restores the original demo organisation', async ({ page }) => {
   await page.goto('/');
   await page.goto('/admin/settings');
   await page.getByRole('button', { name: 'Reset demo data' }).click();
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await expect(page.getByText('Demo data was reset.')).toBeVisible();
-  await openDemoCustomer(page);
+  await openDemoOrganisation(page);
   await expect(page.getByText('Quarterly quick scan (ready to run)')).toBeVisible();
 });
 
@@ -103,10 +103,10 @@ test('demo PIN login: admin enables it, visitor only sees demo data, sign out wo
   await page.getByLabel('Demo PIN').fill(DEMO_PIN);
   await page.getByRole('button', { name: 'Enter demo' }).click();
   await expect(page.getByText(/Demo session/)).toBeVisible();
-  await page.getByRole('link', { name: 'Customers', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
+  await page.getByRole('link', { name: 'Organisations', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Organisations' })).toBeVisible();
   await expect(page.getByText(DEMO).first()).toBeVisible();
-  await expect(page.getByText(/E2E Customer/)).toHaveCount(0);
+  await expect(page.getByText(/E2E Organisation/)).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Users', exact: true })).toHaveCount(0);
   await signOut(page);
 });

@@ -80,7 +80,7 @@ export const githubChecks: CheckMeta[] = [
     id: 'gh.public-repos',
     domain: 'data',
     title: 'Public repositories reviewed',
-    description: 'Lists public repositories so the customer can confirm each is intentionally public.',
+    description: 'Lists public repositories so the owners can confirm each is intentionally public.',
     severity: 'info',
     minRisk: 'low',
     effort: 'low',

@@ -136,7 +136,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   async function demoQuota(kind: 'scans' | 'running', customerId?: string) {
     if (kind === 'scans') {
       const n = (await db.select({ id: scans.id }).from(scans).where(eq(scans.customerId, customerId!))).length;
-      if (n >= 25) throw new HttpError(429, 'Demo limit reached for this customer. An administrator can reset the demo data.');
+      if (n >= 25) throw new HttpError(429, 'Demo limit reached for this organisation. An administrator can reset the demo data.');
     } else {
       const active = await db
         .select({ id: scans.id })
@@ -147,23 +147,23 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     }
   }
 
-  /** A tenant that consented to the platform app belongs to one customer only. */
+  /** A tenant that consented to the platform app belongs to one organisation only. */
   async function bindTenant(tenantId: string, customerId: string, req: any) {
     const existing = (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, tenantId)).limit(1))[0];
     if (existing && existing.customerId !== customerId) {
       await audit(ctx, req, 'consent.tenant_conflict', { type: 'customer', id: customerId }, { tenantId, boundTo: existing.customerId });
-      throw new HttpError(409, 'This Microsoft tenant is already linked to another customer. Ask an administrator.');
+      throw new HttpError(409, 'This Microsoft tenant is already linked to another organisation. Ask an administrator.');
     }
     if (!existing) await db.insert(msTenantBindings).values({ tenantId, customerId, createdBy: req.user?.id ?? null }).onConflictDoNothing();
   }
 
-  /** Admin-consent systems may only use the platform app for a tenant bound to this scan's customer. */
+  /** Admin-consent systems may only use the platform app for a tenant bound to this scan's organisation. */
   async function assertTenantBound(scan: ScanRow, s: SystemRow) {
     const cfg = s.config as any;
     if (cfg.authMode !== 'admin_consent') return;
     const tenant = String(cfg.tenantId ?? '').toLowerCase();
     const b = GUID_RE.test(tenant) ? (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, tenant)).limit(1))[0] : undefined;
-    if (!b || b.customerId !== scan.customerId) throw new HttpError(403, `Admin consent for ${s.label} has not been completed for this customer`);
+    if (!b || b.customerId !== scan.customerId) throw new HttpError(403, `Admin consent for ${s.label} has not been completed for this organisation`);
   }
 
   // ---------- scan lifecycle ----------
@@ -340,11 +340,11 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const cfg = s.config as any;
     if (req.user!.isDemo) throw new HttpError(403, 'Not available for demo visitors');
     if (cfg.authMode !== 'admin_consent' || !config.SCANNER_MS_CLIENT_ID) throw badRequest('Admin consent is not available for this system');
-    if (!cfg.tenantId) throw badRequest('Enter the customer tenant ID or domain first');
+    if (!cfg.tenantId) throw badRequest('Enter the tenant ID or domain first');
     const guid = await resolveTenantGuid(String(cfg.tenantId));
     if (!guid) throw badRequest('Microsoft tenant not found. Check the tenant ID or domain.');
     const bound = (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, guid)).limit(1))[0];
-    if (bound && bound.customerId !== scan.customerId) throw new HttpError(409, 'This Microsoft tenant is already linked to another customer. Ask an administrator.');
+    if (bound && bound.customerId !== scan.customerId) throw new HttpError(409, 'This Microsoft tenant is already linked to another organisation. Ask an administrator.');
     await audit(ctx, req, 'consent.link_created', { type: 'system', id: s.id }, { tenant: guid });
     const state = randomToken(24);
     await db.insert(authStates).values({
@@ -460,7 +460,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     if (req.user!.isDemo) await demoQuota('running');
     const auth = authorizationSchema.safeParse(scan.authorization);
-    if (!auth.success) throw badRequest('Record the customer authorisation before starting the scan');
+    if (!auth.success) throw badRequest('Record the assessment authorisation before starting the scan');
     const d = today();
     if (d < auth.data.authorizedOn || d > auth.data.validUntil) throw badRequest('Today is outside the authorised testing window');
     const sys = await db.select().from(scanSystems).where(eq(scanSystems.scanId, scan.id));

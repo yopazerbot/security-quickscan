@@ -118,7 +118,7 @@ export function Login() {
           <div className="max-w-md">
             <p className="text-4xl font-semibold leading-tight tracking-tight text-white">Cloud security posture, mapped to ISO 27001.</p>
             <p className="mt-4 text-base leading-relaxed text-slate-300">
-              Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Risk-based criteria, live progress and client-ready reports.
+              Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Risk-based criteria, live progress and shareable reports.
             </p>
           </div>
           <p className="text-xs text-slate-500">Authorised use only. All activity is logged.</p>
@@ -182,7 +182,7 @@ export function Login() {
           {cfg.data?.demoLogin && (
             <form onSubmit={submitPin} className="mt-6 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
               <div className="mb-1 text-sm font-semibold text-amber-900">Demo access</div>
-              <p className="mb-3 text-xs text-amber-800">Explore the tool with a fictional customer. Enter the PIN you received.</p>
+              <p className="mb-3 text-xs text-amber-800">Explore the tool with a fictional organisation. Enter the PIN you received.</p>
               <div className="flex gap-2">
                 <Input
                   aria-label="Demo PIN"

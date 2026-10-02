@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: "Please do not report security vulnerabilities here; see SECURITY.md. Never paste credentials, tokens or customer data."
+      value: "Please do not report security vulnerabilities here; see SECURITY.md. Never paste credentials, tokens or organisation data."
   - type: textarea
     id: what
     attributes: { label: What happened?, description: Steps to reproduce and what you expected instead. }

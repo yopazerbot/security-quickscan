@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, INDUSTRIES, REGULATIONS, computeRiskProfile, type Provider } from '@qs/shared';
+import { CHECKS_BY_ID, INDUSTRIES, REGULATIONS, ROLE_LABELS, computeRiskProfile, type Provider, type Role } from '@qs/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowRight, Download, Pencil, Play, Radar, Trash2, Users } from 'lucide-react';
@@ -46,7 +46,7 @@ export function CustomerDetail() {
   return (
     <>
       <PageHeader
-        crumbs={<Link to="/customers" className="hover:text-slate-700">Customers</Link>}
+        crumbs={<Link to="/organisations" className="hover:text-slate-700">Organisations</Link>}
         title={
           <span className="flex items-center gap-3">
             {c.name}
@@ -60,7 +60,7 @@ export function CustomerDetail() {
               Export data
             </AnchorButton>
             {can.write && (
-              <LinkButton to={`/customers/${c.id}/edit`} variant="secondary" icon={<Pencil className="size-4" aria-hidden />}>
+              <LinkButton to={`/organisations/${c.id}/edit`} variant="secondary" icon={<Pencil className="size-4" aria-hidden />}>
                 Edit
               </LinkButton>
             )}
@@ -175,7 +175,7 @@ export function CustomerDetail() {
               }
             >
               {c.assigned.length === 0 ? (
-                <p className="text-sm text-slate-500">Only admins and users with access to all customers.</p>
+                <p className="text-sm text-slate-500">Only admins and users with access to all organisations.</p>
               ) : (
                 <ul className="space-y-1 text-sm">
                   {c.assigned.map((u: any) => (
@@ -192,7 +192,7 @@ export function CustomerDetail() {
                   className="text-red-700 hover:bg-red-50"
                   icon={<Trash2 className="size-3.5" aria-hidden />}
                   confirm={{
-                    title: 'Delete customer',
+                    title: 'Delete organisation',
                     danger: true,
                     confirmLabel: 'Delete permanently',
                     body: (
@@ -207,10 +207,10 @@ export function CustomerDetail() {
                     await qc.invalidateQueries({ queryKey: ['customers'] });
                     await qc.invalidateQueries({ queryKey: ['scans'] });
                     toast.success(`${c.name} was deleted`);
-                    nav('/customers');
+                    nav('/organisations');
                   }}
                 >
-                  Delete customer and all data
+                  Delete organisation and all data
                 </AsyncButton>
               </div>
             </Card>
@@ -241,7 +241,7 @@ function AssignModal({ customerId, assigned, onClose }: { customerId: string; as
     <Modal
       open
       onClose={onClose}
-      title="Who can access this customer?"
+      title="Who can access this organisation?"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -263,7 +263,7 @@ function AssignModal({ customerId, assigned, onClose }: { customerId: string; as
       ) : users.isLoading ? (
         <PageLoader />
       ) : candidates.length === 0 ? (
-        <p className="text-sm text-slate-500">There are no consultants or viewers that need explicit assignment. Admins and users with "all customers" always have access.</p>
+        <p className="text-sm text-slate-500">There are no analysts or viewers that need explicit assignment. Admins and users with access to all organisations always have access.</p>
       ) : (
         <ul className="space-y-2">
           {candidates.map((u) => (
@@ -272,7 +272,7 @@ function AssignModal({ customerId, assigned, onClose }: { customerId: string; as
                 <input type="checkbox" className="size-4 rounded border-slate-300 text-brand-600" checked={sel.includes(u.id)} onChange={(e) => setSel(e.target.checked ? [...sel, u.id] : sel.filter((x) => x !== u.id))} />
                 <span className="font-medium">{u.name}</span>
                 <span className="text-slate-400">{u.email}</span>
-                <span className="ml-auto text-xs capitalize text-slate-500">{u.role}</span>
+                <span className="ml-auto text-xs text-slate-500">{ROLE_LABELS[u.role as Role]}</span>
               </label>
             </li>
           ))}

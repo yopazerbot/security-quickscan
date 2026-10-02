@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await post('/api/auth/logout').catch(() => undefined);
-    // Full page load: drops every cached query (customer data included) and the in-memory CSRF token.
+    // Full page load: drops every cached query (organisation data included) and the in-memory CSRF token.
     window.location.assign('/login?signedOut=1');
   };
 

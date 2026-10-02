@@ -1,3 +1,4 @@
+import { ROLE_LABELS } from '@qs/shared';
 import clsx from 'clsx';
 import { Building2, LayoutDashboard, LogOut, Menu, ScrollText, Settings, ShieldAlert, ShieldCheck, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -7,7 +8,7 @@ import { SOURCE_URL } from '../lib/constants';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/customers', label: 'Customers', icon: Building2 },
+  { to: '/organisations', label: 'Organisations', icon: Building2 },
 ];
 const adminNav = [
   { to: '/admin/users', label: 'Users', icon: Users },
@@ -121,7 +122,7 @@ export function Layout() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium text-white">{me.user.name}</div>
-              <div className="truncate text-xs capitalize text-slate-400">{me.user.isDemo ? 'Demo visitor' : me.user.role}</div>
+              <div className="truncate text-xs text-slate-400">{me.user.isDemo ? 'Demo visitor' : ROLE_LABELS[me.user.role]}</div>
             </div>
           </div>
           {me.features.local ? (
@@ -151,11 +152,11 @@ export function Layout() {
         )}
         {me.user.isDemo ? (
           <div className="no-print bg-amber-400 px-4 py-2 text-sm font-medium text-amber-950 sm:px-8">
-            Demo session: you are exploring a fictional customer. Only simulated systems can be scanned.
+            Demo session: you are exploring a fictional organisation. Only simulated systems can be scanned.
           </div>
         ) : (
           me.features.demo && (
-            <div className="no-print bg-amber-100 px-4 py-1.5 text-xs font-medium text-amber-900 sm:px-8">Demo mode is on: simulated systems and the fictional demo customer are available.</div>
+            <div className="no-print bg-amber-100 px-4 py-1.5 text-xs font-medium text-amber-900 sm:px-8">Demo mode is on: simulated systems and the fictional demo organisation are available.</div>
           )
         )}
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-8">

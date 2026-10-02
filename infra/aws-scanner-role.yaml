@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Least-privilege read-only role for Security QuickScan. Deploy in the customer account (us-east-1),
-  share the RoleArn output with the consultant and delete the stack after the assessment.
+  Least-privilege read-only role for Security QuickScan. Deploy in the AWS account to assess (us-east-1),
+  share the RoleArn output with whoever runs the scan and delete the stack after the assessment.
 Parameters:
   ScannerPrincipalArn:
     Type: String
     Description: ARN of the Security QuickScan platform identity (shown in the app).
   ExternalId:
     Type: String
-    Description: Engagement-specific external ID (shown in the app).
+    Description: Scan-specific external ID (shown in the app).
 Resources:
   QuickScanRole:
     Type: AWS::IAM::Role

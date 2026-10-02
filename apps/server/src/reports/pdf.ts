@@ -128,7 +128,7 @@ function summaryPage(doc: Doc, m: ReportModel) {
       (crit + high > 0
         ? `${crit} critical and ${high} high severity issue(s) need prompt attention.`
         : 'No critical or high severity failures were found.') +
-      ` Based on the customer context the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
+      ` Based on the organisation context the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
       (m.scan.status === 'failed'
         ? ' Note: this scan did not complete, so the results are partial and the score may not reflect the full environment.'
         : m.scan.status === 'cancelled'
@@ -297,7 +297,7 @@ function findingDetail(doc: Doc, f: ReportItem, accent: string) {
   doc.fillColor('#065f46').font('Helvetica-Bold').fontSize(9).text(`Recommendation  (effort: ${f.effort})`, M + 12, ry + 8);
   doc.font('Helvetica').fontSize(9).text(f.remediation, M + 12, doc.y + 2, { width: W - 24 });
   doc.y = ry + rh + 4;
-  if (f.triage?.note) para(doc, `Consultant note: ${f.triage.note}`, { color: C.muted, size: 8.5 });
+  if (f.triage?.note) para(doc, `Triage note: ${f.triage.note}`, { color: C.muted, size: 8.5 });
   doc.x = M;
 }
 
@@ -316,7 +316,7 @@ function appendix(doc: Doc, m: ReportModel) {
   para(
     doc,
     `The assessment was performed between ${fmtDate(m.scan.startedAt)} and ${fmtDate(m.scan.finishedAt)} using read-only API access (Microsoft Graph, Azure Resource Manager, AWS APIs and the GitHub REST API). No changes were made to the environments. ` +
-      'Evaluation criteria were selected based on the customer risk profile and reviewed by the consultant. Scores are weighted by severity and by the domain weights derived from the risk profile.',
+      'Evaluation criteria were selected based on the organisation\'s risk profile and reviewed before the scan. Scores are weighted by severity and by the domain weights derived from the risk profile.',
   );
   h2(doc, 'Limitations');
   para(
@@ -327,7 +327,7 @@ function appendix(doc: Doc, m: ReportModel) {
   para(
     doc,
     `Credentials handling for this scan: ${m.scan.retentionMode === 'purge_on_completion' ? 'secrets were deleted automatically when the scan completed' : m.scan.retentionMode === 'days' ? 'secrets are stored encrypted for a limited number of days' : 'secrets are stored encrypted until manually deleted'}. ` +
-      'We recommend that the customer removes the scanner access (IAM role, app consent / registration, Azure role assignments, GitHub token) once it is no longer needed.',
+      'We recommend removing the scanner access (IAM role, app consent / registration, Azure role assignments, GitHub token) once it is no longer needed.',
   );
 
   if (m.notAssessed.length) {

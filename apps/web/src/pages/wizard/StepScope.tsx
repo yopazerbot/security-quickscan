@@ -33,14 +33,14 @@ export function authModes(provider: Provider, p?: Platform): Mode[] {
   const demo: Mode = { id: 'demo', label: 'Demo (simulated)', desc: 'Generates realistic sample results without connecting.', available: Boolean(p?.demo) };
   if (provider === 'aws')
     return [
-      { id: 'assume_role', label: 'Cross-account IAM role', desc: 'Customer deploys a read-only role with an external ID. No secrets shared.', recommended: true, available: Boolean(p?.awsPrincipal), why: 'Platform AWS identity not configured' },
+      { id: 'assume_role', label: 'Cross-account IAM role', desc: 'A read-only role with an external ID is deployed in the account. No secrets shared.', recommended: true, available: Boolean(p?.awsPrincipal), why: 'Platform AWS identity not configured' },
       { id: 'access_keys', label: 'Access keys', desc: 'Temporary or dedicated read-only access keys.', available: true },
       demo,
     ];
   if (provider === 'github') return [{ id: 'token', label: 'Personal access token', desc: 'Fine-grained, read-only, short expiry.', recommended: true, available: true }, demo];
   return [
-    { id: 'admin_consent', label: 'Admin consent', desc: 'Customer admin consents to our read-only scanner app. No secrets shared.', recommended: true, available: Boolean(p?.msClientId), why: 'Platform scanner app not configured' },
-    { id: 'app_secret', label: 'Customer app registration', desc: 'Customer creates an app with read permissions and a short-lived secret.', available: true },
+    { id: 'admin_consent', label: 'Admin consent', desc: 'A tenant admin consents to the read-only scanner app. No secrets shared.', recommended: true, available: Boolean(p?.msClientId), why: 'Platform scanner app not configured' },
+    { id: 'app_secret', label: 'App registration in the tenant', desc: 'An app registration created in the tenant, with read permissions and a short-lived secret.', available: true },
     demo,
   ];
 }

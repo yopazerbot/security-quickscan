@@ -61,7 +61,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       const n = (await db.select({ id: customers.id }).from(customers).where(eq(customers.isDemo, true))).length;
       if (n >= 15) throw new HttpError(429, 'Demo limit reached. An administrator can reset the demo data.');
     }
-    // Customers created by the demo visitor are demo data (removed by "Reset demo data").
+    // Organisations created by the demo visitor are demo data (removed by "Reset demo data").
     const [c] = await db.insert(customers).values({ ...body, createdBy: u.id, isDemo: u.isDemo }).returning();
     if (u.role !== 'admin' && !u.allCustomers) await db.insert(customerAssignments).values({ userId: u.id, customerId: c.id });
     await audit(ctx, req, 'customer.create', { type: 'customer', id: c.id }, { name: c.name });
@@ -137,7 +137,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (!target) throw notFound();
     if (!target.isDemo && userIds.length) {
       const demoUsers = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, userIds), eq(users.isDemo, true)));
-      if (demoUsers.length) throw new HttpError(400, 'The demo visitor account cannot be given access to real customers');
+      if (demoUsers.length) throw new HttpError(400, 'The demo visitor account cannot be given access to real organisations');
     }
     await db.transaction(async (tx) => {
       await tx.delete(customerAssignments).where(eq(customerAssignments.customerId, id));
@@ -162,7 +162,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     return { ok: true };
   });
 
-  /** GDPR-style export of everything stored about a customer (never includes secrets). */
+  /** GDPR-style export of everything stored about an organisation (never includes secrets). */
   app.get('/api/customers/:customerId/export', async (req, reply) => {
     const id = uuidParam(req, 'customerId');
     await assertCustomerAccess(ctx, req, id);
@@ -174,7 +174,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     const results = ids.length ? await db.select().from(checkResults).where(inArray(checkResults.scanId, ids)) : [];
     const triage = await db.select().from(findingTriage).where(eq(findingTriage.customerId, id));
     await audit(ctx, req, 'customer.export', { type: 'customer', id });
-    reply.header('Content-Disposition', `attachment; filename="customer-export-${id}.json"`);
+    reply.header('Content-Disposition', `attachment; filename="organisation-export-${id}.json"`);
     return {
       exportedAt: new Date().toISOString(),
       customer: c,

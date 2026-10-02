@@ -1,7 +1,7 @@
 # Check catalogue
 
 Security QuickScan runs **64 read-only checks**. Each check maps to one primary ISO/IEC 27001:2022 Annex A control (bold) and optional secondary controls.
-The "Default from" column is the lowest customer risk profile at which the check is included by default; the consultant can include or exclude any check per scan.
+The "Default from" column is the lowest risk profile at which the check is included by default; any check can be included or excluded per scan.
 
 _This file is generated from `packages/shared/src/catalog` by `npm run docs:checks`._
 

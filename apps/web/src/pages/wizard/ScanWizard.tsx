@@ -71,7 +71,7 @@ function lockReason(scan: WizardScan, i: number): string | null {
 }
 
 /**
- * The customer context and risk profile come from the customer record, so the wizard starts at Scope.
+ * The organisation context and risk profile come from the organisation record, so the wizard starts at Scope.
  * The stored wizardStep still counts the former context step as 0, hence the offset.
  */
 const STEP_OFFSET = 1;
@@ -141,7 +141,7 @@ export function ScanWizard() {
 
   const discard = async () => {
     await del(`/api/scans/${scan.id}`);
-    nav(`/customers/${scan.customer.id}`, { replace: true });
+    nav(`/organisations/${scan.customer.id}`, { replace: true });
     qc.removeQueries({ queryKey: ['scan', scan.id] });
     void qc.invalidateQueries({ queryKey: ['customer', scan.customer.id] });
   };
@@ -151,8 +151,8 @@ export function ScanWizard() {
       <PageHeader
         crumbs={
           <>
-            <Link to="/customers" className="hover:text-slate-700">Customers</Link> /{' '}
-            <Link to={`/customers/${scan.customer.id}`} className="hover:text-slate-700">{scan.customer.name}</Link>
+            <Link to="/organisations" className="hover:text-slate-700">Organisations</Link> /{' '}
+            <Link to={`/organisations/${scan.customer.id}`} className="hover:text-slate-700">{scan.customer.name}</Link>
           </>
         }
         title="New quick scan"

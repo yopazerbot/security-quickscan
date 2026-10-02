@@ -1,4 +1,4 @@
-import { ROLES, type Role } from '@qs/shared';
+import { ROLE_LABELS, ROLES, type Role } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogOut, Pencil, Plus, ShieldAlert, Trash2, UserPlus } from 'lucide-react';
 import { useId, useState } from 'react';
@@ -9,9 +9,9 @@ import { useAuth } from '../lib/auth';
 import { fmtDateTime } from '../lib/format';
 
 const ROLE_DESC: Record<Role, string> = {
-  admin: 'Full access: users, settings, audit log and all customers.',
-  consultant: 'Creates customers and runs scans for assigned customers.',
-  viewer: 'Read-only access to reports of assigned customers.',
+  admin: 'Full access: users, settings, audit log and all organisations.',
+  consultant: 'Creates organisations and runs scans for assigned organisations.',
+  viewer: 'Read-only access to reports of assigned organisations.',
 };
 
 function UserForm({ user, onClose }: { user?: any; onClose(): void }) {
@@ -65,17 +65,17 @@ function UserForm({ user, onClose }: { user?: any; onClose(): void }) {
         </Field>
         <Field label="Role" hint={ROLE_DESC[form.role]}>
           <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
-            {ROLES.map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
+            {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
           </Select>
         </Field>
         {form.role !== 'admin' && (
           <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2.5">
             <div>
               <div id={allId} className="text-sm font-medium text-slate-800">
-                Access to all customers
+                Access to all organisations
               </div>
               <div id={allHintId} className="text-xs text-slate-500">
-                Otherwise assign customers individually on the customer page.
+                Otherwise assign organisations individually on the organisation page.
               </div>
             </div>
             <Toggle checked={form.allCustomers} onChange={(v) => setForm({ ...form, allCustomers: v })} labelledBy={allId} describedBy={allHintId} />
@@ -121,7 +121,7 @@ export function UsersPage() {
               <tr>
                 <th className="px-6 py-3 font-medium">User</th>
                 <th className="px-3 py-3 font-medium">Role</th>
-                <th className="px-3 py-3 font-medium">Customers</th>
+                <th className="px-3 py-3 font-medium">Organisations</th>
                 <th className="px-3 py-3 font-medium">Last sign-in</th>
                 <th className="px-3 py-3 font-medium">Sessions</th>
                 <th className="px-6 py-3">
@@ -140,7 +140,7 @@ export function UsersPage() {
                     </div>
                     <div className="text-xs text-slate-500">{u.email}</div>
                   </td>
-                  <td className="px-3 py-3 capitalize">{u.role}</td>
+                  <td className="px-3 py-3">{ROLE_LABELS[u.role as Role]}</td>
                   <td className="px-3 py-3 text-slate-600">{u.role === 'admin' || u.allCustomers ? 'All' : u.customerIds.length}</td>
                   <td className="px-3 py-3 text-slate-600">{fmtDateTime(u.lastLoginAt)}</td>
                   <td className="px-3 py-3 text-slate-600">{u.activeSessions}</td>

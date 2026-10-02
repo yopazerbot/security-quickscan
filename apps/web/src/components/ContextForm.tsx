@@ -4,7 +4,7 @@ import { Gauge } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
 import { Field, Select, Textarea } from './ui';
 
-/** Human-readable labels for questionnaire answers (used outside the form, e.g. the customer page). */
+/** Human-readable labels for questionnaire answers (used outside the form, e.g. the organisation page). */
 export const CONTEXT_LABELS = {
   dataSensitivity: { low: 'Low', moderate: 'Moderate', high: 'High', very_high: 'Very high' },
   internetExposure: { none: 'None', limited: 'Limited', significant: 'Significant' },

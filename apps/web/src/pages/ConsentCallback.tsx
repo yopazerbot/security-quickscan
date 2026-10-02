@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router';
 import { Card, LinkButton, PageLoader } from '../components/ui';
 import { post } from '../lib/api';
 
-/** Landing page after a customer admin grants (or refuses) consent to the scanner app. */
+/** Landing page after a tenant admin grants (or refuses) consent to the scanner app. */
 export function ConsentCallback() {
   const [params] = useSearchParams();
   const [res, setRes] = useState<{ ok: boolean; scanId?: string; message?: string } | null>(null);
@@ -31,7 +31,7 @@ export function ConsentCallback() {
           <p className="mt-2 text-sm text-slate-600">
             {res.ok ? 'Return to the scan to test the connection.' : res.message || 'The consent could not be confirmed. The link may have expired or was already used.'}
           </p>
-          {!res.ok && <p className="mt-2 text-sm text-slate-500">Generate a new admin consent link in the scan wizard and ask the customer administrator to approve all requested permissions.</p>}
+          {!res.ok && <p className="mt-2 text-sm text-slate-500">Generate a new admin consent link in the scan wizard and ask a Global Administrator of the tenant to approve all requested permissions.</p>}
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             {res.scanId ? (
               <LinkButton to={`/scans/${res.scanId}/wizard`}>Back to the scan</LinkButton>

@@ -27,7 +27,7 @@ export async function storeScanScore(ctx: AppCtx, scanId: string) {
   return s;
 }
 
-/** Triage changes affect scores of all completed scans of that customer. */
+/** Triage changes affect scores of all completed scans of that organisation. */
 export async function refreshCustomerScores(ctx: AppCtx, customerId: string) {
   const done = await ctx.db
     .select({ id: scans.id })

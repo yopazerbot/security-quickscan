@@ -1,4 +1,4 @@
-import { CHECKS, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, ISO_BY_ID, IMPLEMENTED } from './fixtures.js';
+import { CHECKS, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, ISO_BY_ID, IMPLEMENTED, ROLE_LABELS, ROLES } from './fixtures.js';
 import { describe, expect, it } from 'vitest';
 
 describe('catalog', () => {
@@ -9,6 +9,14 @@ describe('catalog', () => {
       expect(IMPLEMENTED.has(c.id), c.id).toBe(true);
     }
     expect(new Set(CHECKS.map((c) => c.id)).size).toBe(CHECKS.length);
+  });
+});
+
+describe('role labels', () => {
+  it('has a display label for every role', () => {
+    for (const r of ROLES) expect(ROLE_LABELS[r], r).toBeTruthy();
+    expect(Object.keys(ROLE_LABELS).sort()).toEqual([...ROLES].sort());
+    expect(ROLE_LABELS.consultant).toBe('Analyst');
   });
 });
 

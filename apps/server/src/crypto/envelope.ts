@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
- * Envelope encryption for customer secrets.
+ * Envelope encryption for scan credentials and other secrets.
  * A fresh 256-bit data key (DEK) encrypts the payload with AES-256-GCM. The DEK is wrapped with
  * the master key (AES-256-GCM as well). The additional authenticated data (AAD) binds a ciphertext
  * to its owning record, so a blob copied to another row fails to decrypt.

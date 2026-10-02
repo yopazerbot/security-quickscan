@@ -36,7 +36,7 @@ export const users = pgTable(
     active: boolean('active').notNull().default(true),
     entraOid: text('entra_oid'),
     isBreakglass: boolean('is_breakglass').notNull().default(false),
-    /** Shared visitor account for demo PIN login; only sees demo customers. */
+    /** Shared visitor account for demo PIN login; only sees demo organisations. */
     isDemo: boolean('is_demo').notNull().default(false),
     createdAt: ts('created_at').notNull().defaultNow(),
     lastLoginAt: ts('last_login_at'),
@@ -86,7 +86,7 @@ export const customers = pgTable('customers', {
   country: text('country').notNull().default(''),
   notes: text('notes').notNull().default(''),
   context: jsonb('context').notNull(),
-  /** Seeded fictional customer (only created when DEMO_MODE=true). */
+  /** Seeded fictional organisation (only created when DEMO_MODE=true). */
   isDemo: boolean('is_demo').notNull().default(false),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: ts('created_at').notNull().defaultNow(),
@@ -209,7 +209,7 @@ export const checkResults = pgTable(
   (t) => [uniqueIndex('check_results_uq').on(t.scanId, t.systemId, t.checkId), index('check_results_updated_idx').on(t.scanId, t.updatedAt)],
 );
 
-/** Consultant triage per customer + check, carried over to future scans. */
+/** Triage per organisation (customers row) + check, carried over to future scans. */
 export const findingTriage = pgTable(
   'finding_triage',
   {
@@ -249,7 +249,7 @@ export const settings = pgTable('settings', {
 
 /**
  * Microsoft tenants that granted admin consent to the platform scanner app, bound to exactly one
- * customer. Prevents using the platform app against another customer's tenant.
+ * organisation. Prevents using the platform app against another organisation's tenant.
  */
 export const msTenantBindings = pgTable('ms_tenant_bindings', {
   tenantId: text('tenant_id').primaryKey(),

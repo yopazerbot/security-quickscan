@@ -8,5 +8,5 @@
 
 ## Checklist
 
-- [ ] No secrets, customer data or real tenant/account identifiers in code, tests or screenshots
+- [ ] No secrets, organisation data or real tenant/account identifiers in code, tests or screenshots
 - [ ] New or changed checks: Annex A mapping, demo scenario, `npm run docs:checks`

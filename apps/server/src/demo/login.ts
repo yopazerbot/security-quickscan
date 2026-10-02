@@ -31,7 +31,7 @@ export async function demoLoginAvailable(ctx: AppCtx) {
   return s.enabled && Boolean(s.pinHash);
 }
 
-/** The shared demo visitor account, assigned to every demo customer and nothing else. */
+/** The shared demo visitor account, assigned to every demo organisation and nothing else. */
 export async function ensureDemoUser(ctx: AppCtx): Promise<string> {
   let u = (await ctx.db.select().from(users).where(eq(users.isDemo, true)).limit(1))[0];
   if (!u) {

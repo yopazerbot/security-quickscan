@@ -13,8 +13,8 @@ import { authModes, usePlatform } from './StepScope';
 
 const RETENTION = [
   { id: 'purge_on_completion', title: 'Delete after the scan', desc: 'Most secure. Secrets are wiped as soon as the scan ends (or after 7 days if never run).', badge: 'Recommended' },
-  { id: 'days', title: 'Keep for a number of days', desc: 'Allows a re-scan without asking the customer again. Deleted automatically afterwards.' },
-  { id: 'manual', title: 'Keep until I delete them', desc: 'Encrypted at rest. Use only with a clear agreement with the customer.' },
+  { id: 'days', title: 'Keep for a number of days', desc: 'Allows a re-scan without entering credentials again. Deleted automatically afterwards.' },
+  { id: 'manual', title: 'Keep until I delete them', desc: 'Encrypted at rest. Use only when agreed with the system owner.' },
 ] as const;
 
 function Retention({ scan, refresh }: { scan: WizardScan; refresh(): Promise<unknown> }) {
@@ -157,7 +157,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
     guide = <AwsRoleGuide principal={platform.data?.awsPrincipal ?? null} externalId={s.config.externalId} />;
     form = (
       <>
-        <Field label="External ID" hint="Unique to this engagement. Included in the template.">
+        <Field label="External ID" hint="Unique to this scan. Included in the template.">
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-lg bg-slate-100 px-3 py-2 text-xs">{s.config.externalId}</code>
             <CopyButton value={s.config.externalId} />
@@ -256,7 +256,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
               <BookOpen className="size-4 text-brand-600" /> How to get access
               <ChevronDown className={clsx('ml-auto size-4 text-slate-400 transition', showGuide && 'rotate-180')} />
             </button>
-            {showGuide ? guide : <p className="text-xs text-slate-500">Expand for step-by-step instructions you can share with the customer.</p>}
+            {showGuide ? guide : <p className="text-xs text-slate-500">Expand for step-by-step instructions you can share with the tenant or account administrator.</p>}
           </div>
         )}
         <div className={clsx('space-y-4 p-6', guide && 'lg:col-span-2')}>

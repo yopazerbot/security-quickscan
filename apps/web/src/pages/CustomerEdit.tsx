@@ -38,10 +38,10 @@ export function CustomerEdit() {
       const c = customerId ? await put<{ id: string }>(`/api/customers/${customerId}`, body) : await post<{ id: string }>('/api/customers', body);
       await qc.invalidateQueries({ queryKey: ['customers'] });
       await qc.invalidateQueries({ queryKey: ['customer', c.id] });
-      toast.success(customerId ? 'Customer saved.' : 'Customer created.');
-      nav(`/customers/${c.id}`);
+      toast.success(customerId ? 'Organisation saved.' : 'Organisation created.');
+      nav(`/organisations/${c.id}`);
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'The customer could not be saved.';
+      const message = e instanceof Error ? e.message : 'The organisation could not be saved.';
       setErr(message);
       toast.error(message);
     } finally {
@@ -52,15 +52,15 @@ export function CustomerEdit() {
   return (
     <form onSubmit={submit}>
       <PageHeader
-        crumbs={<Link to="/customers" className="hover:text-slate-700">Customers</Link>}
-        title={customerId ? `Edit ${existing.data?.name}` : 'New customer'}
-        subtitle="The customer context determines the risk profile, the default evaluation criteria and the weighting of the score."
+        crumbs={<Link to="/organisations" className="hover:text-slate-700">Organisations</Link>}
+        title={customerId ? `Edit ${existing.data?.name}` : 'New organisation'}
+        subtitle="The organisation context determines the risk profile, the default evaluation criteria and the weighting of the score."
       />
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card title="Organisation">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Customer name" className="sm:col-span-2">
+              <Field label="Organisation name" className="sm:col-span-2">
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required maxLength={200} autoFocus />
               </Field>
               <Field label="Contact person">
@@ -77,7 +77,7 @@ export function CustomerEdit() {
               </Field>
             </div>
           </Card>
-          <Card title="Context and risk factors" subtitle="Answer from the customer's perspective. Every new scan uses this context; draft scans pick up changes automatically.">
+          <Card title="Context and risk factors" subtitle="Answer from the organisation's perspective. Every new scan uses this context; draft scans pick up changes automatically.">
             <ContextForm value={context} onChange={setContext} />
           </Card>
         </div>
@@ -96,7 +96,7 @@ export function CustomerEdit() {
               </div>
             )}
             <Button type="submit" size="lg" className="w-full" loading={busy}>
-              {customerId ? 'Save changes' : 'Create customer'}
+              {customerId ? 'Save changes' : 'Create organisation'}
             </Button>
           </div>
         </div>

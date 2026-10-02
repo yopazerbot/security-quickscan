@@ -35,7 +35,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
     };
   });
 
-  /** Public identifiers of the platform's own scanner identities (shown in customer guidance). */
+  /** Public identifiers of the platform's own scanner identities (shown in the setup guidance). */
   app.get('/api/platform', async (req) => {
     requireUser(req);
     let awsPrincipal: string | null = null;
@@ -54,7 +54,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
     };
   });
 
-  /** Demo mode only: delete the fictional demo customer(s) and seed them again. */
+  /** Demo mode only: delete the fictional demo organisation(s) and seed them again. */
   app.post('/api/admin/demo/reset', async (req) => {
     requireRole(req, 'admin');
     if (!ctx.config.DEMO_MODE) throw notFound();
