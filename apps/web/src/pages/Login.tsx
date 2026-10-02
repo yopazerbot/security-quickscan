@@ -41,11 +41,14 @@ export function Login() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [params] = useSearchParams();
-  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean }>('/api/auth/config') });
+  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean; demoLogin: boolean }>('/api/auth/config') });
   const [showBg, setShowBg] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', totp: '' });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pin, setPin] = useState('');
+  const [pinErr, setPinErr] = useState<string | null>(null);
+  const [pinBusy, setPinBusy] = useState(false);
 
   if (me) return <Navigate to="/" replace />;
   const error = params.get('error');
@@ -64,6 +67,21 @@ export function Login() {
       setForm((f) => ({ ...f, totp: '' }));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitPin = async (e: FormEvent) => {
+    e.preventDefault();
+    setPinBusy(true);
+    setPinErr(null);
+    try {
+      await post('/api/auth/demo', { pin });
+      await qc.invalidateQueries({ queryKey: ['me'] });
+    } catch (e: any) {
+      setPinErr(e.message);
+      setPin('');
+    } finally {
+      setPinBusy(false);
     }
   };
 
@@ -93,6 +111,12 @@ export function Login() {
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h2>
           <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>
 
+          {params.get('signedOut') && !error && (
+            <Alert tone="success" className="mt-6">
+              You have been signed out.
+            </Alert>
+          )}
+
           {error && (
             <Alert tone="error" className="mt-6">
               {ERRORS[error] ?? 'Sign-in failed.'}
@@ -113,6 +137,30 @@ export function Login() {
               <MicrosoftLogo />
               Sign in with Microsoft
             </a>
+          )}
+
+          {cfg.data?.demoLogin && (
+            <form onSubmit={submitPin} className="mt-6 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
+              <div className="mb-1 text-sm font-semibold text-amber-900">Demo access</div>
+              <p className="mb-3 text-xs text-amber-800">Explore the tool with a fictional customer. Enter the PIN you received.</p>
+              <div className="flex gap-2">
+                <Input
+                  aria-label="Demo PIN"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={12}
+                  placeholder="PIN"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                  required
+                />
+                <Button type="submit" loading={pinBusy} disabled={pin.length < 6}>
+                  Enter demo
+                </Button>
+              </div>
+              {pinErr && <p className="mt-2 text-xs text-red-700">{pinErr}</p>}
+            </form>
           )}
 
           {cfg.data?.breakglass && (

@@ -91,7 +91,7 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
 function FindingCard({ f, customerId, canWrite, onTriaged }: { f: Item; customerId: string; canWrite: boolean; onTriaged(): void }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={clsx('rounded-xl bg-white ring-1 transition', open ? 'shadow-md ring-slate-300' : 'ring-slate-200 hover:ring-slate-300')}>
+    <div data-testid="finding" className={clsx('rounded-xl bg-white ring-1 transition', open ? 'shadow-md ring-slate-300' : 'ring-slate-200 hover:ring-slate-300')}>
       <button className="flex w-full items-center gap-4 px-5 py-4 text-left" onClick={() => setOpen(!open)}>
         <span className="h-10 w-1 shrink-0 rounded-full" style={{ backgroundColor: SEVERITY_HEX[f.severity as Severity] }} />
         <div className="min-w-0 flex-1">
@@ -330,7 +330,7 @@ export function Report() {
         <Card title="Score by domain">
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={radar} outerRadius="66%" margin={{ left: 24, right: 24 }}>
+              <RadarChart data={radar} outerRadius="66%" margin={{ left: 44, right: 44 }}>
                 <PolarGrid stroke="#e2e8f0" />
                 <PolarAngleAxis dataKey="domain" tick={{ fontSize: 11, fill: '#475569' }} />
                 <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />

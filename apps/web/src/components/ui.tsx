@@ -249,3 +249,7 @@ export function Stat({ label, value, tone, sub }: { label: string; value: ReactN
     </div>
   );
 }
+
+export function DemoBadge() {
+  return <Badge className="bg-amber-100 text-amber-800 ring-1 ring-amber-200">Demo</Badge>;
+}

@@ -13,7 +13,7 @@ export async function audit(
   const user = actor ?? req?.user;
   try {
     await ctx.db.insert(auditLog).values({
-      userId: user?.id ?? null,
+      userId: user?.id || null,
       userEmail: user?.email ?? null,
       action,
       targetType: target?.type ?? null,

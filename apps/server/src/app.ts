@@ -13,6 +13,7 @@ import type { Config } from './config.js';
 import { HttpError, type AppCtx } from './context.js';
 import { Envelope } from './crypto/envelope.js';
 import type { Db } from './db/index.js';
+import { demoLoginRoutes } from './demo/login.js';
 import { adminRoutes } from './routes/admin.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
@@ -20,7 +21,7 @@ import { scanRoutes } from './routes/scans.js';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** Endpoints reachable without a session (they do their own checks). */
-const PUBLIC_MUTATIONS = new Set(['/api/auth/breakglass']);
+const PUBLIC_MUTATIONS = new Set(['/api/auth/breakglass', '/api/auth/demo']);
 
 function webDist() {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -132,6 +133,7 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
   scanRoutes(app, ctx);
   reportRoutes(app, ctx);
   adminRoutes(app, ctx);
+  demoLoginRoutes(app, ctx);
 
   const dist = webDist();
   if (dist) {

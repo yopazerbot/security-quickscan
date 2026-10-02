@@ -8,6 +8,7 @@ import { requireRole, requireUser } from '../auth/session.js';
 import { scannerEnv } from '../config.js';
 import { badRequest, notFound, type AppCtx } from '../context.js';
 import { auditLog, customerAssignments, sessions, settings, users } from '../db/schema.js';
+import { resetDemo } from '../demo/seed.js';
 import { parse, uuidParam } from './helpers.js';
 
 export async function getBranding(ctx: AppCtx): Promise<Branding> {
@@ -53,6 +54,15 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
     };
   });
 
+  /** Demo mode only: delete the fictional demo customer(s) and seed them again. */
+  app.post('/api/admin/demo/reset', async (req) => {
+    requireRole(req, 'admin');
+    if (!ctx.config.DEMO_MODE) throw notFound();
+    await resetDemo(ctx);
+    await audit(ctx, req, 'demo.reset');
+    return { ok: true };
+  });
+
   // ---------- users ----------
 
   app.get('/api/users', async (req) => {
@@ -88,6 +98,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
     const target = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
     if (!target) throw notFound();
     if (target.isBreakglass) throw badRequest('The break-glass account is managed through environment variables');
+    if (target.isDemo) throw badRequest('The demo visitor account is managed under Settings, Demo data');
     if (id === me.id && (body.role && body.role !== 'admin' || body.active === false)) throw badRequest('You cannot demote or deactivate yourself');
     await db.update(users).set(body).where(eq(users.id, id));
     if (body.active === false || body.role) await db.delete(sessions).where(eq(sessions.userId, id));

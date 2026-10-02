@@ -190,6 +190,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const body = parse(systemInputSchema, req.body);
     if (body.config.authMode === 'demo' && !config.DEMO_MODE) throw badRequest('Demo systems are disabled');
+    if (req.user!.isDemo && body.config.authMode !== 'demo') throw new HttpError(403, 'Demo visitors can only add simulated systems');
     const count = (await db.select({ id: scanSystems.id }).from(scanSystems).where(eq(scanSystems.scanId, scan.id))).length;
     if (count >= 20) throw badRequest('Too many systems in one scan');
     const cfg: Record<string, unknown> = { ...body.config };
@@ -204,6 +205,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const s = await loadSystem(scan.id, req);
     const body = parse(systemInputSchema, { ...(req.body as object), provider: s.provider });
     if (body.config.authMode === 'demo' && !config.DEMO_MODE) throw badRequest('Demo systems are disabled');
+    if (req.user!.isDemo && body.config.authMode !== 'demo') throw new HttpError(403, 'Demo visitors can only add simulated systems');
     const prev = s.config as any;
     const cfg: Record<string, unknown> = { ...body.config };
     if (s.provider === 'aws') cfg.externalId = prev.externalId;
@@ -225,6 +227,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.put('/api/scans/:scanId/systems/:systemId/credentials', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const s = await loadSystem(scan.id, req);
+    if (req.user!.isDemo) throw new HttpError(403, 'Demo visitors cannot store credentials');
     const schema = secretSchemaFor(s.provider, (s.config as any).authMode);
     if (!schema) throw badRequest('This authentication mode does not take a secret');
     const secret = parse(schema, (req.body as any)?.secret);
@@ -273,6 +276,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const s = await loadSystem(scan.id, req);
     const cfg = s.config as any;
+    if (req.user!.isDemo) throw new HttpError(403, 'Not available for demo visitors');
     if (cfg.authMode !== 'admin_consent' || !config.SCANNER_MS_CLIENT_ID) throw badRequest('Admin consent is not available for this system');
     if (!cfg.tenantId) throw badRequest('Enter the customer tenant ID or domain first');
     const state = randomToken(24);
@@ -534,7 +538,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const allowed = all ? null : (await db.select({ id: customerAssignments.customerId }).from(customerAssignments).where(eq(customerAssignments.userId, u.id))).map((r) => r.id);
     if (allowed && !allowed.length) return [];
     return db
-      .select({ id: scans.id, name: scans.name, status: scans.status, score: scans.score, grade: scans.grade, createdAt: scans.createdAt, finishedAt: scans.finishedAt, customerId: scans.customerId, customerName: customers.name })
+      .select({ id: scans.id, name: scans.name, status: scans.status, score: scans.score, grade: scans.grade, createdAt: scans.createdAt, finishedAt: scans.finishedAt, customerId: scans.customerId, customerName: customers.name, isDemo: customers.isDemo })
       .from(scans)
       .innerJoin(customers, eq(customers.id, scans.customerId))
       .where(allowed ? inArray(scans.customerId, allowed) : undefined)

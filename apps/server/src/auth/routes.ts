@@ -11,6 +11,7 @@ import { safeEqual, sha256 } from '../crypto/envelope.js';
 import { authStates, loginAttempts, users } from '../db/schema.js';
 import { createSession, destroySession, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
+import { demoLoginAvailable } from '../demo/login.js';
 
 const OIDC_COOKIE = 'qs_oidc';
 
@@ -41,12 +42,12 @@ function entraConfig(ctx: AppCtx) {
   return discovered;
 }
 
-async function isLocked(ctx: AppCtx, key: string) {
+export async function isLocked(ctx: AppCtx, key: string) {
   const r = await ctx.db.select().from(loginAttempts).where(eq(loginAttempts.key, key)).limit(1);
   return Boolean(r[0]?.lockedUntil && r[0].lockedUntil.getTime() > Date.now());
 }
 
-async function recordFailure(ctx: AppCtx, key: string) {
+export async function recordFailure(ctx: AppCtx, key: string) {
   await ctx.db
     .insert(loginAttempts)
     .values({ key, failures: 1, updatedAt: new Date() })
@@ -68,6 +69,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get('/api/auth/config', async () => ({
     entra: entraEnabled(config),
     breakglass: config.BREAKGLASS_ENABLED,
+    demoLogin: await demoLoginAvailable(ctx),
   }));
 
   app.get('/api/auth/me', async (req) => {

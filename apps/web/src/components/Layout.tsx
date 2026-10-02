@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { Building2, LayoutDashboard, LogOut, ScrollText, Settings, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
-import { NavLink, Outlet, useNavigate } from 'react-router';
+import { NavLink, Outlet } from 'react-router';
 import { useAuth } from '../lib/auth';
 
 const nav = [
@@ -33,7 +33,6 @@ function Item({ to, label, icon: Icon, end }: { to: string; label: string; icon:
 
 export function Layout() {
   const { me, logout } = useAuth();
-  const navigate = useNavigate();
   if (!me) return null;
   const initials = me.user.name
     .split(/\s+/)
@@ -76,20 +75,22 @@ export function Layout() {
               <div className="truncate text-sm font-medium text-white">{me.user.name}</div>
               <div className="truncate text-xs capitalize text-slate-500">{me.user.role}</div>
             </div>
-            <button
-              title="Sign out"
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"
-              onClick={async () => {
-                await logout();
-                navigate('/login');
-              }}
-            >
-              <LogOut className="size-4" />
-            </button>
           </div>
+          <button
+            className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
+            onClick={() => void logout()}
+          >
+            <LogOut className="size-[18px]" />
+            Sign out
+          </button>
         </div>
       </aside>
       <main className="ml-60 min-w-0 flex-1">
+        {me.user.isDemo && (
+          <div className="no-print bg-amber-400 px-8 py-2 text-sm font-medium text-amber-950">
+            Demo session: you are exploring a fictional customer. Only simulated systems can be scanned.
+          </div>
+        )}
         {me.authMethod === 'breakglass' && (
           <div className="no-print flex items-center gap-2 bg-red-600 px-8 py-2 text-sm font-medium text-white">
             <ShieldAlert className="size-4" />

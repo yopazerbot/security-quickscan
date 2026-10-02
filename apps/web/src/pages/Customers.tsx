@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { Building2, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Button, Card, EmptyState, GradeBadge, Input, PageHeader, PageLoader } from '../components/ui';
+import { Button, Card, DemoBadge, EmptyState, GradeBadge, Input, PageHeader, PageLoader } from '../components/ui';
 import { get } from '../lib/api';
 import { useCan } from '../lib/auth';
 import { fmtDate } from '../lib/format';
@@ -74,7 +74,10 @@ export function Customers() {
               <Link key={c.id} to={`/customers/${c.id}`} className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-base font-semibold text-slate-900 group-hover:text-brand-700">{c.name}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-base font-semibold text-slate-900 group-hover:text-brand-700">{c.name}</span>
+                      {c.isDemo && <DemoBadge />}
+                    </div>
                     <div className="mt-0.5 truncate text-sm text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
                   </div>
                   <GradeBadge grade={c.latestScan?.grade} />

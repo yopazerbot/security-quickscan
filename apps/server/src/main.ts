@@ -3,6 +3,7 @@ import { buildApp, loggerOptions } from './app.js';
 import { loadConfig } from './config.js';
 import { Envelope } from './crypto/envelope.js';
 import { createDb, runMigrations } from './db/index.js';
+import { seedDemo } from './demo/seed.js';
 import { startWorker } from './worker.js';
 
 async function main() {
@@ -14,6 +15,9 @@ async function main() {
 
   await runMigrations(db);
   log.info({ mode }, 'database migrated');
+  if (config.DEMO_MODE && mode !== 'worker') {
+    await seedDemo({ config, db, envelope: new Envelope(config.MASTER_KEY), log }).catch((e) => log.error({ err: e }, 'demo seeding failed'));
+  }
 
   let stopWorker: (() => Promise<void>) | null = null;
   let close: (() => Promise<void>) | null = null;

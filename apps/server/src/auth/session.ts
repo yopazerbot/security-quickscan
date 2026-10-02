@@ -67,6 +67,7 @@ export async function loadSession(ctx: AppCtx, req: FastifyRequest) {
     role: row.u.role,
     allCustomers: row.u.allCustomers,
     isBreakglass: row.u.isBreakglass,
+    isDemo: row.u.isDemo,
   };
   req.session = { idHash, csrfToken: row.s.csrfToken, authMethod: row.s.authMethod, expiresAt: row.s.expiresAt };
 }

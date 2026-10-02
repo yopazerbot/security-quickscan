@@ -18,6 +18,7 @@ export interface SessionUser {
   role: Role;
   allCustomers: boolean;
   isBreakglass: boolean;
+  isDemo: boolean;
 }
 
 export interface SessionInfo {

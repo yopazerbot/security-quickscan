@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { RISK_STYLE } from '../components/ContextForm';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { Button, Card, EmptyState, GradeBadge, Modal, PageHeader, PageLoader } from '../components/ui';
+import { Button, Card, DemoBadge, EmptyState, GradeBadge, Modal, PageHeader, PageLoader } from '../components/ui';
 import { del, get, post, put } from '../lib/api';
 import { useCan } from '../lib/auth';
 import { fmtDate } from '../lib/format';
@@ -41,7 +41,12 @@ export function CustomerDetail() {
     <>
       <PageHeader
         crumbs={<Link to="/customers" className="hover:text-slate-700">Customers</Link>}
-        title={c.name}
+        title={
+          <span className="flex items-center gap-3">
+            {c.name}
+            {c.isDemo && <DemoBadge />}
+          </span>
+        }
         subtitle={[INDUSTRIES.find(([id]) => id === c.context.industry)?.[1], c.country].filter(Boolean).join(' · ')}
         actions={
           <>

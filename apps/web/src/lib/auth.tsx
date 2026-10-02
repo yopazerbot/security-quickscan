@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { ApiError, get, post, setCsrfToken } from './api';
 
 export interface Me {
-  user: { id: string; email: string; name: string; role: Role; allCustomers: boolean; isBreakglass: boolean };
+  user: { id: string; email: string; name: string; role: Role; allCustomers: boolean; isBreakglass: boolean; isDemo: boolean };
   csrfToken: string;
   authMethod: string;
   sessionExpiresAt: string;
@@ -39,8 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await post('/api/auth/logout').catch(() => undefined);
-    qc.clear();
-    qc.setQueryData(['me'], null);
+    // Full page load: drops every cached query (customer data included) and the in-memory CSRF token.
+    window.location.assign('/login?signedOut=1');
   };
 
   return <AuthCtx.Provider value={{ me: q.data ?? null, loading: q.isLoading, logout }}>{children}</AuthCtx.Provider>;

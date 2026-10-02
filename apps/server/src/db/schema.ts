@@ -36,6 +36,8 @@ export const users = pgTable(
     active: boolean('active').notNull().default(true),
     entraOid: text('entra_oid'),
     isBreakglass: boolean('is_breakglass').notNull().default(false),
+    /** Shared visitor account for demo PIN login; only sees demo customers. */
+    isDemo: boolean('is_demo').notNull().default(false),
     createdAt: ts('created_at').notNull().defaultNow(),
     lastLoginAt: ts('last_login_at'),
   },
@@ -84,6 +86,8 @@ export const customers = pgTable('customers', {
   country: text('country').notNull().default(''),
   notes: text('notes').notNull().default(''),
   context: jsonb('context').notNull(),
+  /** Seeded fictional customer (only created when DEMO_MODE=true). */
+  isDemo: boolean('is_demo').notNull().default(false),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),

@@ -2,7 +2,7 @@ import { INDUSTRIES } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ArrowRight, Building2, Plus, Radar } from 'lucide-react';
 import { Link } from 'react-router';
-import { Button, Card, EmptyState, GradeBadge, PageHeader, PageLoader, Stat } from '../components/ui';
+import { Button, Card, DemoBadge, EmptyState, GradeBadge, PageHeader, PageLoader, Stat } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
 import { fmtDate, scoreHex } from '../lib/format';
@@ -57,7 +57,10 @@ export function Dashboard() {
                 >
                   <GradeBadge grade={s.grade} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-900">{s.customerName}</div>
+                    <div className="flex items-center gap-2 truncate text-sm font-medium text-slate-900">
+                      {s.customerName}
+                      {s.isDemo && <DemoBadge />}
+                    </div>
                     <div className="truncate text-xs text-slate-500">
                       {s.name} · {fmtDate(s.finishedAt ?? s.createdAt)}
                     </div>

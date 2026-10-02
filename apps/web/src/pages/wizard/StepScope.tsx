@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { ProviderIcon } from '../../components/ProviderIcon';
 import { Alert, Button, Card, Field, Input, Modal } from '../../components/ui';
 import { del, get, patch, post } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { WizardFooter, type StepProps, type WizardSystem } from './ScanWizard';
 
 export interface Platform {
@@ -45,7 +46,8 @@ export function authModes(provider: Provider, p?: Platform): Mode[] {
 
 function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: Provider; system?: WizardSystem; scanId: string; onClose(): void; onSaved(): void }) {
   const platform = usePlatform();
-  const modes = authModes(provider, platform.data);
+  const { me } = useAuth();
+  const modes = authModes(provider, platform.data).map((m) => (me?.user.isDemo && m.id !== 'demo' ? { ...m, available: false, why: 'Not available in a demo session' } : m));
   const firstAvail = modes.find((m) => m.available && m.recommended)?.id ?? modes.find((m) => m.available)?.id ?? modes[0].id;
   const c = system?.config ?? {};
   const [label, setLabel] = useState(system?.label ?? PROVIDER_LABELS[provider]);

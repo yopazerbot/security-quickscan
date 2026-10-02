@@ -47,6 +47,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       contactName: c.contactName,
       country: c.country,
       industry: (c.context as any)?.industry,
+      isDemo: c.isDemo,
       updatedAt: c.updatedAt,
       latestScan: latest.find((l) => l.customerId === c.id) ?? null,
       scanCount: counts.find((x) => x.customerId === c.id)?.n ?? 0,
@@ -56,7 +57,8 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.post('/api/customers', async (req) => {
     const u = requireRole(req, 'admin', 'consultant');
     const body = parse(customerInputSchema, req.body);
-    const [c] = await db.insert(customers).values({ ...body, createdBy: u.id }).returning();
+    // Customers created by the demo visitor are demo data (removed by "Reset demo data").
+    const [c] = await db.insert(customers).values({ ...body, createdBy: u.id, isDemo: u.isDemo }).returning();
     if (u.role !== 'admin' && !u.allCustomers) await db.insert(customerAssignments).values({ userId: u.id, customerId: c.id });
     await audit(ctx, req, 'customer.create', { type: 'customer', id: c.id }, { name: c.name });
     return c;
@@ -78,7 +80,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
         startedAt: scans.startedAt,
         finishedAt: scans.finishedAt,
         wizardStep: scans.wizardStep,
-        providers: sql<string[]>`coalesce((select array_agg(distinct ${scanSystems.provider}) from ${scanSystems} where ${scanSystems.scanId} = ${scans.id}), '{}')`,
+        providers: sql<string[]>`coalesce((select array_agg(distinct ${scanSystems.provider}::text) from ${scanSystems} where ${scanSystems.scanId} = ${scans.id}), '{}'::text[])`,
       })
       .from(scans)
       .where(eq(scans.customerId, id))

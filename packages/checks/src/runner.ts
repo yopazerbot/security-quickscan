@@ -59,7 +59,7 @@ export async function runSystem(input: RunSystemInput): Promise<void> {
     try {
       const impl = mod.checks[checkId];
       const outcome = demo
-        ? await demoOutcome(input.systemId, checkId)
+        ? await demoOutcome(input.systemId, checkId, { maturity: typeof input.config?.demoMaturity === 'number' ? input.config.demoMaturity : undefined })
         : impl
           ? await withTimeout(impl(ctx), CHECK_TIMEOUT_MS, checkId)
           : { status: 'error' as const, summary: 'Check not implemented.' };
