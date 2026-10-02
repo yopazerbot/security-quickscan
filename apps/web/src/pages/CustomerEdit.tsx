@@ -77,7 +77,7 @@ export function CustomerEdit() {
               </Field>
             </div>
           </Card>
-          <Card title="Context and risk factors" subtitle="Answer from the customer's perspective. You can refine this before each scan.">
+          <Card title="Context and risk factors" subtitle="Answer from the customer's perspective. Every new scan uses this context; draft scans pick up changes automatically.">
             <ContextForm value={context} onChange={setContext} />
           </Card>
         </div>

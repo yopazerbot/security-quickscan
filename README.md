@@ -9,7 +9,9 @@ Security QuickScan is a self-hostable web application for security consultants, 
 
 Run it on your laptop with one Docker command (no login, nothing leaves your machine), or host it for a team with Microsoft Entra ID single sign-on.
 
-![Report](docs/screenshots/report.png)
+[![Watch the 15-second product video](docs/video/poster.jpg)](docs/video/quickscan-product-video.mp4)
+
+**[Watch the 15-second product video](docs/video/quickscan-product-video.mp4)** (MP4, 1080p). The video is generated from code; see [docs/video/source](docs/video/source).
 
 ## Highlights
 
@@ -32,7 +34,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
 | | |
 | --- | --- |
 | ![Dashboard](docs/screenshots/dashboard.png) **Dashboard** | ![Customer](docs/screenshots/customer.png) **Customer history and trend** |
-| ![Context](docs/screenshots/wizard-context.png) **Customer context and risk profile** | ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** |
+| ![Context](docs/screenshots/customer-context.png) **Customer context and risk profile** | ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** |
 | ![Criteria](docs/screenshots/wizard-criteria.png) **Criteria mapped to ISO 27001 controls** | ![Progress](docs/screenshots/progress.png) **Live scan progress** |
 | ![Finding](docs/screenshots/finding.png) **Findings with evidence and remediation** | ![PDF](docs/screenshots/pdf-report.png) **Branded PDF report** |
 
@@ -81,7 +83,7 @@ Do not expose local mode to a network. To share the tool with colleagues or cust
 
 ## How a scan works
 
-1. **Customer context.** Answer a short questionnaire. The live risk profile (low, medium, high, critical) shows its drivers and the domain weights it applies.
+1. **Customer context (once per customer).** When you create the customer, answer a short questionnaire. The live risk profile (low, medium, high, critical) shows its drivers and the domain weights it applies. Every new scan uses the current context, so the wizard does not ask for it again; edit the customer to change it.
 2. **Scope.** Add the environments to assess: Microsoft 365 tenants, Azure tenants, AWS accounts and GitHub organisations, as many of each as needed.
 3. **Access.** Follow the per-platform guidance, store the read-only credentials (or use a secret-less method) and run a connection test. Choose how long secrets are kept.
 4. **Criteria.** Review the checks selected for the risk profile, grouped by platform or by ISO control. Exclude anything out of scope with a reason; exclusions appear in the report.
@@ -224,6 +226,32 @@ For hosted demos, an administrator can enable a **demo PIN login** in the same p
 
 ## Architecture
 
+```mermaid
+flowchart TB
+  SPA["Browser<br/>React single-page app"]
+  IDP["Microsoft Entra ID<br/>single sign-on (OIDC)"]
+  subgraph Container["Docker container (Node.js)"]
+    direction LR
+    API["Fastify API<br/>sessions, CSRF, roles, audit log,<br/>PDF and CSV reports"]
+    WRK["Scan worker<br/>64 read-only checks,<br/>up to 3 scans in parallel"]
+  end
+  DB[("PostgreSQL<br/>data, sessions, job queue,<br/>encrypted secrets, uploads")]
+  subgraph Customer["Customer environments (read-only access)"]
+    direction LR
+    GRAPH["Microsoft Graph<br/>M365 and Entra ID"]
+    ARM["Azure Resource<br/>Manager"]
+    AWS["AWS APIs<br/>STS AssumeRole"]
+    GH["GitHub<br/>REST API"]
+  end
+  SPA -- "HTTPS, session cookie,<br/>live progress (SSE)" --> API
+  SPA -. "sign-in" .-> IDP
+  API --> DB
+  WRK -- "claims queued scans" --> DB
+  WRK --> Customer
+```
+
+Code layout:
+
 ```
 apps/web         React 19 single-page app (Vite, Tailwind CSS, TanStack Query, Recharts)
 apps/server      Fastify API and scan worker, Drizzle ORM (Postgres), PDFKit reports
@@ -235,6 +263,7 @@ infra            AWS CloudFormation role and scanner policy
 
 - One Docker image. By default the API, the built web app and the scan worker run in one process; set `MODE=api` and `MODE=worker` to split them.
 - Postgres is the only state: application data, sessions, the job queue (`FOR UPDATE SKIP LOCKED`), encrypted secrets and uploads.
+- Each stored secret is encrypted (AES-256-GCM) with its own key, which is wrapped by the master key from `MASTER_KEY` (or a generated key file in local mode). The database alone cannot decrypt anything.
 - Scan progress streams to the browser with Server-Sent Events.
 
 ## Development
