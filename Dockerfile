@@ -25,8 +25,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /data && chown node:node /data && chmod 700 /data
-# Local mode keeps its generated master key here (mount a volume).
-VOLUME ["/data"]
+# Local mode keeps its generated master key in /data; docker-compose.yml mounts a volume there.
+# (No VOLUME instruction: Railway rejects it.)
 COPY --from=build --chown=root:root /app/package.json ./package.json
 COPY --from=deps --chown=root:root /app/node_modules ./node_modules
 COPY --from=build --chown=root:root /app/apps/server/dist ./apps/server/dist
