@@ -4,6 +4,15 @@ import { Gauge } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Field, Select, Textarea } from './ui';
 
+/** Human-readable labels for questionnaire answers (used outside the form, e.g. the customer page). */
+export const CONTEXT_LABELS = {
+  dataSensitivity: { low: 'Low', moderate: 'Moderate', high: 'High', very_high: 'Very high' },
+  internetExposure: { none: 'None', limited: 'Limited', significant: 'Significant' },
+  remoteWork: { none: 'Office based', hybrid: 'Hybrid', full: 'Fully remote' },
+  itManagement: { internal: 'Internal team', msp: 'Managed service provider', mixed: 'Mixed' },
+  securityMaturity: { initial: 'Initial / ad hoc', developing: 'Developing', defined: 'Defined', managed: 'Managed' },
+} as const;
+
 function Choice<T extends string>({ value, onChange, options, disabled }: { value: T; onChange(v: T): void; options: [T, string][]; disabled?: boolean }) {
   return (
     <div className="flex flex-wrap gap-2">

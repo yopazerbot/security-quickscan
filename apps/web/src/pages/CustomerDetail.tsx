@@ -5,9 +5,10 @@ import { ArrowRight, Download, Pencil, Play, Radar, Trash2, Users } from 'lucide
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { RISK_STYLE } from '../components/ContextForm';
+import { CONTEXT_LABELS, RISK_STYLE } from '../components/ContextForm';
+import { AsyncButton, useToast } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { Button, Card, DemoBadge, EmptyState, GradeBadge, Modal, PageHeader, PageLoader } from '../components/ui';
+import { AnchorButton, Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, LinkButton, Modal, PageHeader, PageLoader } from '../components/ui';
 import { del, get, post, put } from '../lib/api';
 import { useCan } from '../lib/auth';
 import { fmtDate } from '../lib/format';
@@ -18,13 +19,18 @@ export function CustomerDetail() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const can = useCan();
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const toast = useToast();
   const [assignOpen, setAssignOpen] = useState(false);
   const q = useQuery({ queryKey: ['customer', customerId], queryFn: () => get(`/api/customers/${customerId}`) });
   const newScan = useMutation({
     mutationFn: () => post<{ id: string }>(`/api/customers/${customerId}/scans`, {}),
-    onSuccess: (r) => nav(`/scans/${r.id}/wizard`),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['scans'] });
+      nav(`/scans/${r.id}/wizard`);
+    },
+    onError: (e) => toast.error(e.message),
   });
+  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (q.isLoading || !q.data) return <PageLoader />;
   const c = q.data;
   const profile = computeRiskProfile(c.context);
@@ -50,13 +56,13 @@ export function CustomerDetail() {
         subtitle={[INDUSTRIES.find(([id]) => id === c.context.industry)?.[1], c.country].filter(Boolean).join(' · ')}
         actions={
           <>
-            <a href={`/api/customers/${c.id}/export`}>
-              <Button variant="ghost" icon={<Download className="size-4" />}>Export data</Button>
-            </a>
+            <AnchorButton href={`/api/customers/${c.id}/export`} variant="ghost" icon={<Download className="size-4" aria-hidden />}>
+              Export data
+            </AnchorButton>
             {can.write && (
-              <Link to={`/customers/${c.id}/edit`}>
-                <Button variant="secondary" icon={<Pencil className="size-4" />}>Edit</Button>
-              </Link>
+              <LinkButton to={`/customers/${c.id}/edit`} variant="secondary" icon={<Pencil className="size-4" aria-hidden />}>
+                Edit
+              </LinkButton>
             )}
             {can.write && (
               <Button icon={<Play className="size-4" />} loading={newScan.isPending} onClick={() => newScan.mutate()}>
@@ -138,9 +144,9 @@ export function CustomerDetail() {
             </div>
             <dl className="mt-4 space-y-2 text-sm">
               <Row k="Employees" v={c.context.employees} />
-              <Row k="Data sensitivity" v={c.context.dataSensitivity.replace('_', ' ')} />
-              <Row k="Internet exposure" v={c.context.internetExposure} />
-              <Row k="Remote work" v={c.context.remoteWork} />
+              <Row k="Data sensitivity" v={CONTEXT_LABELS.dataSensitivity[c.context.dataSensitivity as keyof typeof CONTEXT_LABELS.dataSensitivity]} />
+              <Row k="Internet exposure" v={CONTEXT_LABELS.internetExposure[c.context.internetExposure as keyof typeof CONTEXT_LABELS.internetExposure]} />
+              <Row k="Remote work" v={CONTEXT_LABELS.remoteWork[c.context.remoteWork as keyof typeof CONTEXT_LABELS.remoteWork]} />
             </dl>
             {c.context.regulations.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1.5">
@@ -155,7 +161,7 @@ export function CustomerDetail() {
           <Card title="Contact">
             <dl className="space-y-2 text-sm">
               <Row k="Name" v={c.contactName || '-'} />
-              <Row k="E-mail" v={c.contactEmail || '-'} />
+              <Row k="Email" v={c.contactEmail || '-'} />
             </dl>
             {c.notes && <p className="mt-4 whitespace-pre-wrap text-sm text-slate-600">{c.notes}</p>}
           </Card>
@@ -180,39 +186,38 @@ export function CustomerDetail() {
                 </ul>
               )}
               <div className="mt-6 border-t border-slate-100 pt-4">
-                <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)}>
+                <AsyncButton
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-700 hover:bg-red-50"
+                  icon={<Trash2 className="size-3.5" aria-hidden />}
+                  confirm={{
+                    title: 'Delete customer',
+                    danger: true,
+                    confirmLabel: 'Delete permanently',
+                    body: (
+                      <>
+                        This permanently deletes <strong>{c.name}</strong> with all scans, results, stored credentials and triage notes. This cannot be undone. Consider exporting the data
+                        first.
+                      </>
+                    ),
+                  }}
+                  onClick={async () => {
+                    await del(`/api/customers/${c.id}`);
+                    await qc.invalidateQueries({ queryKey: ['customers'] });
+                    await qc.invalidateQueries({ queryKey: ['scans'] });
+                    toast.success(`${c.name} was deleted`);
+                    nav('/customers');
+                  }}
+                >
                   Delete customer and all data
-                </Button>
+                </AsyncButton>
               </div>
             </Card>
           )}
         </div>
       </div>
 
-      <Modal
-        open={confirmDelete}
-        onClose={() => setConfirmDelete(false)}
-        title="Delete customer"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Cancel</Button>
-            <Button
-              variant="danger"
-              onClick={async () => {
-                await del(`/api/customers/${c.id}`);
-                await qc.invalidateQueries({ queryKey: ['customers'] });
-                nav('/customers');
-              }}
-            >
-              Delete permanently
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-600">
-          This permanently deletes <strong>{c.name}</strong> with all scans, results, stored credentials and triage notes. This cannot be undone. Consider exporting the data first.
-        </p>
-      </Modal>
       {assignOpen && <AssignModal customerId={c.id} assigned={c.assigned.map((u: any) => u.id)} onClose={() => setAssignOpen(false)} />}
     </>
   );
@@ -221,8 +226,8 @@ export function CustomerDetail() {
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <dt className="text-slate-500">{k}</dt>
-      <dd className="font-medium capitalize text-slate-800">{v}</dd>
+      <dt className="shrink-0 text-slate-500">{k}</dt>
+      <dd className="min-w-0 break-words text-right font-medium text-slate-800">{v}</dd>
     </div>
   );
 }
@@ -240,7 +245,8 @@ function AssignModal({ customerId, assigned, onClose }: { customerId: string; as
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button
+          <AsyncButton
+            success="Access updated"
             onClick={async () => {
               await put(`/api/customers/${customerId}/assignments`, { userIds: sel });
               await qc.invalidateQueries({ queryKey: ['customer', customerId] });
@@ -248,11 +254,15 @@ function AssignModal({ customerId, assigned, onClose }: { customerId: string; as
             }}
           >
             Save
-          </Button>
+          </AsyncButton>
         </>
       }
     >
-      {candidates.length === 0 ? (
+      {users.isError ? (
+        <ErrorState error={users.error} onRetry={() => users.refetch()} />
+      ) : users.isLoading ? (
+        <PageLoader />
+      ) : candidates.length === 0 ? (
         <p className="text-sm text-slate-500">There are no consultants or viewers that need explicit assignment. Admins and users with "all customers" always have access.</p>
       ) : (
         <ul className="space-y-2">

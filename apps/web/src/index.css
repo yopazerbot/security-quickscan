@@ -6,10 +6,12 @@
   --color-brand-50: #eef2ff;
   --color-brand-100: #e0e7ff;
   --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
   --color-brand-500: #6366f1;
   --color-brand-600: #4f46e5;
   --color-brand-700: #4338ca;
-  --color-brand-900: #1e1b4b;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
   --color-ink: #0b1220;
   --animate-pop: pop 0.35s ease-out;
   --animate-fade-in: fade-in 0.3s ease-out;
@@ -28,7 +30,20 @@
 html, body, #root { height: 100%; }
 body { @apply bg-slate-50 text-slate-800 antialiased; font-feature-settings: 'cv11', 'ss01'; }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media print {
   .no-print { display: none !important; }
+  .print-only { display: block !important; }
   body { background: white; }
+  main { margin-left: 0 !important; }
+  section, .print-avoid-break { break-inside: avoid; }
 }
+.print-only { display: none; }

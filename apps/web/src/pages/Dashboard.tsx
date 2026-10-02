@@ -2,7 +2,7 @@ import { INDUSTRIES } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ArrowRight, Building2, Plus, Radar } from 'lucide-react';
 import { Link } from 'react-router';
-import { Button, Card, DemoBadge, EmptyState, GradeBadge, PageHeader, PageLoader, Stat } from '../components/ui';
+import { Card, DemoBadge, EmptyState, ErrorState, GradeBadge, LinkButton, PageHeader, PageLoader, Stat } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
 import { fmtDate, scoreHex } from '../lib/format';
@@ -13,6 +13,16 @@ export function Dashboard() {
   const can = useCan();
   const customers = useQuery({ queryKey: ['customers'], queryFn: () => get<any[]>('/api/customers') });
   const scans = useQuery({ queryKey: ['scans'], queryFn: () => get<any[]>('/api/scans'), refetchInterval: 10_000 });
+  if (customers.isError || scans.isError)
+    return (
+      <ErrorState
+        error={customers.error ?? scans.error}
+        onRetry={() => {
+          void customers.refetch();
+          void scans.refetch();
+        }}
+      />
+    );
   if (customers.isLoading || scans.isLoading) return <PageLoader />;
   const cs = customers.data ?? [];
   const ss = scans.data ?? [];
@@ -28,15 +38,15 @@ export function Dashboard() {
         subtitle="Overview of your customers and recent quick scans."
         actions={
           can.write && (
-            <Link to="/customers/new">
-              <Button icon={<Plus className="size-4" />}>New customer</Button>
-            </Link>
+            <LinkButton to="/customers/new" icon={<Plus className="size-4" aria-hidden />}>
+              New customer
+            </LinkButton>
           )
         }
       />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Customers" value={cs.length} />
-        <Stat label="Completed scans" value={ss.filter((s) => s.status === 'completed').length} sub="last 25 shown below" />
+        <Stat label="Completed scans" value={ss.filter((s) => s.status === 'completed').length} sub="among the 25 most recent scans" />
         <Stat label="Running now" value={running.length} tone={running.length ? '#4f46e5' : undefined} />
         <Stat label="Average score" value={avg ?? '-'} tone={avg !== null ? scoreHex(avg) : undefined} sub="latest scan per customer" />
       </div>

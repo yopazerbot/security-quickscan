@@ -5,6 +5,7 @@ import {
   PROVIDER_LABELS,
   REGULATIONS,
   VERDICT_LABELS,
+  gradeFor,
   type ControlVerdict,
   type Severity,
 } from '@qs/shared';
@@ -23,7 +24,8 @@ const C = {
   na: '#94a3b8',
 };
 const SEV: Record<Severity, string> = { critical: '#7f1d1d', high: '#dc2626', medium: '#d97706', low: '#2563eb', info: '#64748b' };
-const VERDICT: Record<ControlVerdict, string> = { effective: C.pass, partial: C.warn, not_effective: C.fail, not_assessed: C.na };
+// Same verdict colours as the web report.
+const VERDICT: Record<ControlVerdict, string> = { effective: '#047857', partial: '#b45309', not_effective: '#b91c1c', not_assessed: C.na };
 const GRADE: Record<string, string> = { A: '#059669', B: '#65a30d', C: '#ca8a04', D: '#ea580c', E: '#dc2626', F: '#991b1b' };
 
 type Doc = PDFKit.PDFDocument;
@@ -69,7 +71,8 @@ function bar(doc: Doc, x: number, y: number, w: number, pct: number, color: stri
   if (pct > 0) doc.roundedRect(x, y, Math.max(7, (w * pct) / 100), 7, 3.5).fill(color);
 }
 
-const scoreColor = (s: number | null) => (s === null ? C.na : s >= 80 ? C.pass : s >= 55 ? C.warn : C.fail);
+/** Score colours follow the grade bands (as in the web app). */
+const scoreColor = (s: number | null) => (s === null ? C.na : GRADE[gradeFor(s)]);
 const statusColor = (s: string) => (s === 'pass' ? C.pass : s === 'warn' ? C.warn : s === 'fail' ? C.fail : C.na);
 const STATUS_LABEL: Record<string, string> = { pass: 'PASS', warn: 'WARNING', fail: 'FAIL', na: 'N/A', error: 'ERROR' };
 
@@ -229,7 +232,7 @@ function isoPage(doc: Doc, m: ReportModel) {
     doc.font('Helvetica').fillColor(C.body).text(c.title, cols.title, y + 2, { width: 250, height: 12, ellipsis: true });
     pill(doc, cols.verdict, y, VERDICT_LABELS[c.verdict], VERDICT[c.verdict], 95);
     if (c.score !== null) {
-      bar(doc, cols.score, y + 4, 50, c.score, scoreColor(c.score));
+      bar(doc, cols.score, y + 4, 50, c.score, VERDICT[c.verdict]);
       doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(8.5).text(`${c.score}%`, cols.score + 56, y + 2);
     }
     doc.y = y + 20;

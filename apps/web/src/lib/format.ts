@@ -1,4 +1,4 @@
-import type { ControlVerdict, ResultStatus, Severity } from '@qs/shared';
+import { gradeFor, type ControlVerdict, type ResultStatus, type Severity } from '@qs/shared';
 
 export const fmtDate = (d?: string | Date | null) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -32,12 +32,14 @@ export const STATUS_STYLE: Record<ResultStatus | 'pending' | 'running', { label:
 };
 
 export const VERDICT_STYLE: Record<ControlVerdict, { cls: string; hex: string }> = {
-  effective: { cls: 'bg-emerald-500 text-white', hex: '#10b981' },
-  partial: { cls: 'bg-amber-400 text-amber-950', hex: '#f59e0b' },
-  not_effective: { cls: 'bg-red-500 text-white', hex: '#ef4444' },
-  not_assessed: { cls: 'bg-slate-200 text-slate-600', hex: '#cbd5e1' },
+  // Same colours as the PDF report; white text on these shades meets WCAG AA.
+  effective: { cls: 'bg-emerald-700 text-white', hex: '#047857' },
+  partial: { cls: 'bg-amber-700 text-white', hex: '#b45309' },
+  not_effective: { cls: 'bg-red-700 text-white', hex: '#b91c1c' },
+  not_assessed: { cls: 'bg-slate-200 text-slate-700', hex: '#cbd5e1' },
 };
 
 export const GRADE_HEX: Record<string, string> = { A: '#059669', B: '#65a30d', C: '#ca8a04', D: '#ea580c', E: '#dc2626', F: '#991b1b' };
 
-export const scoreHex = (s: number | null | undefined) => (s === null || s === undefined ? '#cbd5e1' : s >= 80 ? '#10b981' : s >= 55 ? '#f59e0b' : '#ef4444');
+/** Score colours follow the grade bands, so a score and its grade always have the same colour. */
+export const scoreHex = (s: number | null | undefined) => (s === null || s === undefined ? '#cbd5e1' : GRADE_HEX[gradeFor(s)]);
