@@ -2,7 +2,6 @@
 
 **Read-only security quick scans of Microsoft 365 / Entra ID, Azure, AWS and GitHub, evaluated against ISO/IEC 27001:2022 Annex A, with client-ready reports.**
 
-[![CI](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/ci.yml)
 [![Docker image](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
