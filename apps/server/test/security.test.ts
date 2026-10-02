@@ -47,9 +47,9 @@ describe('TOTP', () => {
     const b32 = base32Encode(randomBytes(20));
     const now = Date.now();
     const code = hotp(base32Decode(b32), Math.floor(now / 30000));
-    expect(verifyTotp(b32, code, now)).toBe(true);
-    expect(verifyTotp(b32, code, now + 5 * 30000)).toBe(false);
-    expect(verifyTotp(b32, 'abcdef', now)).toBe(false);
+    expect(verifyTotp(b32, code, now)).toBe(Math.floor(now / 30000));
+    expect(verifyTotp(b32, code, now + 5 * 30000)).toBeNull();
+    expect(verifyTotp(b32, 'abcdef', now)).toBeNull();
   });
 });
 
@@ -67,5 +67,23 @@ describe('OIDC error codes', () => {
     expect(oidcErrorCode({ error: 'invalid_client', error_description: 'AADSTS7000215: Invalid client secret provided. Trace ID: x' })).toBe('AADSTS7000215');
     expect(oidcErrorCode({ error: 'invalid_grant', error_description: 'bad' })).toBe('invalid_grant');
     expect(oidcErrorCode(new Error('<script>'))).toBe('unknown');
+  });
+});
+
+describe('AWS least-privilege policy', () => {
+  it('template and shared action list match, and cover every API the checks call', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { AWS_SCANNER_ACTIONS } = await import('@qs/shared');
+    const yaml = readFileSync(new URL('../../../infra/aws-scanner-role.yaml', import.meta.url), 'utf8');
+    const inYaml = [...yaml.matchAll(/^\s+- ([a-z0-9-]+:[A-Za-z]+)$/gm)].map((m) => m[1]).sort();
+    expect(inYaml).toEqual([...AWS_SCANNER_ACTIONS].sort());
+    const src = readFileSync(new URL('../../../packages/checks/src/aws/index.ts', import.meta.url), 'utf8');
+    const commands = new Set([...src.matchAll(/new ([A-Za-z]+)Command\(/g)].map((m) => m[1]));
+    const special: Record<string, string> = { ListBuckets: 's3:ListAllMyBuckets', GetPublicAccessBlock: 's3:GetAccountPublicAccessBlock' };
+    for (const c of commands) {
+      if (c === 'AssumeRole' || c === 'GetCallerIdentity') continue; // platform side / no permission needed
+      const needed = special[c] ?? c;
+      expect(AWS_SCANNER_ACTIONS.some((a) => a === needed || a.endsWith(`:${needed}`)), c).toBe(true);
+    }
   });
 });

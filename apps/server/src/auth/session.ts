@@ -54,7 +54,8 @@ export async function loadSession(ctx: AppCtx, req: FastifyRequest) {
   if (!row) return;
   const now = Date.now();
   const idleMs = ctx.config.SESSION_IDLE_MINUTES * 60_000;
-  if (row.s.expiresAt.getTime() < now || row.s.lastSeenAt.getTime() < now - idleMs || !row.u.active) {
+  // Demo visitor sessions end as soon as demo mode is switched off.
+  if (row.s.expiresAt.getTime() < now || row.s.lastSeenAt.getTime() < now - idleMs || !row.u.active || (row.u.isDemo && !ctx.config.DEMO_MODE)) {
     await ctx.db.delete(sessions).where(eq(sessions.idHash, idHash));
     return;
   }
@@ -112,4 +113,15 @@ export async function assertCustomerAccess(ctx: AppCtx, req: FastifyRequest, cus
   if (write && u.role === 'viewer') throw forbidden('Read-only account');
   if (!(await canAccessCustomer(ctx, u, customerId))) throw new HttpError(404, 'Not found');
   return u;
+}
+
+/** Re-validates a session during long-lived requests (SSE): still present, not expired, user active. */
+export async function sessionStillValid(ctx: AppCtx, idHash: string): Promise<boolean> {
+  const r = await ctx.db
+    .select({ exp: sessions.expiresAt, active: users.active })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(eq(sessions.idHash, idHash))
+    .limit(1);
+  return Boolean(r[0] && r[0].active && r[0].exp.getTime() > Date.now());
 }

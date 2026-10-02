@@ -1,11 +1,12 @@
 import type { CheckOutcome, ResourceRef } from '@qs/shared';
 import type { ProviderModule } from '../types.js';
-import { CheckError, fail, failIfAny, fetchJson, mapLimit, Memo, na, pass, warn } from '../util.js';
+import { CheckError, fail, failIfAny, fetchJson, mapLimit, MAX_PAGES, Memo, na, pass, warn } from '../util.js';
 
 export interface GhCtx {
   org: string;
   token: string;
   memo: Memo;
+  signal?: AbortSignal;
 }
 
 const HOSTS = ['api.github.com'];
@@ -16,7 +17,7 @@ class GhError extends CheckError {}
 
 async function gh<T = any>(ctx: GhCtx, path: string): Promise<{ status: number; data: T; headers: Headers }> {
   const url = path.startsWith('https://') ? path : `https://api.github.com${path}`;
-  return fetchJson<T>({ url, token: ctx.token, allowedHosts: HOSTS, headers: HEADERS });
+  return fetchJson<T>({ url, token: ctx.token, allowedHosts: HOSTS, headers: HEADERS, signal: ctx.signal });
 }
 
 async function ghOk<T = any>(ctx: GhCtx, path: string): Promise<T> {
@@ -28,11 +29,15 @@ async function ghOk<T = any>(ctx: GhCtx, path: string): Promise<T> {
 async function ghAll<T = any>(ctx: GhCtx, path: string, max = 5000): Promise<T[]> {
   const out: T[] = [];
   let next: string | undefined = `${path}${path.includes('?') ? '&' : '?'}per_page=100`;
-  while (next && out.length < max) {
+  const seen = new Set<string>();
+  for (let pages = 0; next && out.length < max && pages < MAX_PAGES; pages++) {
+    seen.add(next);
     const r: { status: number; data: any; headers: Headers } = await gh(ctx, next);
     if (r.status >= 400) throw new GhError(`GitHub ${r.status} on ${path.split('?')[0]}: ${r.data?.message ?? ''}`, r.status);
-    out.push(...(Array.isArray(r.data) ? r.data : []));
-    next = /<([^>]+)>;\s*rel="next"/.exec(r.headers.get('link') ?? '')?.[1];
+    const items = Array.isArray(r.data) ? r.data : [];
+    out.push(...items);
+    next = items.length ? /<([^>]+)>;\s*rel="next"/.exec(r.headers.get('link') ?? '')?.[1] : undefined;
+    if (next && seen.has(next)) break;
   }
   return out;
 }
@@ -54,6 +59,14 @@ async function optional<T>(fn: () => Promise<T>): Promise<T | null> {
     throw e;
   }
 }
+
+const safeOrigin = (url: string) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '(invalid URL)';
+  }
+};
 
 const repoRef = (r: any, detail?: string): ResourceRef => ({ id: r.full_name, name: r.full_name, detail });
 
@@ -192,7 +205,8 @@ const checks: Record<string, (ctx: GhCtx) => Promise<CheckOutcome>> = {
     if (!hooks.length) return na('No organisation webhooks.');
     const bad = hooks
       .filter((h) => h.config?.insecure_ssl === '1' || String(h.config?.url ?? '').startsWith('http://'))
-      .map((h) => ({ id: String(h.id), name: String(h.config?.url ?? '').replace(/\?.*$/, ''), detail: h.config?.insecure_ssl === '1' ? 'SSL verification off' : 'plain HTTP' }));
+      // Only the origin: webhook paths and credentials often contain tokens.
+      .map((h) => ({ id: String(h.id), name: safeOrigin(String(h.config?.url ?? '')), detail: h.config?.insecure_ssl === '1' ? 'SSL verification off' : 'plain HTTP' }));
     return failIfAny(bad, (n) => `${n} webhook(s) without verified HTTPS.`, `All ${hooks.length} webhooks use verified HTTPS.`, 'warn');
   },
 };

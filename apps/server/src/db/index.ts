@@ -13,7 +13,12 @@ export function createDb(config: Config) {
   const pool = new pg.Pool({
     connectionString: config.DATABASE_URL,
     max: 10,
-    ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : undefined,
+    ssl:
+      config.DATABASE_SSL === 'true' || config.DATABASE_SSL === '1'
+        ? { rejectUnauthorized: true }
+        : config.DATABASE_SSL === 'no-verify'
+          ? { rejectUnauthorized: false }
+          : undefined,
   });
   const db = drizzle(pool, { schema });
   return { db, pool };

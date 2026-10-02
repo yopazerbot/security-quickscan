@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { openDemoCustomer, signOut } from './helpers';
 
 const DEMO = 'Noordkust Logistics NV';
-const DEMO_PIN = '482913';
+const DEMO_PIN = '48291357';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -61,7 +61,7 @@ test('new customer through the full wizard with demo systems', async ({ page }) 
   for (const p of ['Microsoft 365 / Entra ID', 'GitHub']) {
     await page.locator('button', { hasText: p }).first().click();
     await page.getByRole('button', { name: /Demo \(simulated\)/ }).click();
-    if (p === 'GitHub') await page.getByLabel('Organisation').fill('e2e-org');
+    // GitHub demo systems need no organisation (regression test).
     await page.getByRole('button', { name: 'Add system' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();
   }
@@ -97,7 +97,7 @@ test('demo PIN login: admin enables it, visitor only sees demo data, sign out wo
   await expect(page.getByText(/PIN saved/)).toBeVisible();
   await signOut(page);
 
-  await page.getByLabel('Demo PIN').fill('000000');
+  await page.getByLabel('Demo PIN').fill('00000000');
   await page.getByRole('button', { name: 'Enter demo' }).click();
   await expect(page.getByText('Invalid PIN')).toBeVisible();
   await page.getByLabel('Demo PIN').fill(DEMO_PIN);

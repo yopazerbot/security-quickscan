@@ -1,3 +1,4 @@
+import { AWS_SCANNER_ACTIONS } from '@qs/shared';
 import type { ReactNode } from 'react';
 import { CodeBlock } from '../../components/ui';
 
@@ -53,9 +54,15 @@ Resources:
             Condition:
               StringEquals:
                 sts:ExternalId: ${externalId}
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/SecurityAudit
-        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+      Policies:
+        - PolicyName: SecurityQuickScanReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action:
+${AWS_SCANNER_ACTIONS.map((a) => `                  - ${a}`).join('\n')}
 Outputs:
   RoleArn:
     Value: !GetAtt QuickScanRole.Arn`;
@@ -66,9 +73,8 @@ export function AwsRoleGuide({ principal, externalId }: { principal: string | nu
     <Steps>
       <Step title="Deploy the read-only role in the customer account">
         <p>
-          Ask the customer (or do it together) to create a CloudFormation stack in <strong>us-east-1</strong> from the template below. It grants only the AWS managed
-          <code className="mx-1 rounded bg-slate-100 px-1">SecurityAudit</code>and<code className="mx-1 rounded bg-slate-100 px-1">ViewOnlyAccess</code>policies, and
-          only our platform identity can assume it, with this engagement's unique external ID.
+          Ask the customer (or do it together) to create a CloudFormation stack in <strong>us-east-1</strong> from the template below. It grants only the {AWS_SCANNER_ACTIONS.length} read
+          actions the checks use (no access to data such as S3 objects or secrets), and only our platform identity can assume it, with this engagement's unique external ID.
         </p>
         {principal ? <CodeBlock>{cloudFormation(principal, externalId)}</CodeBlock> : <p className="text-red-600">The platform AWS identity is not configured.</p>}
       </Step>
@@ -83,11 +89,11 @@ export function AwsKeysGuide() {
   return (
     <Steps>
       <Step title="Prefer temporary credentials">
-        Use IAM Identity Center short-term credentials (access key starting with <code>ASIA</code> plus session token) for a principal with
-        <code className="mx-1 rounded bg-slate-100 px-1">SecurityAudit</code>and<code className="mx-1 rounded bg-slate-100 px-1">ViewOnlyAccess</code>.
+        Use IAM Identity Center short-term credentials (access key starting with <code>ASIA</code> plus session token) for a principal with the read-only policy
+        shown in the CloudFormation template (or the AWS managed <code className="mx-1 rounded bg-slate-100 px-1">SecurityAudit</code> policy).
       </Step>
       <Step title="Or create a dedicated IAM user">
-        Create user <code>security-quickscan</code> without console access, attach both policies above, and create an access key of type "Third-party service".
+        Create user <code>security-quickscan</code> without console access, attach that policy, and create an access key of type "Third-party service".
       </Step>
       <Step title="Paste the keys below">They are encrypted immediately and never shown again.</Step>
       <Step title="After the assessment">Deactivate and delete the access key and user.</Step>

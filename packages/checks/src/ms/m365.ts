@@ -1,4 +1,6 @@
-import { resolveTxt } from 'node:dns/promises';
+import { Resolver } from 'node:dns/promises';
+
+const dns = new Resolver({ timeout: 3000, tries: 2 });
 import type { CheckOutcome, ResourceRef } from '@qs/shared';
 import type { ProviderModule } from '../types.js';
 import { fail, failIfAny, mapLimit, na, pass, warn } from '../util.js';
@@ -235,10 +237,11 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
     const domains = (await graphAll<any>(ctx, '/domains')).filter(
       (d) => d.isVerified && !d.id.endsWith('.onmicrosoft.com') && (d.supportedServices ?? []).includes('Email'),
     );
+    domains.splice(50); // bounded DNS work
     if (!domains.length) return na('No verified custom mail domains.');
     const issues: ResourceRef[] = [];
     await mapLimit(domains, 5, async (d: any) => {
-      const txt = async (n: string) => (await resolveTxt(n).catch(() => [] as string[][])).map((r) => r.join(''));
+      const txt = async (n: string) => (await dns.resolveTxt(n).catch(() => [] as string[][])).map((r) => r.join(''));
       const spf = (await txt(d.id)).find((t) => t.toLowerCase().startsWith('v=spf1'));
       const dmarc = (await txt(`_dmarc.${d.id}`)).find((t) => t.toLowerCase().startsWith('v=dmarc1'));
       const problems: string[] = [];

@@ -174,10 +174,10 @@ function DemoLoginSettings() {
         <Toggle checked={q.data.enabled} disabled={busy || (!q.data.pinSet && !q.data.enabled)} onChange={(v) => save(v)} label="Demo login enabled" />
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <Field label={q.data.pinSet ? 'New PIN' : 'PIN'} hint="6 to 12 digits. Stored as a one-way hash.">
+        <Field label={q.data.pinSet ? 'New PIN' : 'PIN'} hint="8 to 12 digits. Stored as a one-way hash.">
           <Input type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} className="w-48" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
         </Field>
-        <Button variant="secondary" loading={busy} disabled={pin.length < 6} onClick={() => save(q.data!.pinSet ? q.data!.enabled : true, pin)}>
+        <Button variant="secondary" loading={busy} disabled={pin.length < 8} onClick={() => save(q.data!.pinSet ? q.data!.enabled : true, pin)}>
           {q.data.pinSet ? 'Change PIN' : 'Set PIN and enable'}
         </Button>
       </div>

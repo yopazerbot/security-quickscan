@@ -19,7 +19,8 @@ const schema = z
     PORT: z.coerce.number().int().default(8080),
     APP_URL: z.url().transform((u) => u.replace(/\/$/, '')),
     DATABASE_URL: z.string().min(1),
-    DATABASE_SSL: bool,
+    /** 'true' = TLS with certificate verification, 'no-verify' = TLS without verification (not recommended). */
+    DATABASE_SSL: z.enum(['true', 'false', '1', '0', 'no-verify']).optional(),
     /** 32 random bytes, base64. Generate with: openssl rand -base64 32 */
     MASTER_KEY: z.string().refine((v) => Buffer.from(v, 'base64').length === 32, 'MASTER_KEY must be 32 bytes, base64 encoded'),
     /** Optional previous key, used only by the key rotation command. */
@@ -32,7 +33,8 @@ const schema = z
     LOCAL_MODE: bool,
     KEY_FILE: z.string().default(defaultKeyFile()),
     HOST: z.string().optional(),
-    TRUST_PROXY: z.string().default('true'),
+    /** Number of reverse-proxy hops to trust for the client IP (Railway and most PaaS: 1). 'false' disables. */
+    TRUST_PROXY: z.string().default('1'),
     COOKIE_SECURE: z.string().default('true').transform((v) => v !== 'false'),
 
     ENTRA_TENANT_ID: z.string().optional(),

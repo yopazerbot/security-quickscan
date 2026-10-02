@@ -1,4 +1,4 @@
-import { PROVIDER_LABELS, type Provider } from '@qs/shared';
+import { GITHUB_ORG_HINT, GITHUB_ORG_RE, PROVIDER_LABELS, type Provider } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -56,9 +56,16 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
   const [subs, setSubs] = useState((c.subscriptionIds ?? []).join(', '));
   const [accountId, setAccountId] = useState(c.accountId ?? '');
   const [regions, setRegions] = useState((c.regions ?? []).join(', '));
-  const [org, setOrg] = useState(c.org ?? '');
+  const [org, setOrgRaw] = useState(c.org ?? '');
+  const [orgTouched, setOrgTouched] = useState(false);
+  const setOrg = (v: string) => {
+    setOrgTouched(true);
+    setOrgRaw(v);
+  };
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const orgError =
+    provider === 'github' && ((org && !GITHUB_ORG_RE.test(org)) || (!org && mode !== 'demo') && orgTouched) ? GITHUB_ORG_HINT : undefined;
   const list = (s: string) => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 
   const save = async () => {
@@ -92,7 +99,7 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} loading={busy}>{system ? 'Save' : 'Add system'}</Button>
+          <Button onClick={save} loading={busy} disabled={Boolean(orgError)}>{system ? 'Save' : 'Add system'}</Button>
         </>
       }
     >
@@ -121,8 +128,12 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
           </div>
         )}
         {provider === 'github' && (
-          <Field label="Organisation" hint="The login of the organisation, e.g. 'contoso' from github.com/contoso">
-            <Input value={org} onChange={(e) => setOrg(e.target.value)} maxLength={39} />
+          <Field
+            label={mode === 'demo' ? 'Organisation (optional for a simulated system)' : 'Organisation'}
+            hint="The login from the address github.com/<login>, e.g. 'contoso'."
+            error={orgError}
+          >
+            <Input value={org} onChange={(e) => setOrg(e.target.value)} maxLength={39} placeholder={mode === 'demo' ? 'demo-org' : 'contoso'} aria-invalid={Boolean(orgError)} />
           </Field>
         )}
         <div>

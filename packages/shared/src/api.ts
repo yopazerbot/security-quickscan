@@ -35,13 +35,16 @@ export const msConfigSchema = z.object({
   subscriptionIds: z.array(guid).max(100).default([]),
 });
 
-export const githubConfigSchema = z.object({
-  authMode: z.enum(['token', 'demo']),
-  org: z
-    .string()
-    .trim()
-    .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})$/, 'GitHub organisation login'),
-});
+export const GITHUB_ORG_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})$/;
+export const GITHUB_ORG_HINT = 'Use the organisation login as in github.com/<login>: letters, digits and hyphens, no spaces.';
+
+export const githubConfigSchema = z
+  .object({
+    authMode: z.enum(['token', 'demo']),
+    org: z.string().trim().max(39).optional(),
+  })
+  .transform((c) => ({ ...c, org: c.org || (c.authMode === 'demo' ? 'demo-org' : '') }))
+  .refine((c) => GITHUB_ORG_RE.test(c.org), { message: GITHUB_ORG_HINT, path: ['org'] });
 
 export const systemInputSchema = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('aws'), label: z.string().trim().min(1).max(100), config: awsConfigSchema }),

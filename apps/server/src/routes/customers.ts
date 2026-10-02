@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { assertCustomerAccess, requireRole, requireUser } from '../auth/session.js';
-import { notFound, type AppCtx } from '../context.js';
+import { HttpError, notFound, type AppCtx } from '../context.js';
 import { checkResults, customerAssignments, customers, findingTriage, scans, scanSystems, users } from '../db/schema.js';
 import { refreshCustomerScores } from '../scoring.js';
 import { parse, uuidParam } from './helpers.js';
@@ -57,6 +57,10 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.post('/api/customers', async (req) => {
     const u = requireRole(req, 'admin', 'consultant');
     const body = parse(customerInputSchema, req.body);
+    if (u.isDemo) {
+      const n = (await db.select({ id: customers.id }).from(customers).where(eq(customers.isDemo, true))).length;
+      if (n >= 15) throw new HttpError(429, 'Demo limit reached. An administrator can reset the demo data.');
+    }
     // Customers created by the demo visitor are demo data (removed by "Reset demo data").
     const [c] = await db.insert(customers).values({ ...body, createdBy: u.id, isDemo: u.isDemo }).returning();
     if (u.role !== 'admin' && !u.allCustomers) await db.insert(customerAssignments).values({ userId: u.id, customerId: c.id });
@@ -121,6 +125,13 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     requireRole(req, 'admin');
     const id = uuidParam(req, 'customerId');
     const { userIds } = parse(z.object({ userIds: z.array(z.uuid()).max(200) }), req.body);
+    // The shared demo visitor account may only ever see demo customers.
+    const target = (await db.select({ isDemo: customers.isDemo }).from(customers).where(eq(customers.id, id)).limit(1))[0];
+    if (!target) throw notFound();
+    if (!target.isDemo && userIds.length) {
+      const demoUsers = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, userIds), eq(users.isDemo, true)));
+      if (demoUsers.length) throw new HttpError(400, 'The demo visitor account cannot be given access to real customers');
+    }
     await db.transaction(async (tx) => {
       await tx.delete(customerAssignments).where(eq(customerAssignments.customerId, id));
       if (userIds.length) await tx.insert(customerAssignments).values(userIds.map((userId) => ({ userId, customerId: id })));

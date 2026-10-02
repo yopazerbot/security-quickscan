@@ -1,4 +1,4 @@
-import { IMPLEMENTED_CHECKS, testConnection } from '@qs/checks';
+import { IMPLEMENTED_CHECKS, testConnection, verifyMsConsent } from '@qs/checks';
 import {
   authorizationSchema,
   awsSecretSchema,
@@ -20,14 +20,33 @@ import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { assertCustomerAccess } from '../auth/session.js';
+import { assertCustomerAccess, sessionStillValid } from '../auth/session.js';
 import { scannerEnv } from '../config.js';
 import { badRequest, HttpError, notFound, type AppCtx } from '../context.js';
 import { randomToken, sha256 } from '../crypto/envelope.js';
-import { authStates, checkResults, credentials, customerAssignments, customers, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
+import { authStates, checkResults, credentials, customerAssignments, customers, msTenantBindings, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
+import { applyRetention } from '../retention.js';
 import { loadScan, parse, uuidParam } from './helpers.js';
 
 type ScanRow = typeof scans.$inferSelect;
+
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Resolves a tenant GUID or verified domain to the tenant GUID via Microsoft's public OIDC metadata. */
+export async function resolveTenantGuid(tenantRef: string): Promise<string | null> {
+  const ref = tenantRef.trim().toLowerCase();
+  if (GUID_RE.test(ref)) return ref;
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(ref)) return null;
+  try {
+    const r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(ref)}/v2.0/.well-known/openid-configuration`, { signal: AbortSignal.timeout(10_000), redirect: 'error' });
+    if (!r.ok) return null;
+    const issuer = String(((await r.json()) as { issuer?: string }).issuer ?? '');
+    const m = /^https:\/\/login\.microsoftonline\.com\/([0-9a-f-]{36})\/v2\.0$/.exec(issuer);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
 type SystemRow = typeof scanSystems.$inferSelect;
 
 export const credAad = (scanId: string, systemId: string) => `cred:${scanId}:${systemId}`;
@@ -75,6 +94,11 @@ function systemView(s: SystemRow, cred?: { hint: string; expiresAt: Date | null;
   };
 }
 
+const MAX_STREAMS_PER_USER = 5;
+const MAX_STREAMS_TOTAL = 100;
+const streamsPerUser = new Map<string, number>();
+let streamsTotal = 0;
+
 export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   const { db, envelope, config } = ctx;
 
@@ -108,11 +132,46 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     });
   }
 
+  /** Limits for the shared demo visitor account (anonymous PIN holders). */
+  async function demoQuota(kind: 'scans' | 'running', customerId?: string) {
+    if (kind === 'scans') {
+      const n = (await db.select({ id: scans.id }).from(scans).where(eq(scans.customerId, customerId!))).length;
+      if (n >= 25) throw new HttpError(429, 'Demo limit reached for this customer. An administrator can reset the demo data.');
+    } else {
+      const active = await db
+        .select({ id: scans.id })
+        .from(scans)
+        .innerJoin(customers, eq(customers.id, scans.customerId))
+        .where(and(eq(customers.isDemo, true), inArray(scans.status, ['queued', 'running'])));
+      if (active.length >= 2) throw new HttpError(429, 'Two demo scans are already running. Please wait until one finishes.');
+    }
+  }
+
+  /** A tenant that consented to the platform app belongs to one customer only. */
+  async function bindTenant(tenantId: string, customerId: string, req: any) {
+    const existing = (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, tenantId)).limit(1))[0];
+    if (existing && existing.customerId !== customerId) {
+      await audit(ctx, req, 'consent.tenant_conflict', { type: 'customer', id: customerId }, { tenantId, boundTo: existing.customerId });
+      throw new HttpError(409, 'This Microsoft tenant is already linked to another customer. Ask an administrator.');
+    }
+    if (!existing) await db.insert(msTenantBindings).values({ tenantId, customerId, createdBy: req.user?.id ?? null }).onConflictDoNothing();
+  }
+
+  /** Admin-consent systems may only use the platform app for a tenant bound to this scan's customer. */
+  async function assertTenantBound(scan: ScanRow, s: SystemRow) {
+    const cfg = s.config as any;
+    if (cfg.authMode !== 'admin_consent') return;
+    const tenant = String(cfg.tenantId ?? '').toLowerCase();
+    const b = GUID_RE.test(tenant) ? (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, tenant)).limit(1))[0] : undefined;
+    if (!b || b.customerId !== scan.customerId) throw new HttpError(403, `Admin consent for ${s.label} has not been completed for this customer`);
+  }
+
   // ---------- scan lifecycle ----------
 
   app.post('/api/customers/:customerId/scans', async (req) => {
     const customerId = uuidParam(req, 'customerId');
     const u = await assertCustomerAccess(ctx, req, customerId, true);
+    if (u.isDemo) await demoQuota('scans', customerId);
     const c = (await db.select().from(customers).where(eq(customers.id, customerId)).limit(1))[0];
     if (!c) throw notFound();
     const { name } = parse(z.object({ name: z.string().trim().max(200).optional() }), req.body ?? {});
@@ -172,6 +231,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       if (ids.length) await db.update(credentials).set({ expiresAt: credentialExpiry(updated) }).where(inArray(credentials.systemId, ids));
       await audit(ctx, req, 'scan.retention', { type: 'scan', id: scan.id }, body.retention);
     }
+    if (body.context || body.name) await audit(ctx, req, 'scan.update', { type: 'scan', id: scan.id }, { name: body.name, contextChanged: Boolean(body.context) });
     if (body.authorization) await audit(ctx, req, 'scan.authorization', { type: 'scan', id: scan.id }, { authorizer: body.authorization.authorizerEmail, validUntil: body.authorization.validUntil });
     return { ok: true };
   });
@@ -213,6 +273,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const modeChanged = prev.authMode !== body.config.authMode;
     await db.update(scanSystems).set({ label: body.label, config: cfg, connectionOk: null, connectionMessage: null, connectionCheckedAt: null }).where(eq(scanSystems.id, s.id));
     if (modeChanged) await db.delete(credentials).where(eq(credentials.systemId, s.id));
+    await audit(ctx, req, 'system.update', { type: 'system', id: s.id }, { scanId: scan.id, authMode: body.config.authMode, credentialsPurged: modeChanged });
     return { ok: true };
   });
 
@@ -260,6 +321,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       await db.update(credentials).set({ lastUsedAt: new Date() }).where(eq(credentials.systemId, s.id));
     }
     if (cfg.authMode === 'admin_consent' && !cfg.consentGrantedAt) throw badRequest('Admin consent has not been granted yet');
+    await assertTenantBound(scan, s);
     const r = await testConnection(s.provider, cfg, secret, scannerEnv(config), s.id);
     secret = null;
     await db
@@ -279,6 +341,11 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (req.user!.isDemo) throw new HttpError(403, 'Not available for demo visitors');
     if (cfg.authMode !== 'admin_consent' || !config.SCANNER_MS_CLIENT_ID) throw badRequest('Admin consent is not available for this system');
     if (!cfg.tenantId) throw badRequest('Enter the customer tenant ID or domain first');
+    const guid = await resolveTenantGuid(String(cfg.tenantId));
+    if (!guid) throw badRequest('Microsoft tenant not found. Check the tenant ID or domain.');
+    const bound = (await db.select().from(msTenantBindings).where(eq(msTenantBindings.tenantId, guid)).limit(1))[0];
+    if (bound && bound.customerId !== scan.customerId) throw new HttpError(409, 'This Microsoft tenant is already linked to another customer. Ask an administrator.');
+    await audit(ctx, req, 'consent.link_created', { type: 'system', id: s.id }, { tenant: guid });
     const state = randomToken(24);
     await db.insert(authStates).values({
       stateHash: sha256(state),
@@ -307,27 +374,39 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (!st) throw badRequest('This consent link has expired or was already used. Generate a new one.');
     const data = st.data as { scanId: string; systemId: string; userId: string };
     if (data.userId !== req.user?.id) throw badRequest('Consent was started by another user');
-    const s = (await db.select().from(scanSystems).where(eq(scanSystems.id, data.systemId)).limit(1))[0];
+    // Re-check access: the user must still be allowed to edit this (draft) scan.
+    const scan = (await db.select().from(scans).where(eq(scans.id, data.scanId)).limit(1))[0];
+    if (!scan) throw notFound();
+    await assertCustomerAccess(ctx, req, scan.customerId, true);
+    if (scan.status !== 'draft') throw new HttpError(409, 'Scan is no longer a draft');
+    const s = (await db.select().from(scanSystems).where(and(eq(scanSystems.id, data.systemId), eq(scanSystems.scanId, scan.id))).limit(1))[0];
     if (!s) throw notFound();
     if (body.error || body.admin_consent?.toLowerCase() !== 'true') {
       await audit(ctx, req, 'consent.denied', { type: 'system', id: s.id }, { error: body.error });
       return { ok: false, scanId: data.scanId, message: body.error_description?.split('\r\n')[0] ?? body.error ?? 'Consent was not granted' };
     }
-    const cfg = { ...(s.config as any), consentGrantedAt: new Date().toISOString() };
-    if (body.tenant && /^[0-9a-f-]{36}$/i.test(body.tenant)) {
-      if (/^[0-9a-f-]{36}$/i.test(cfg.tenantId) && cfg.tenantId.toLowerCase() !== body.tenant.toLowerCase()) {
-        throw badRequest('Consent was granted in a different tenant than configured');
-      }
-      cfg.tenantId = body.tenant;
+    // The browser-supplied result is not trusted: resolve the tenant and verify the consent with Microsoft.
+    const tenant = body.tenant?.toLowerCase() ?? '';
+    if (!GUID_RE.test(tenant)) throw badRequest('Microsoft did not return a tenant ID');
+    const cfg = { ...(s.config as any) };
+    const configured = await resolveTenantGuid(String(cfg.tenantId ?? ''));
+    if (!configured || configured !== tenant) {
+      await audit(ctx, req, 'consent.tenant_mismatch', { type: 'system', id: s.id }, { configured: cfg.tenantId, returned: tenant });
+      throw badRequest('Consent was granted in a different tenant than configured for this system');
     }
+    if (!(await verifyMsConsent(scannerEnv(config), tenant))) throw badRequest('Microsoft does not confirm the consent for this tenant yet. Wait a minute and try again.');
+    await bindTenant(tenant, scan.customerId, req);
+    cfg.tenantId = tenant;
+    cfg.consentGrantedAt = new Date().toISOString();
     await db.update(scanSystems).set({ config: cfg, connectionOk: null, connectionCheckedAt: null }).where(eq(scanSystems.id, s.id));
-    await audit(ctx, req, 'consent.granted', { type: 'system', id: s.id }, { tenant: cfg.tenantId });
+    await audit(ctx, req, 'consent.granted', { type: 'system', id: s.id }, { tenant });
     return { ok: true, scanId: data.scanId, systemId: s.id };
   });
 
   // ---------- authorisation document ----------
 
   app.put('/api/scans/:scanId/authorization-doc', { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
+    if (req.user?.isDemo) throw new HttpError(403, 'Uploads are not available in a demo session');
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const { filename, contentBase64 } = parse(z.object({ filename: z.string().max(200), contentBase64: z.string().max(7_500_000) }), req.body);
     const buf = Buffer.from(contentBase64, 'base64');
@@ -370,6 +449,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
             .onConflictDoUpdate({ target: [scanCriteria.scanId, scanCriteria.checkId], set: { included: i.included, reason: i.reason } });
         }
       });
+      await audit(ctx, req, 'scan.criteria', { type: 'scan', id: scan.id }, { excluded: valid.filter((i) => !i.included).map((i) => i.checkId) });
     }
     return { ok: true };
   });
@@ -378,6 +458,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   app.post('/api/scans/:scanId/start', async (req) => {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
+    if (req.user!.isDemo) await demoQuota('running');
     const auth = authorizationSchema.safeParse(scan.authorization);
     if (!auth.success) throw badRequest('Record the customer authorisation before starting the scan');
     const d = today();
@@ -389,6 +470,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       const mode = (s.config as any).authMode;
       if (mode === 'demo') continue;
       if (needsSecret(s.provider, mode) && !creds.has(s.id)) throw badRequest(`Credentials missing for ${s.label}`);
+      await assertTenantBound(scan, s);
       if (!s.connectionOk) throw badRequest(`Run a successful connection test for ${s.label} first`);
     }
     const crit = await criteriaFor(scan);
@@ -419,6 +501,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const scan = await loadScan(ctx, req, { write: true });
     if (scan.status === 'queued') {
       await db.update(scans).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(scans.id, scan.id));
+      await applyRetention(ctx, scan.id);
     } else if (scan.status === 'running') {
       await db.update(scans).set({ cancelRequested: true }).where(eq(scans.id, scan.id));
     } else throw new HttpError(409, 'Scan is not running');
@@ -429,6 +512,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   /** New draft with the same scope, criteria and (if still stored) credentials. */
   app.post('/api/scans/:scanId/rescan', async (req) => {
     const scan = await loadScan(ctx, req, { write: true });
+    if (req.user!.isDemo) await demoQuota('scans', scan.customerId);
     const c = (await db.select().from(customers).where(eq(customers.id, scan.customerId)).limit(1))[0];
     const context = customerContextSchema.parse(c.context);
     const newId = await db.transaction(async (tx) => {
@@ -451,7 +535,10 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
         const cred = (await tx.select().from(credentials).where(eq(credentials.systemId, s.id)).limit(1))[0];
         if (cred) {
           const blob = envelope.encrypt(envelope.decrypt(cred.blob, credAad(scan.id, s.id)), credAad(n.id, ns.id));
-          await tx.insert(credentials).values({ systemId: ns.id, blob, hint: cred.hint, createdBy: req.user!.id, expiresAt: credentialExpiry(n) });
+          // Keep the original expiry: a rescan must not extend how long a customer secret is stored.
+          const fresh = credentialExpiry(n);
+          const expiresAt = cred.expiresAt && (!fresh || cred.expiresAt < fresh) ? cred.expiresAt : fresh;
+          await tx.insert(credentials).values({ systemId: ns.id, blob, hint: cred.hint, createdBy: req.user!.id, expiresAt });
         }
       }
       const crit = await tx.select().from(scanCriteria).where(eq(scanCriteria.scanId, scan.id));
@@ -496,6 +583,17 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   app.get('/api/scans/:scanId/events', async (req, reply) => {
     const scan = await loadScan(ctx, req);
+    const uid = req.user!.id;
+    if ((streamsPerUser.get(uid) ?? 0) >= MAX_STREAMS_PER_USER || streamsTotal >= MAX_STREAMS_TOTAL) {
+      throw new HttpError(429, 'Too many open progress streams');
+    }
+    streamsPerUser.set(uid, (streamsPerUser.get(uid) ?? 0) + 1);
+    streamsTotal++;
+    const release = () => {
+      streamsPerUser.set(uid, (streamsPerUser.get(uid) ?? 1) - 1);
+      if (!streamsPerUser.get(uid)) streamsPerUser.delete(uid);
+      streamsTotal--;
+    };
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, {
@@ -514,6 +612,8 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const MAX_TICKS = 60 * 60; // one hour, the client reconnects if needed
     while (!closed && ticks++ < MAX_TICKS) {
       try {
+        // A revoked session or deactivated user must not keep streaming.
+        if (ticks % 15 === 0 && !(await sessionStillValid(ctx, req.session!.idHash))) break;
         const snap = await snapshot(scan.id);
         const json = JSON.stringify(snap);
         if (json !== last) {
@@ -528,6 +628,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       await new Promise((r) => setTimeout(r, 1000));
     }
     res.end();
+    release();
   });
 
   app.get('/api/scans', async (req) => {

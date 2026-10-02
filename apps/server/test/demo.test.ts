@@ -59,10 +59,10 @@ const url = process.env.TEST_DATABASE_URL;
   it('demo PIN login only works when enabled and only sees demo customers', async () => {
     expect((await app.inject({ method: 'POST', url: '/api/auth/demo', payload: { pin: '123456' } })).statusCode).toBe(404);
     const { setDemoLoginForTest } = await import('./helpers.js');
-    await setDemoLoginForTest(ctx, '482913');
+    await setDemoLoginForTest(ctx, '48291357');
     expect((await app.inject({ method: 'GET', url: '/api/auth/config' })).json().demoLogin).toBe(true);
     expect((await app.inject({ method: 'POST', url: '/api/auth/demo', payload: { pin: '000000' } })).statusCode).toBe(401);
-    const ok = await app.inject({ method: 'POST', url: '/api/auth/demo', payload: { pin: '482913' } });
+    const ok = await app.inject({ method: 'POST', url: '/api/auth/demo', payload: { pin: '48291357' } });
     expect(ok.statusCode).toBe(200);
     const cookie = String(ok.headers['set-cookie']).split(';')[0];
     await db.insert(customers).values({ name: 'Real Customer', context: {} as any });

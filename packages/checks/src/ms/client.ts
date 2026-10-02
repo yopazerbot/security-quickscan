@@ -1,11 +1,12 @@
 import type { ScannerEnv } from '../types.js';
-import { CheckError, fetchJson, Memo, NotApplicable } from '../util.js';
+import { CheckError, fetchJson, MAX_PAGES, Memo, NotApplicable } from '../util.js';
 
 export interface MsCtx {
   tenantId: string;
   token: string;
   memo: Memo;
   subscriptionIds: string[];
+  signal?: AbortSignal;
 }
 
 export class GraphError extends CheckError {
@@ -57,7 +58,7 @@ const ARM_HOSTS = ['management.azure.com'];
 
 export async function graph<T = any>(ctx: MsCtx, path: string, beta = false): Promise<T> {
   const url = path.startsWith('https://') ? path : `https://graph.microsoft.com/${beta ? 'beta' : 'v1.0'}${path}`;
-  const r = await fetchJson<T>({ url, token: ctx.token, allowedHosts: GRAPH_HOSTS, headers: { ConsistencyLevel: 'eventual' } });
+  const r = await fetchJson<T>({ url, token: ctx.token, allowedHosts: GRAPH_HOSTS, headers: { ConsistencyLevel: 'eventual' }, signal: ctx.signal });
   if (r.status >= 400) {
     const err = toError(r.status, r.data);
     if (r.status === 403 && LICENCE_HINTS.test(err.message)) throw new NotApplicable(`Not available in this tenant (licence): ${err.message}`);
@@ -69,17 +70,21 @@ export async function graph<T = any>(ctx: MsCtx, path: string, beta = false): Pr
 export async function graphAll<T = any>(ctx: MsCtx, path: string, beta = false, max = 20000): Promise<T[]> {
   const out: T[] = [];
   let next: string | undefined = path;
-  while (next && out.length < max) {
+  const seen = new Set<string>();
+  for (let pages = 0; next && out.length < max && pages < MAX_PAGES; pages++) {
+    seen.add(next);
     const page: any = await graph(ctx, next, beta);
-    out.push(...(page.value ?? []));
-    next = page['@odata.nextLink'];
+    const items = page.value ?? [];
+    out.push(...items);
+    next = items.length ? page['@odata.nextLink'] : undefined;
+    if (next && seen.has(next)) break;
   }
   return out;
 }
 
 export async function arm<T = any>(ctx: MsCtx, path: string): Promise<T> {
   const url = path.startsWith('https://') ? path : `https://management.azure.com${path}`;
-  const r = await fetchJson<T>({ url, token: ctx.token, allowedHosts: ARM_HOSTS });
+  const r = await fetchJson<T>({ url, token: ctx.token, allowedHosts: ARM_HOSTS, signal: ctx.signal });
   if (r.status >= 400) throw toError(r.status, r.data);
   return r.data;
 }
@@ -87,10 +92,14 @@ export async function arm<T = any>(ctx: MsCtx, path: string): Promise<T> {
 export async function armAll<T = any>(ctx: MsCtx, path: string, max = 20000): Promise<T[]> {
   const out: T[] = [];
   let next: string | undefined = path;
-  while (next && out.length < max) {
+  const seen = new Set<string>();
+  for (let pages = 0; next && out.length < max && pages < MAX_PAGES; pages++) {
+    seen.add(next);
     const page: any = await arm(ctx, next);
-    out.push(...(page.value ?? []));
-    next = page.nextLink;
+    const items = page.value ?? [];
+    out.push(...items);
+    next = items.length ? page.nextLink : undefined;
+    if (next && seen.has(next)) break;
   }
   return out;
 }

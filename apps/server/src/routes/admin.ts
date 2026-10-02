@@ -173,6 +173,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.delete('/api/settings/logo', async (req) => {
     requireRole(req, 'admin');
     await db.delete(settings).where(eq(settings.key, 'logo'));
+    await audit(ctx, req, 'settings.logo_removed');
     return { ok: true };
   });
 

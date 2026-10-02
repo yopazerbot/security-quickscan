@@ -46,12 +46,12 @@ export function hotp(secret: Buffer, counter: number, digits = 6): string {
   return code.toString().padStart(digits, '0');
 }
 
-/** RFC 6238 TOTP verification with +/- 1 step tolerance. */
-export function verifyTotp(secretB32: string, code: string, now = Date.now()): boolean {
-  if (!/^\d{6}$/.test(code)) return false;
+/** RFC 6238 TOTP verification with +/- 1 step tolerance. Returns the matching time step, or null. */
+export function verifyTotp(secretB32: string, code: string, now = Date.now()): number | null {
+  if (!/^\d{6}$/.test(code)) return null;
   const secret = base32Decode(secretB32);
   const step = Math.floor(now / 1000 / 30);
-  let ok = false;
-  for (const d of [-1, 0, 1]) if (safeEqual(hotp(secret, step + d), code)) ok = true;
-  return ok;
+  let matched: number | null = null;
+  for (const d of [-1, 0, 1]) if (safeEqual(hotp(secret, step + d), code)) matched = step + d;
+  return matched;
 }

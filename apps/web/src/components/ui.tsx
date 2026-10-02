@@ -1,10 +1,30 @@
 import type { ResultStatus, Severity } from '@qs/shared';
 import clsx from 'clsx';
-import { Check, Copy, Loader2, X } from 'lucide-react';
-import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { AlertTriangle, Check, Copy, Loader2, RotateCw, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { Link } from 'react-router';
+import { ApiError } from '../lib/api';
 import { GRADE_HEX, SEVERITY_STYLE, STATUS_STYLE } from '../lib/format';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+
+type Size = 'sm' | 'md' | 'lg';
+
+/** Button styling, shared by <Button> and link-styled buttons (<LinkButton>, <a className={buttonClass()}>). */
+export function buttonClass(variant: Variant = 'primary', size: Size = 'md', className?: string) {
+  return clsx(
+    'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50',
+    size === 'sm' && 'px-2.5 py-1.5 text-xs',
+    size === 'md' && 'px-3.5 py-2 text-sm',
+    size === 'lg' && 'px-5 py-2.5 text-sm',
+    variant === 'primary' && 'bg-brand-600 text-white shadow-sm hover:bg-brand-700',
+    variant === 'secondary' && 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50',
+    variant === 'ghost' && 'text-slate-600 hover:bg-slate-100',
+    variant === 'danger' && 'bg-red-600 text-white shadow-sm hover:bg-red-700',
+    variant === 'success' && 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700',
+    className,
+  );
+}
 
 export function Button({
   variant = 'primary',
@@ -14,28 +34,34 @@ export function Button({
   className,
   children,
   disabled,
+  type = 'button',
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'lg'; loading?: boolean; icon?: ReactNode }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; loading?: boolean; icon?: ReactNode }) {
   return (
-    <button
-      {...rest}
-      disabled={disabled || loading}
-      className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-        size === 'sm' && 'px-2.5 py-1.5 text-xs',
-        size === 'md' && 'px-3.5 py-2 text-sm',
-        size === 'lg' && 'px-5 py-2.5 text-sm',
-        variant === 'primary' && 'bg-brand-600 text-white shadow-sm hover:bg-brand-700',
-        variant === 'secondary' && 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50',
-        variant === 'ghost' && 'text-slate-600 hover:bg-slate-100',
-        variant === 'danger' && 'bg-red-600 text-white shadow-sm hover:bg-red-700',
-        variant === 'success' && 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700',
-        className,
-      )}
-    >
-      {loading ? <Loader2 className="size-4 animate-spin" /> : icon}
+    <button {...rest} type={type} disabled={disabled || loading} aria-busy={loading || undefined} className={buttonClass(variant, size, className)}>
+      {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : icon}
       {children}
     </button>
+  );
+}
+
+/** A router link that looks like a button (no <button> nested in <a>). */
+export function LinkButton({ to, variant, size, icon, className, children }: { to: string; variant?: Variant; size?: Size; icon?: ReactNode; className?: string; children?: ReactNode }) {
+  return (
+    <Link to={to} className={buttonClass(variant, size, className)}>
+      {icon}
+      {children}
+    </Link>
+  );
+}
+
+/** A plain download/external link that looks like a button. */
+export function AnchorButton({ href, variant, size, icon, className, children, label }: { href: string; variant?: Variant; size?: Size; icon?: ReactNode; className?: string; children?: ReactNode; label?: string }) {
+  return (
+    <a href={href} aria-label={label} className={buttonClass(variant, size, className)}>
+      {icon}
+      {children}
+    </a>
   );
 }
 
@@ -170,26 +196,84 @@ export function Alert({ tone = 'info', title, children, className }: { tone?: 'i
   );
 }
 
-export function Modal({ open, onClose, title, children, footer, wide }: { open: boolean; onClose(): void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+/**
+ * Accessible modal built on the native <dialog>: focus is trapped and restored by the browser,
+ * Escape closes it, and it cannot be dismissed while `busy` (e.g. during a save).
+ */
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  wide,
+  busy,
+}: {
+  open: boolean;
+  onClose(): void;
+  title: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+  busy?: boolean;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+  }, [open]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onMouseDown={onClose}>
-      <div className={clsx('w-full animate-fade-in rounded-2xl bg-white shadow-2xl', wide ? 'max-w-3xl' : 'max-w-lg')} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal>
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <button className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" onClick={onClose} aria-label="Close">
-            <X className="size-5" />
-          </button>
-        </div>
-        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">{footer}</div>}
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!busy) onClose();
+      }}
+      onClick={(e) => {
+        // Click on the backdrop (the dialog element itself, outside the panel).
+        if (e.target === ref.current && !busy) onClose();
+      }}
+      className={clsx(
+        'm-auto w-[calc(100%-2rem)] rounded-2xl bg-white p-0 shadow-2xl backdrop:bg-slate-900/40 backdrop:backdrop-blur-sm motion-safe:animate-fade-in',
+        wide ? 'max-w-3xl' : 'max-w-lg',
+      )}
+    >
+      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+        <h2 id={titleId} className="text-base font-semibold text-slate-900">
+          {title}
+        </h2>
+        <button type="button" className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40" onClick={onClose} disabled={busy} aria-label="Close">
+          <X className="size-5" />
+        </button>
       </div>
+      <div className="max-h-[70vh] overflow-y-auto px-6 py-5">{children}</div>
+      {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-6 py-4">{footer}</div>}
+    </dialog>
+  );
+}
+
+/** Shown when a query fails: the message plus a retry button (instead of an endless spinner). */
+export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
+  const status = error instanceof ApiError ? error.status : 0;
+  const message =
+    status === 404 ? 'This item does not exist or you do not have access to it.' : status === 403 ? 'You do not have permission to view this.' : error instanceof Error ? error.message : 'Something went wrong.';
+  return (
+    <div role="alert" className={clsx('flex flex-col items-center justify-center rounded-2xl bg-white px-6 py-14 text-center ring-1 ring-slate-200', className)}>
+      <div className="mb-3 flex size-11 items-center justify-center rounded-xl bg-red-50 text-red-600">
+        <AlertTriangle className="size-5" aria-hidden />
+      </div>
+      <p className="font-semibold text-slate-900">Could not load this page</p>
+      <p className="mt-1 max-w-md text-sm text-slate-600">{message}</p>
+      {onRetry && status !== 404 && status !== 403 && (
+        <Button variant="secondary" className="mt-5" icon={<RotateCw className="size-4" />} onClick={onRetry}>
+          Try again
+        </Button>
+      )}
     </div>
   );
 }

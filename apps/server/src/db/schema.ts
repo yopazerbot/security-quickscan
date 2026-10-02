@@ -246,3 +246,16 @@ export const settings = pgTable('settings', {
   value: jsonb('value').notNull(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
+
+/**
+ * Microsoft tenants that granted admin consent to the platform scanner app, bound to exactly one
+ * customer. Prevents using the platform app against another customer's tenant.
+ */
+export const msTenantBindings = pgTable('ms_tenant_bindings', {
+  tenantId: text('tenant_id').primaryKey(),
+  customerId: uuid('customer_id')
+    .notNull()
+    .references(() => customers.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: ts('created_at').notNull().defaultNow(),
+});

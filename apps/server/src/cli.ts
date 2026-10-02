@@ -25,6 +25,15 @@ async function readSecret(prompt: string): Promise<string> {
   return '';
 }
 
+function decryptsWith(env: Envelope, blob: Buffer, aad: string) {
+  try {
+    env.decrypt(blob, aad);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
   switch (cmd) {
@@ -55,12 +64,14 @@ async function main() {
         const rows = await tx.select({ c: credentials, scanId: scanSystems.scanId }).from(credentials).innerJoin(scanSystems, eq(scanSystems.id, credentials.systemId));
         for (const r of rows) {
           const aad = `cred:${r.scanId}:${r.c.systemId}`;
+          if (decryptsWith(newEnv, r.c.blob, aad)) continue; // already on the new key (written after the switch)
           await tx.update(credentials).set({ blob: oldEnv.rewrap(r.c.blob, aad, newEnv), keyVersion: r.c.keyVersion + 1 }).where(eq(credentials.systemId, r.c.systemId));
           n++;
         }
         const docs = await tx.select({ id: scans.id, doc: scans.authorizationDoc }).from(scans);
         for (const d of docs) {
           if (!d.doc) continue;
+          if (decryptsWith(newEnv, d.doc, `doc:${d.id}`)) continue;
           await tx.update(scans).set({ authorizationDoc: oldEnv.rewrap(d.doc, `doc:${d.id}`, newEnv) }).where(eq(scans.id, d.id));
           n++;
         }

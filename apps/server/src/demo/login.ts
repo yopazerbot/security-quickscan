@@ -3,10 +3,10 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { isLocked, recordFailure } from '../auth/routes.js';
+import { clearAttempts, takeAttempt } from '../auth/routes.js';
 import { createSession, requireRole } from '../auth/session.js';
 import { HttpError, notFound, type AppCtx } from '../context.js';
-import { customerAssignments, customers, loginAttempts, sessions, settings, users } from '../db/schema.js';
+import { customerAssignments, customers, sessions, settings, users } from '../db/schema.js';
 import { parse } from '../routes/helpers.js';
 
 const KEY = 'demo_login';
@@ -67,7 +67,7 @@ export function demoLoginRoutes(app: FastifyInstance, ctx: AppCtx) {
     const me = requireRole(req, 'admin');
     if (me.isDemo) throw new HttpError(403, 'Forbidden');
     if (!ctx.config.DEMO_MODE) throw notFound();
-    const body = parse(z.object({ enabled: z.boolean(), pin: z.string().regex(/^\d{6,12}$/, 'PIN must be 6 to 12 digits').optional() }), req.body);
+    const body = parse(z.object({ enabled: z.boolean(), pin: z.string().regex(/^\d{8,12}$/, 'PIN must be 8 to 12 digits').optional() }), req.body);
     const current = await getDemoLogin(ctx);
     const pinHash = body.pin ? await hash(body.pin, { memoryCost: 65536, timeCost: 3, parallelism: 1 }) : current.pinHash;
     if (body.enabled && !pinHash) throw new HttpError(400, 'Set a PIN before enabling demo login');
@@ -84,20 +84,18 @@ export function demoLoginRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (!(await demoLoginAvailable(ctx))) throw notFound();
     const { pin } = parse(z.object({ pin: z.string().max(20) }), req.body);
     const ipKey = `demo:ip:${req.ip}`;
-    const globalKey = 'demo:all';
-    if ((await isLocked(ctx, ipKey)) || (await isLocked(ctx, globalKey))) {
-      throw new HttpError(429, 'Too many failed attempts. Try again later.');
+    // Per IP 5 attempts per 15 minutes, plus a global ceiling against distributed guessing.
+    // A global lock only blocks demo access, never real accounts.
+    if (!(await takeAttempt(ctx, ipKey)) || !(await takeAttempt(ctx, 'demo:all', 300))) {
+      throw new HttpError(429, 'Too many attempts. Try again later.');
     }
     const s = await getDemoLogin(ctx);
-    const ok = /^\d{6,12}$/.test(pin) && (await verify(s.pinHash!, pin).catch(() => false));
+    const ok = /^\d{8,12}$/.test(pin) && (await verify(s.pinHash!, pin).catch(() => false));
     if (!ok) {
-      await recordFailure(ctx, ipKey);
-      await recordFailure(ctx, globalKey);
       await audit(ctx, req, 'auth.demo_failed');
       throw new HttpError(401, 'Invalid PIN');
     }
-    await ctx.db.delete(loginAttempts).where(eq(loginAttempts.key, ipKey));
-    await ctx.db.delete(loginAttempts).where(eq(loginAttempts.key, globalKey));
+    await clearAttempts(ctx, ipKey);
     const userId = await ensureDemoUser(ctx);
     await createSession(ctx, req, reply, userId, 'demo');
     await audit(ctx, req, 'auth.demo_login', { type: 'user', id: userId }, undefined, { id: userId, email: DEMO_EMAIL });

@@ -20,6 +20,8 @@ import { reportRoutes } from './routes/reports.js';
 import { scanRoutes } from './routes/scans.js';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const inContainer = existsSync('/.dockerenv');
 /** Endpoints reachable without a session (they do their own checks). */
 const PUBLIC_MUTATIONS = new Set(['/api/auth/breakglass', '/api/auth/demo']);
 
@@ -60,10 +62,20 @@ export function loggerOptions(config: Config) {
   };
 }
 
+/**
+ * A hop count (never a blanket 'true') so a client cannot spoof its IP with X-Forwarded-For.
+ * Fastify accepts a number at runtime; its typings only list string/boolean.
+ */
+function trustProxySetting(v: string): boolean | string {
+  if (v === 'false' || v === '0') return false;
+  const hops = v === 'true' ? 1 : /^\d+$/.test(v) ? Number(v) : null;
+  return (hops ?? v) as unknown as string;
+}
+
 export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyInstance; ctx: AppCtx }> {
   const app = Fastify({
     logger: loggerOptions(config),
-    trustProxy: config.TRUST_PROXY === 'true' ? true : config.TRUST_PROXY === 'false' ? false : config.TRUST_PROXY,
+    trustProxy: trustProxySetting(config.TRUST_PROXY),
     bodyLimit: 1024 * 1024,
   });
   const ctx: AppCtx = { config, db, envelope: new Envelope(config.MASTER_KEY), log: app.log };
@@ -112,6 +124,8 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     app.addHook('onRequest', async (req, reply) => {
       if (req.url === '/healthz') return;
       if (!isLoopback(req.headers.host)) return reply.code(421).send({ error: 'Local mode only accepts requests to localhost' });
+      // Outside a container the peer must be this machine too (in Docker it is the bridge gateway).
+      if (!inContainer && !LOOPBACK_IPS.has(String(req.socket.remoteAddress ?? ''))) return reply.code(403).send({ error: 'Local mode only accepts connections from this machine' });
     });
   }
 

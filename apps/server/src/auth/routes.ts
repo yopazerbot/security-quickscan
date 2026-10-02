@@ -11,6 +11,7 @@ import { safeEqual, sha256 } from '../crypto/envelope.js';
 import { authStates, loginAttempts, users } from '../db/schema.js';
 import { cookieName, createSession, destroySession, loadSession, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
+import { parse } from '../routes/helpers.js';
 import { demoLoginAvailable } from '../demo/login.js';
 
 const OIDC_COOKIE = 'qs_oidc';
@@ -42,23 +43,23 @@ function entraConfig(ctx: AppCtx) {
   return discovered;
 }
 
-export async function isLocked(ctx: AppCtx, key: string) {
-  const r = await ctx.db.select().from(loginAttempts).where(eq(loginAttempts.key, key)).limit(1);
-  return Boolean(r[0]?.lockedUntil && r[0].lockedUntil.getTime() > Date.now());
+/**
+ * Counts an attempt atomically *before* the credentials are verified (so parallel requests cannot
+ * all slip in under the limit). The counter resets after LOCK_MINUTES without attempts.
+ * Returns false when the key is over its limit.
+ */
+export async function takeAttempt(ctx: AppCtx, key: string, max = MAX_FAILURES): Promise<boolean> {
+  const r = await ctx.db.execute(sql`
+    insert into login_attempts (key, failures, updated_at) values (${key}, 1, now())
+    on conflict (key) do update set
+      failures = case when login_attempts.updated_at < now() - make_interval(mins => ${LOCK_MINUTES}) then 1 else login_attempts.failures + 1 end,
+      updated_at = now()
+    returning failures`);
+  return Number((r.rows[0] as { failures: number }).failures) <= max;
 }
 
-export async function recordFailure(ctx: AppCtx, key: string) {
-  await ctx.db
-    .insert(loginAttempts)
-    .values({ key, failures: 1, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: loginAttempts.key,
-      set: {
-        failures: sql`${loginAttempts.failures} + 1`,
-        updatedAt: new Date(),
-        lockedUntil: sql`case when ${loginAttempts.failures} + 1 >= ${MAX_FAILURES} then now() + interval '${sql.raw(String(LOCK_MINUTES))} minutes' else null end`,
-      },
-    });
+export async function clearAttempts(ctx: AppCtx, ...keys: string[]) {
+  for (const key of keys) await ctx.db.delete(loginAttempts).where(eq(loginAttempts.key, key));
 }
 
 export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
@@ -153,8 +154,14 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
 
     const tid = String(claims.tid ?? '');
     const oid = String(claims.oid ?? '');
-    const email = String(claims.email ?? claims.preferred_username ?? '').toLowerCase();
+    // preferred_username is the UPN for member accounts; the optional email claim can be unverified.
+    const email = String(claims.preferred_username ?? claims.email ?? '').toLowerCase();
     if (!oid || tid.toLowerCase() !== config.ENTRA_TENANT_ID!.toLowerCase()) return fail('wrong_tenant');
+    // Guests (B2B) carry an idp claim pointing at their home identity provider: not supported.
+    if (claims.idp && String(claims.idp) !== String(claims.iss)) {
+      await audit(ctx, req, 'auth.login_denied', undefined, { email, oid, reason: 'guest' });
+      return fail('guest_not_supported');
+    }
     if (config.ENTRA_REQUIRE_MFA && !(Array.isArray(claims.amr) && claims.amr.includes('mfa'))) return fail('mfa_required');
 
     let user = (await ctx.db.select().from(users).where(eq(users.entraOid, oid)).limit(1))[0];
@@ -162,7 +169,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       const byEmail = (await ctx.db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1))[0];
       if (byEmail && !byEmail.entraOid && !byEmail.isBreakglass) {
         [user] = await ctx.db.update(users).set({ entraOid: oid, name: String(claims.name ?? byEmail.name) }).where(eq(users.id, byEmail.id)).returning();
-      } else if (!byEmail && config.BOOTSTRAP_ADMIN_EMAIL && email === config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+      } else if (!byEmail && config.BOOTSTRAP_ADMIN_EMAIL && email === config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && !(await realAdminExists(ctx))) {
         [user] = await ctx.db.insert(users).values({ email, name: String(claims.name ?? email), role: 'admin', allCustomers: true, entraOid: oid }).returning();
         await audit(ctx, req, 'user.bootstrap_admin', { type: 'user', id: user.id }, undefined, { id: user.id, email });
       }
@@ -178,36 +185,40 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   const bgSchema = z.object({ username: z.string().max(200), password: z.string().max(500), totp: z.string().max(10) });
 
+  /** Bootstrap only creates the first administrator, never again once one exists. */
+  async function realAdminExists(c: AppCtx) {
+    const r = await c.db.select({ id: users.id }).from(users).where(and(eq(users.role, 'admin'), eq(users.isBreakglass, false), eq(users.isDemo, false), sql`${users.entraOid} is not null`)).limit(1);
+    return r.length > 0;
+  }
+
   app.post('/api/auth/breakglass', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!config.BREAKGLASS_ENABLED) throw new HttpError(404, 'Not found');
-    const body = bgSchema.parse(req.body);
+    const body = parse(bgSchema, req.body);
+    // Per client IP only: a shared lock would let anyone keep the emergency account locked out.
+    // Password (Argon2id) plus TOTP makes guessing infeasible within the per-IP limit.
     const ipKey = `bg:ip:${req.ip}`;
-    const userKey = 'bg:user';
-    if ((await isLocked(ctx, ipKey)) || (await isLocked(ctx, userKey))) {
+    if (!(await takeAttempt(ctx, ipKey))) {
       await audit(ctx, req, 'auth.breakglass_locked');
       throw new HttpError(429, 'Too many failed attempts. Try again later.');
     }
     const userOk = safeEqual(body.username, config.BREAKGLASS_USERNAME!);
     const pwOk = await argonVerify(config.BREAKGLASS_PASSWORD_HASH!, body.password).catch(() => false);
-    const totpOk = verifyTotp(config.BREAKGLASS_TOTP_SECRET!, body.totp);
+    const step = verifyTotp(config.BREAKGLASS_TOTP_SECRET!, body.totp);
     let replay = false;
-    if (userOk && pwOk && totpOk) {
-      // Each TOTP code can be used once.
+    if (userOk && pwOk && step !== null) {
+      // Each TOTP time step can be used once (keyed on the step that matched, not the current one).
       const used = await ctx.db
         .insert(authStates)
-        .values({ stateHash: sha256(`totp:${body.totp}:${Math.floor(Date.now() / 30000)}`), kind: 'totp', data: {}, expiresAt: new Date(Date.now() + 120_000) })
+        .values({ stateHash: sha256(`totp-step:${step}`), kind: 'totp', data: {}, expiresAt: new Date(Date.now() + 5 * 60_000) })
         .onConflictDoNothing()
         .returning();
       replay = used.length === 0;
     }
-    if (!(userOk && pwOk && totpOk) || replay) {
-      await recordFailure(ctx, ipKey);
-      await recordFailure(ctx, userKey);
+    if (!(userOk && pwOk && step !== null) || replay) {
       await audit(ctx, req, 'auth.breakglass_failed', undefined, { username: body.username.slice(0, 50) });
       throw new HttpError(401, 'Invalid credentials');
     }
-    await ctx.db.delete(loginAttempts).where(eq(loginAttempts.key, ipKey));
-    await ctx.db.delete(loginAttempts).where(eq(loginAttempts.key, userKey));
+    await clearAttempts(ctx, ipKey);
 
     let user = (await ctx.db.select().from(users).where(eq(users.isBreakglass, true)).limit(1))[0];
     if (!user) {

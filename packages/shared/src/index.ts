@@ -4,3 +4,4 @@ export * from './risk.js';
 export * from './scoring.js';
 export * from './catalog/index.js';
 export * from './api.js';
+export * from './aws-policy.js';

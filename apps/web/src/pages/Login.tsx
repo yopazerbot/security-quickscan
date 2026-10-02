@@ -162,7 +162,7 @@ export function Login() {
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                   required
                 />
-                <Button type="submit" loading={pinBusy} disabled={pin.length < 6}>
+                <Button type="submit" loading={pinBusy} disabled={pin.length < 8}>
                   Enter demo
                 </Button>
               </div>
@@ -200,7 +200,7 @@ export function Login() {
             Developed by <span className="font-medium text-slate-600">Yoshi Parlevliet</span>
             <span className="mx-1.5">·</span>
             <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="hover:text-slate-600 hover:underline">
-              Open source (AGPL-3.0)
+              Open source (MIT)
             </a>
           </p>
         </div>

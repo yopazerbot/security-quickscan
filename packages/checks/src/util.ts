@@ -48,11 +48,12 @@ export class Memo {
 }
 
 /** Run async tasks with bounded concurrency, preserving order. */
-export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>, signal?: AbortSignal): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let i = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (i < items.length) {
+      signal?.throwIfAborted();
       const idx = i++;
       out[idx] = await fn(items[idx]);
     }
@@ -62,6 +63,9 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) =>
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Max pages followed by any paginated API call (stops runaway or looping nextLink chains). */
+export const MAX_PAGES = 200;
 
 export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let t: NodeJS.Timeout;
@@ -80,6 +84,8 @@ export interface JsonRequest {
   headers?: Record<string, string>;
   /** Hosts allowed for this request (defence in depth against SSRF via pagination links). */
   allowedHosts: string[];
+  /** Aborted when the check times out or the scan stops. */
+  signal?: AbortSignal;
 }
 
 export interface JsonResponse<T> {
@@ -97,7 +103,7 @@ export async function fetchJson<T = any>(req: JsonRequest, attempt = 0): Promise
   const res = await fetch(u, {
     method: req.method ?? 'GET',
     headers: { Authorization: `Bearer ${req.token}`, Accept: 'application/json', ...req.headers },
-    signal: AbortSignal.timeout(30_000),
+    signal: req.signal ? AbortSignal.any([req.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     redirect: 'error',
   });
   if ((res.status === 429 || res.status >= 500) && attempt < 4) {

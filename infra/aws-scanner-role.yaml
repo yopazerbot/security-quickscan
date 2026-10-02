@@ -1,14 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Read-only role for Security QuickScan. Deploy in the customer account (us-east-1), share the RoleArn
-  output with the consultant and delete the stack after the assessment.
+  Least-privilege read-only role for Security QuickScan. Deploy in the customer account (us-east-1),
+  share the RoleArn output with the consultant and delete the stack after the assessment.
 Parameters:
   ScannerPrincipalArn:
     Type: String
     Description: ARN of the Security QuickScan platform identity (shown in the app).
   ExternalId:
     Type: String
-    NoEcho: false
     Description: Engagement-specific external ID (shown in the app).
 Resources:
   QuickScanRole:
@@ -26,9 +25,38 @@ Resources:
             Condition:
               StringEquals:
                 sts:ExternalId: !Ref ExternalId
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/SecurityAudit
-        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+      Policies:
+        - PolicyName: SecurityQuickScanReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - access-analyzer:ListAnalyzers
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - config:DescribeConfigurationRecorderStatus
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRegions
+                  - ec2:DescribeSecurityGroups
+                  - ec2:GetEbsEncryptionByDefault
+                  - guardduty:GetDetector
+                  - guardduty:ListDetectors
+                  - iam:GenerateCredentialReport
+                  - iam:GetAccountPasswordPolicy
+                  - iam:GetAccountSummary
+                  - iam:GetCredentialReport
+                  - iam:ListEntitiesForPolicy
+                  - kms:DescribeKey
+                  - kms:GetKeyRotationStatus
+                  - kms:ListKeys
+                  - rds:DescribeDBInstances
+                  - s3:GetAccountPublicAccessBlock
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPolicyStatus
+                  - s3:ListAllMyBuckets
+                  - securityhub:DescribeHub
 Outputs:
   RoleArn:
     Value: !GetAtt QuickScanRole.Arn

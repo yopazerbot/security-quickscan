@@ -39,6 +39,7 @@ export interface AwsCtx {
   arn: string;
   configuredRegions: string[];
   memo: Memo;
+  signal?: AbortSignal;
 }
 
 const HOME = 'us-east-1';
@@ -61,6 +62,7 @@ async function regions(ctx: AwsCtx): Promise<string[]> {
 async function perRegion<T>(ctx: AwsCtx, fn: (region: string) => Promise<T>): Promise<{ region: string; value: T }[]> {
   const rs = await regions(ctx);
   const out = await mapLimit(rs, 5, async (region): Promise<{ region: string; value: T } | null> => {
+    ctx.signal?.throwIfAborted();
     try {
       return { region, value: await fn(region) };
     } catch (e: any) {
@@ -301,6 +303,7 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
           }
         }
         token = r.NextToken;
+        ctx.signal?.throwIfAborted();
       } while (token);
       return out;
     });
@@ -324,6 +327,7 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
           }
         }
         token = r.NextToken;
+        ctx.signal?.throwIfAborted();
       } while (token);
       return { out, total };
     });
@@ -386,6 +390,7 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
           }
         }
         marker = r.Truncated ? r.NextMarker : undefined;
+        ctx.signal?.throwIfAborted();
       } while (marker);
       return { out, total };
     });
@@ -415,6 +420,7 @@ async function rdsInstances(ctx: AwsCtx) {
         const r = await rds.send(new DescribeDBInstancesCommand({ Marker: marker }));
         out.push(...(r.DBInstances ?? []));
         marker = r.Marker;
+        ctx.signal?.throwIfAborted();
       } while (marker);
       return out;
     });
@@ -457,7 +463,7 @@ export const awsModule: ProviderModule<AwsCtx> = {
       await new EC2Client(clientOpts(ctx)).send(new DescribeRegionsCommand({}));
       probes.push('EC2 read');
     } catch (e: any) {
-      return { ok: false, message: `Authenticated as ${ctx.arn}, but read permissions are missing (${e?.name}). Attach SecurityAudit and ViewOnlyAccess.` };
+      return { ok: false, message: `Authenticated as ${ctx.arn}, but read permissions are missing (${e?.name}). Deploy the QuickScan read-only role (or attach SecurityAudit).` };
     }
     return { ok: true, message: `Connected to account ${ctx.accountId} as ${ctx.arn}.`, details: { accountId: ctx.accountId, arn: ctx.arn, probes } };
   },

@@ -122,7 +122,7 @@ All access is read-only. The wizard shows these steps in context, with copy butt
 
 | Platform | Recommended method | Alternative |
 | --- | --- | --- |
-| AWS | Cross-account IAM role with the AWS managed `SecurityAudit` and `ViewOnlyAccess` policies, assumable only by your scanner identity with a per-engagement external ID. The app generates the CloudFormation template ([infra/aws-scanner-role.yaml](infra/aws-scanner-role.yaml)). | Temporary or dedicated read-only access keys |
+| AWS | Cross-account IAM role with a least-privilege inline policy (only the 24 read actions the checks use, no access to data such as S3 objects), assumable only by your scanner identity with a per-engagement external ID. The app generates the CloudFormation template ([infra/aws-scanner-role.yaml](infra/aws-scanner-role.yaml)). `iam:GenerateCredentialReport` is the only non-Get/List/Describe action: it refreshes IAM's own credential report and changes no configuration. | Temporary or dedicated read-only access keys with the same policy |
 | Microsoft 365 / Entra ID | Admin consent to your multi-tenant read-only scanner app. Graph application permissions: `Directory.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory`, `AuditLog.Read.All`, `Application.Read.All`, `Reports.Read.All`, `SecurityEvents.Read.All` | Customer-created app registration with a short-lived client secret |
 | Azure | Same app, plus `Reader` and `Security Reader` on the subscriptions in scope | Customer-created app registration |
 | GitHub | Fine-grained personal access token with read-only permissions, created by an organisation owner | Classic token |
@@ -218,7 +218,7 @@ With `DEMO_MODE=true` the app adds simulated systems to the wizard and, on start
 Simulated findings are realistic for each check, for example a public invoices bucket, RDP open to the internet, or an MFA policy left in report-only mode. Administrators can reset the demo data under **Settings > Demo data**.
 
 For hosted demos, an administrator can enable a **demo PIN login** in the same place:
-- The PIN is 6 to 12 digits and stored as an Argon2 hash.
+- The PIN is 8 to 12 digits and stored as an Argon2 hash.
 - Visitors who enter it only see demo customers. They can only add simulated systems, cannot store credentials and cannot open administration pages.
 - Attempts are rate limited and locked for 15 minutes after 5 failures.
 - Changing the PIN or turning it off ends all demo sessions.

@@ -8,6 +8,7 @@ import { scannerEnv } from './config.js';
 import type { AppCtx } from './context.js';
 import { authStates, checkResults, credentials, scans, scanSystems } from './db/schema.js';
 import { credAad, needsSecret } from './routes/scans.js';
+import { applyRetention } from './retention.js';
 import { storeScanScore } from './scoring.js';
 
 const WORKER_ID = `worker-${randomUUID().slice(0, 8)}`;
@@ -93,16 +94,6 @@ async function runScan(ctx: AppCtx, scanId: string) {
   log.info({ scanId, status: final }, 'scan finished');
 }
 
-/** Purge-on-completion: credentials are deleted as soon as the scan ends. */
-async function applyRetention(ctx: AppCtx, scanId: string) {
-  const scan = (await ctx.db.select().from(scans).where(eq(scans.id, scanId)).limit(1))[0];
-  if (scan?.retentionMode !== 'purge_on_completion') return;
-  const ids = (await ctx.db.select({ id: scanSystems.id }).from(scanSystems).where(eq(scanSystems.scanId, scanId))).map((r) => r.id);
-  if (!ids.length) return;
-  const del = await ctx.db.delete(credentials).where(inArray(credentials.systemId, ids)).returning({ id: credentials.systemId });
-  if (del.length) await audit(ctx, null, 'credential.purge', { type: 'scan', id: scanId }, { reason: 'purge_on_completion', count: del.length }, { id: '', email: 'worker' });
-}
-
 /** Periodic housekeeping: expired credentials, stale scans, expired sessions and auth states. */
 async function housekeeping(ctx: AppCtx) {
   const { db } = ctx;
@@ -128,9 +119,12 @@ async function housekeeping(ctx: AppCtx) {
   await purgeExpiredSessions(ctx);
 }
 
+/** Scans run in parallel up to this limit, so one long (or demo) scan cannot block the others. */
+const MAX_CONCURRENT = 3;
+
 export function startWorker(ctx: AppCtx) {
   let stopping = false;
-  let running: Promise<void> | null = null;
+  const running = new Set<Promise<void>>();
   let lastHousekeeping = 0;
 
   const loop = async () => {
@@ -140,16 +134,19 @@ export function startWorker(ctx: AppCtx) {
           lastHousekeeping = Date.now();
           await housekeeping(ctx);
         }
-        const id = await claim(ctx);
-        if (id) {
-          running = runScan(ctx, id).catch(async (e) => {
-            ctx.log.error({ err: e, scanId: id }, 'scan crashed');
-            await ctx.db.update(scans).set({ status: 'failed', finishedAt: new Date() }).where(eq(scans.id, id));
-            await applyRetention(ctx, id).catch(() => undefined);
-          });
-          await running;
-          running = null;
-          continue;
+        if (running.size < MAX_CONCURRENT) {
+          const id = await claim(ctx);
+          if (id) {
+            const p: Promise<void> = runScan(ctx, id)
+              .catch(async (e) => {
+                ctx.log.error({ err: e, scanId: id }, 'scan crashed');
+                await ctx.db.update(scans).set({ status: 'failed', finishedAt: new Date() }).where(eq(scans.id, id));
+                await applyRetention(ctx, id).catch(() => undefined);
+              })
+              .finally(() => running.delete(p));
+            running.add(p);
+            continue;
+          }
         }
       } catch (e) {
         ctx.log.error({ err: e }, 'worker loop error');
@@ -161,6 +158,6 @@ export function startWorker(ctx: AppCtx) {
   void loop();
   return async () => {
     stopping = true;
-    if (running) await running;
+    await Promise.allSettled([...running]);
   };
 }
