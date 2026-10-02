@@ -203,7 +203,7 @@ Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTE
   - secrets, cookies and OAuth codes redacted from logs;
   - CSV formula-injection protection, PNG/JPEG-only logo upload, PDF-only authorisation upload.
 - **Audit:** an append-only audit log of logins, break-glass and demo access, credential storage, use and purge, scans, exports and admin changes. A database trigger blocks updates and deletes.
-- **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit`, CodeQL and gitleaks.
+- **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit` and gitleaks, plus CodeQL code scanning.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
 
