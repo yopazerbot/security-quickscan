@@ -60,3 +60,12 @@ describe('CSV export', () => {
     expect(cell('normal')).toBe('"normal"');
   });
 });
+
+describe('OIDC error codes', () => {
+  it('extracts only a short AADSTS or OAuth code', async () => {
+    const { oidcErrorCode } = await import('../src/auth/routes.js');
+    expect(oidcErrorCode({ error: 'invalid_client', error_description: 'AADSTS7000215: Invalid client secret provided. Trace ID: x' })).toBe('AADSTS7000215');
+    expect(oidcErrorCode({ error: 'invalid_grant', error_description: 'bad' })).toBe('invalid_grant');
+    expect(oidcErrorCode(new Error('<script>'))).toBe('unknown');
+  });
+});

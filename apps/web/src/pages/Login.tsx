@@ -16,6 +16,16 @@ const ERRORS: Record<string, string> = {
   idp_error: 'Microsoft returned an error during sign-in.',
 };
 
+const CODE_HINTS: Record<string, string> = {
+  AADSTS7000215: 'invalid client secret. Use the secret Value (not the Secret ID) in ENTRA_CLIENT_SECRET.',
+  AADSTS7000222: 'the client secret has expired. Create a new one.',
+  AADSTS700016: 'application not found. Check ENTRA_CLIENT_ID and ENTRA_TENANT_ID.',
+  AADSTS50011: 'redirect URI mismatch. Add APP_URL/api/auth/callback as a Web redirect URI.',
+  AADSTS54005: 'the sign-in code was already used. Start again in a new tab.',
+  AADSTS70008: 'the sign-in code expired. Please try again.',
+  invalid_client: 'check ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET.',
+};
+
 function MicrosoftLogo() {
   return (
     <svg viewBox="0 0 21 21" className="size-4" aria-hidden>
@@ -39,6 +49,8 @@ export function Login() {
 
   if (me) return <Navigate to="/" replace />;
   const error = params.get('error');
+  const detail = params.get('code')?.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60);
+  const hint = detail ? CODE_HINTS[detail] : undefined;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -71,13 +83,6 @@ export function Login() {
             <p className="mt-4 text-base leading-relaxed text-slate-300">
               Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Risk-based criteria, live progress and client-ready reports.
             </p>
-            <div className="mt-8 grid grid-cols-3 gap-3 text-center">
-              {['Read-only access', 'Encrypted secrets', 'Annex A mapping'].map((t) => (
-                <div key={t} className="rounded-xl bg-white/5 px-3 py-3 text-xs font-medium text-slate-300 ring-1 ring-white/10">
-                  {t}
-                </div>
-              ))}
-            </div>
           </div>
           <p className="text-xs text-slate-500">Authorised use only. All activity is logged.</p>
         </div>
@@ -91,6 +96,12 @@ export function Login() {
           {error && (
             <Alert tone="error" className="mt-6">
               {ERRORS[error] ?? 'Sign-in failed.'}
+              {detail && (
+                <span className="mt-1 block text-xs opacity-80">
+                  Microsoft error {detail}
+                  {hint ? `: ${hint}` : ''}
+                </span>
+              )}
             </Alert>
           )}
 
@@ -130,6 +141,9 @@ export function Login() {
               )}
             </div>
           )}
+          <p className="mt-12 text-xs text-slate-400">
+            Developed by <span className="font-medium text-slate-600">Yoshi Parlevliet</span>
+          </p>
         </div>
       </div>
     </div>

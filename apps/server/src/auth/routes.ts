@@ -13,6 +13,16 @@ import { createSession, destroySession, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
 
 const OIDC_COOKIE = 'qs_oidc';
+
+/** Short, non-sensitive error code from a failed token exchange (e.g. AADSTS7000215), safe to show on the login page. */
+export function oidcErrorCode(e: unknown): string {
+  const err = e as { error?: unknown; error_description?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+  const text = [err?.error_description, err?.message, (err?.cause as any)?.error_description].filter((x) => typeof x === 'string').join(' ');
+  const aad = /AADSTS\d+/.exec(text)?.[0];
+  if (aad) return aad;
+  const raw = typeof err?.error === 'string' ? err.error : typeof err?.code === 'string' ? err.code : 'unknown';
+  return raw.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60) || 'unknown';
+}
 const STATE_TTL_MS = 10 * 60_000;
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 15;
@@ -105,7 +115,8 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   });
 
   app.get('/api/auth/callback', strictLimit, async (req, reply) => {
-    const fail = (code: string) => reply.redirect(`/login?error=${encodeURIComponent(code)}`);
+    const fail = (code: string, detail?: string) =>
+      reply.redirect(`/login?error=${encodeURIComponent(code)}${detail ? `&code=${encodeURIComponent(detail)}` : ''}`);
     const q = req.query as Record<string, string>;
     const cookieState = req.cookies[OIDC_COOKIE];
     reply.clearCookie(OIDC_COOKIE, { path: '/api/auth' });
@@ -127,7 +138,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       claims = tokens.claims()!;
     } catch (e) {
       req.log.warn({ err: e }, 'OIDC code exchange failed');
-      return fail('token_error');
+      return fail('token_error', oidcErrorCode(e));
     }
 
     const tid = String(claims.tid ?? '');
