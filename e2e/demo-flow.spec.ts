@@ -56,8 +56,8 @@ test('new customer through the full wizard with demo systems', async ({ page }) 
   await page.getByLabel('Customer name').fill(`E2E Customer ${Date.now()}`);
   await page.getByRole('button', { name: 'Create customer' }).click();
   await page.getByRole('button', { name: 'New scan' }).click();
-  await expect(page.getByText('Confirm the customer context')).toBeVisible();
-  await page.getByRole('button', { name: 'Save and continue' }).click();
+  // The wizard starts at Scope: the context and risk profile come from the customer record.
+  await expect(page.getByText('Confirm the customer context')).toHaveCount(0);
   for (const p of ['Microsoft 365 / Entra ID', 'GitHub']) {
     await page.locator('button', { hasText: p }).first().click();
     await page.getByRole('button', { name: /Demo \(simulated\)/ }).click();

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { RotateCcw, Search, SearchX } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import { RISK_STYLE } from '../../components/ContextForm';
 import { ProviderIcon } from '../../components/ProviderIcon';
 import { AsyncButton } from '../../components/feedback';
@@ -81,6 +82,9 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           <div className="mt-2">
             <span className={clsx('rounded-lg px-2.5 py-1 text-sm font-semibold ring-1', risk.cls)}>{risk.label}</span>
           </div>
+          <Link to={`/customers/${scan.customer.id}/edit`} className="mt-3 inline-block text-xs font-medium text-brand-700 hover:underline">
+            From the customer context. Edit customer
+          </Link>
         </div>
       </div>
 

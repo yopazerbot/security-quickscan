@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, customerInputSchema, triageSchema } from '@qs/shared';
+import { CHECKS_BY_ID, computeRiskProfile, customerInputSchema, triageSchema, type CustomerContext } from '@qs/shared';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -106,6 +106,13 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     await assertCustomerAccess(ctx, req, id, true);
     const body = parse(customerInputSchema, req.body);
     const [c] = await db.update(customers).set({ ...body, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
+    // Draft scans follow the customer context; started scans keep the snapshot they ran with.
+    if (body.context) {
+      await db
+        .update(scans)
+        .set({ context: body.context, riskProfile: computeRiskProfile(body.context as CustomerContext) })
+        .where(and(eq(scans.customerId, id), eq(scans.status, 'draft')));
+    }
     await audit(ctx, req, 'customer.update', { type: 'customer', id });
     return c;
   });

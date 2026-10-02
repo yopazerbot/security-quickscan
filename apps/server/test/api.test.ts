@@ -112,6 +112,17 @@ d('API authorisation', () => {
     expect(r.json().error).toMatch(/authorisation/i);
   });
 
+  it('applies customer context changes to draft scans only', async () => {
+    const cid = (await req('alice', 'POST', '/api/customers', customer('Context Corp'))).json().id;
+    const sid = (await req('alice', 'POST', `/api/customers/${cid}/scans`, {})).json().id;
+    const before = (await req('alice', 'GET', `/api/scans/${sid}`)).json();
+    const context = { ...DEFAULT_CONTEXT, dataSensitivity: 'very_high', internetExposure: 'significant', previousIncidents: true, regulations: ['nis2_essential'] };
+    expect((await req('alice', 'PUT', `/api/customers/${cid}`, { name: 'Context Corp', context })).statusCode).toBe(200);
+    const after = (await req('alice', 'GET', `/api/scans/${sid}`)).json();
+    expect(after.context.dataSensitivity).toBe('very_high');
+    expect(after.riskProfile.points).toBeGreaterThan(before.riskProfile.points);
+  });
+
   it('makes the audit log append-only', async () => {
     await expect(pool.query('delete from audit_log')).rejects.toThrow(/append-only/);
   });

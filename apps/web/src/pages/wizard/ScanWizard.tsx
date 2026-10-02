@@ -1,13 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Building2, Check, KeyRound, ListChecks, Rocket, Server, Trash2 } from 'lucide-react';
+import { Check, KeyRound, ListChecks, Rocket, Server, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import { AsyncButton, useAction } from '../../components/feedback';
 import { Button, ErrorState, PageHeader, PageLoader } from '../../components/ui';
 import { del, get, patch } from '../../lib/api';
 import { useCan } from '../../lib/auth';
-import { StepContext } from './StepContext';
 import { StepCredentials } from './StepCredentials';
 import { StepCriteria } from './StepCriteria';
 import { StepLaunch } from './StepLaunch';
@@ -66,13 +65,19 @@ export function useStepSave(saveRef: StepProps['saveRef'], save: () => Promise<u
 
 /** Why step i cannot be opened yet, or null when it can. */
 function lockReason(scan: WizardScan, i: number): string | null {
-  if (i >= 2 && !scan.systems.length) return 'Add at least one system in the Scope step first';
-  if (i >= 3 && !scan.systems.every(systemReady)) return 'Every system needs a successful connection test first';
+  if (i >= 1 && !scan.systems.length) return 'Add at least one system in the Scope step first';
+  if (i >= 2 && !scan.systems.every(systemReady)) return 'Every system needs a successful connection test first';
   return null;
 }
 
+/**
+ * The customer context and risk profile come from the customer record, so the wizard starts at Scope.
+ * The stored wizardStep still counts the former context step as 0, hence the offset.
+ */
+const STEP_OFFSET = 1;
+const reached = (scan: WizardScan) => Math.max(0, scan.wizardStep - STEP_OFFSET);
+
 const STEPS = [
-  { label: 'Context', desc: 'Risk profile', icon: Building2 },
   { label: 'Scope', desc: 'Systems', icon: Server },
   { label: 'Access', desc: 'Credentials', icon: KeyRound },
   { label: 'Criteria', desc: 'What to evaluate', icon: ListChecks },
@@ -106,7 +111,7 @@ export function ScanWizard() {
 
   useEffect(() => {
     if (!q.data || step !== null) return;
-    let s = Math.min(q.data.wizardStep, STEPS.length - 1);
+    let s = Math.min(reached(q.data), STEPS.length - 1);
     while (s > 0 && lockReason(q.data, s)) s--;
     setStep(s);
   }, [q.data, step]);
@@ -127,8 +132,8 @@ export function ScanWizard() {
     }
     setStep(n);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (n > scan.wizardStep) void run(async () => {
-      await patch(`/api/scans/${scan.id}`, { wizardStep: n });
+    if (n > reached(scan)) void run(async () => {
+      await patch(`/api/scans/${scan.id}`, { wizardStep: n + STEP_OFFSET });
       await q.refetch();
     });
   };
@@ -174,10 +179,10 @@ export function ScanWizard() {
         }
       />
       <nav aria-label="Scan wizard steps" className="mb-8 rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200/70">
-        <ol className="grid grid-cols-5 gap-1">
+        <ol className="grid grid-cols-4 gap-1">
           {STEPS.map((s, i) => {
             const done = i < step;
-            const lock = lockReason(scan, i) ?? (i > scan.wizardStep ? 'Complete the previous steps first' : null);
+            const lock = lockReason(scan, i) ?? (i > reached(scan) ? 'Complete the previous steps first' : null);
             const current = i === step;
             const Icon = s.icon;
             return (
@@ -213,11 +218,10 @@ export function ScanWizard() {
         </ol>
       </nav>
       <div key={step} className="animate-fade-in">
-        {step === 0 && <StepContext {...props} />}
-        {step === 1 && <StepScope {...props} />}
-        {step === 2 && <StepCredentials {...props} />}
-        {step === 3 && <StepCriteria {...props} />}
-        {step === 4 && <StepLaunch {...props} />}
+        {step === 0 && <StepScope {...props} />}
+        {step === 1 && <StepCredentials {...props} />}
+        {step === 2 && <StepCriteria {...props} />}
+        {step === 3 && <StepLaunch {...props} />}
       </div>
     </>
   );

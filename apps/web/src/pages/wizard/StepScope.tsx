@@ -170,7 +170,7 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
   );
 }
 
-export function StepScope({ scan, refresh, next, back, navigating }: StepProps) {
+export function StepScope({ scan, refresh, next, navigating }: StepProps) {
   const [adding, setAdding] = useState<Provider | null>(null);
   const [editing, setEditing] = useState<WizardSystem | null>(null);
 
@@ -250,7 +250,6 @@ export function StepScope({ scan, refresh, next, back, navigating }: StepProps) 
       {adding && <SystemForm provider={adding} scanId={scan.id} onClose={() => setAdding(null)} onSaved={async () => { setAdding(null); await refresh(); }} />}
       {editing && <SystemForm provider={editing.provider} system={editing} scanId={scan.id} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} />}
       <WizardFooter
-        onBack={back}
         onNext={next}
         loading={navigating}
         disabled={!scan.systems.length}
