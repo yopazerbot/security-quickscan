@@ -1,0 +1,24 @@
+{
+  "name": "security-quickscan",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev -w @qs/server & npm run dev -w @qs/web",
+    "build": "npm run build -w @qs/web && npm run build -w @qs/server",
+    "start": "node apps/server/dist/main.js",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "db:generate": "npm run db:generate -w @qs/server"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@qs/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "typecheck": "tsc -p .",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^10.1.5",
+    "@node-rs/argon2": "^2.0.2",
+    "@qs/checks": "*",
+    "@qs/shared": "*",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.6.0",
+    "openid-client": "^6.8.0",
+    "pdfkit": "^0.17.0",
+    "pg": "^8.16.0",
+    "pino": "^9.7.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/pdfkit": "^0.17.0",
+    "@types/pg": "^8.15.0",
+    "drizzle-kit": "^0.31.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.0",
+    "vitest": "^4.1.0"
+  }
+}
