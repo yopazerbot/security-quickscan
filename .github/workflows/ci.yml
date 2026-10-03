@@ -2,6 +2,8 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+  # The Docker workflow runs the full CI first and only publishes when it passes.
+  workflow_call:
 permissions:
   contents: read
 jobs:
