@@ -25,7 +25,7 @@ import { DescribeHubCommand, SecurityHubClient } from '@aws-sdk/client-securityh
 import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import type { CheckOutcome, ResourceRef } from '@qs/shared';
 import type { ProviderModule } from '../types.js';
-import { CheckError, fail, failIfAny, mapLimit, Memo, na, pass, sleep, warn } from '../util.js';
+import { applyCoverage, CheckError, fail, failIfAny, mapLimit, Memo, na, pass, sleep, warn } from '../util.js';
 
 interface Creds {
   accessKeyId: string;
@@ -58,20 +58,40 @@ async function regions(ctx: AwsCtx): Promise<string[]> {
   });
 }
 
-/** Run fn per region; regions where the service is unavailable or not opted in are skipped. */
-async function perRegion<T>(ctx: AwsCtx, fn: (region: string) => Promise<T>): Promise<{ region: string; value: T }[]> {
+interface RegionRun<T> {
+  results: { region: string; value: T }[];
+  /** Regions that could not be evaluated, with the reason, e.g. "ap-east-1 (OptInRequired)". */
+  skipped: string[];
+  total: number;
+}
+
+const REGION_UNAVAILABLE = /UnrecognizedClient|InvalidClientTokenId|OptInRequired|SubscriptionRequired|EndpointError|ENOTFOUND/i;
+
+/**
+ * Run fn per region. Regions where the service is unavailable, not opted in or denied (e.g. by an SCP) are skipped
+ * and reported, never silently dropped.
+ */
+async function perRegion<T>(ctx: AwsCtx, fn: (region: string) => Promise<T>): Promise<RegionRun<T>> {
   const rs = await regions(ctx);
+  const skipped: string[] = [];
   const out = await mapLimit(rs, 5, async (region): Promise<{ region: string; value: T } | null> => {
     ctx.signal?.throwIfAborted();
     try {
       return { region, value: await fn(region) };
     } catch (e: any) {
-      if (/UnrecognizedClient|InvalidClientTokenId|OptInRequired|SubscriptionRequired|EndpointError|ENOTFOUND/i.test(`${e?.name} ${e?.message}`)) return null;
+      if (REGION_UNAVAILABLE.test(`${e?.name} ${e?.message}`) || isAccessDenied(e)) {
+        skipped.push(`${region} (${String(e?.name ?? 'unavailable')})`);
+        return null;
+      }
       throw e;
     }
   });
-  return out.filter((x): x is { region: string; value: T } => x !== null);
+  return { results: out.filter((x): x is { region: string; value: T } => x !== null), skipped: skipped.sort(), total: rs.length };
 }
+
+/** Apply region coverage to an outcome: skipped regions downgrade pass to warn, zero evaluated regions give error. */
+const regionCoverage = (o: CheckOutcome, run: RegionRun<unknown>) =>
+  applyCoverage(o, { evaluated: run.results.length, total: run.total, skipped: run.skipped, unit: 'regions', hint: 'Check the configured regions and the scanner role permissions.' });
 
 interface CredRow {
   user: string;
@@ -219,9 +239,10 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
       const d = await gd.send(new GetDetectorCommand({ DetectorId: ids[0] }));
       return d.Status === 'ENABLED';
     });
-    const off = res.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
-    if (off.length === res.length) return fail('GuardDuty is not enabled in any region.', off);
-    return failIfAny(off, (n) => `GuardDuty disabled in ${n} of ${res.length} regions.`, `GuardDuty enabled in all ${res.length} regions.`, 'warn');
+    const off = res.results.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
+    const n = res.results.length;
+    if (off.length === n) return regionCoverage(fail(`GuardDuty is not enabled in any of the ${n} evaluated regions.`, off), res);
+    return regionCoverage(failIfAny(off, (k) => `GuardDuty disabled in ${k} of ${n} regions.`, `GuardDuty enabled in all ${n} evaluated regions.`, 'warn'), res);
   },
 
   async 'aws.securityhub'(ctx) {
@@ -234,9 +255,10 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
         throw e;
       }
     });
-    const off = res.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
-    if (off.length === res.length) return fail('Security Hub is not enabled in any region.');
-    return failIfAny(off, (n) => `Security Hub disabled in ${n} of ${res.length} regions.`, 'Security Hub enabled in all regions.', 'warn');
+    const off = res.results.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
+    const n = res.results.length;
+    if (off.length === n) return regionCoverage(fail(`Security Hub is not enabled in any of the ${n} evaluated regions.`), res);
+    return regionCoverage(failIfAny(off, (k) => `Security Hub disabled in ${k} of ${n} regions.`, 'Security Hub enabled in all evaluated regions.', 'warn'), res);
   },
 
   async 'aws.config'(ctx) {
@@ -244,9 +266,10 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
       const st = await new ConfigServiceClient(clientOpts(ctx, region)).send(new DescribeConfigurationRecorderStatusCommand({}));
       return (st.ConfigurationRecordersStatus ?? []).some((r) => r.recording);
     });
-    const off = res.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
-    if (off.length === res.length) return fail('AWS Config is not recording in any region.');
-    return failIfAny(off, (n) => `AWS Config not recording in ${n} of ${res.length} regions.`, 'AWS Config recording in all regions.', 'warn');
+    const off = res.results.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
+    const n = res.results.length;
+    if (off.length === n) return regionCoverage(fail(`AWS Config is not recording in any of the ${n} evaluated regions.`), res);
+    return regionCoverage(failIfAny(off, (k) => `AWS Config not recording in ${k} of ${n} regions.`, 'AWS Config recording in all evaluated regions.', 'warn'), res);
   },
 
   async 'aws.s3-account-bpa'(ctx) {
@@ -265,7 +288,7 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
     const buckets = (await new S3Client(clientOpts(ctx)).send(new ListBucketsCommand({}))).Buckets ?? [];
     if (!buckets.length) return na('No S3 buckets in this account.');
     const pub: ResourceRef[] = [];
-    let unknown = 0;
+    const unknown: string[] = [];
     await mapLimit(buckets, 8, async (b) => {
       try {
         const loc = await new S3Client(clientOpts(ctx)).send(new GetBucketLocationCommand({ Bucket: b.Name }));
@@ -273,17 +296,20 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
         const st = await new S3Client(clientOpts(ctx, region === 'EU' ? 'eu-west-1' : region)).send(new GetBucketPolicyStatusCommand({ Bucket: b.Name }));
         if (st.PolicyStatus?.IsPublic) pub.push({ id: `arn:aws:s3:::${b.Name}`, name: b.Name, detail: region });
       } catch (e: any) {
-        if (!/NoSuchBucketPolicy/.test(e?.name)) unknown++;
+        if (!/NoSuchBucketPolicy/.test(e?.name)) unknown.push(`${b.Name} (${String(e?.name ?? 'error')})`);
       }
     });
-    if (pub.length) return fail(`${pub.length} of ${buckets.length} buckets are public via bucket policy.`, pub);
-    return pass(`None of ${buckets.length} buckets are public via bucket policy${unknown ? ` (${unknown} could not be evaluated)` : ''}.`);
+    const evaluated = buckets.length - unknown.length;
+    const outcome = pub.length
+      ? fail(`${pub.length} of ${evaluated} evaluated buckets are public via bucket policy.`, pub)
+      : pass(`None of ${evaluated} evaluated buckets are public via bucket policy.`);
+    return applyCoverage(outcome, { evaluated, total: buckets.length, skipped: unknown.sort(), unit: 'buckets', hint: 'The scanner role cannot read the bucket location or policy status.' });
   },
 
   async 'aws.ebs-encryption'(ctx) {
     const res = await perRegion(ctx, async (region) => (await new EC2Client(clientOpts(ctx, region)).send(new GetEbsEncryptionByDefaultCommand({}))).EbsEncryptionByDefault);
-    const off = res.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
-    return failIfAny(off, (n) => `EBS encryption by default disabled in ${n} of ${res.length} regions.`, 'EBS encryption by default enabled in all regions.', 'warn');
+    const off = res.results.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
+    return regionCoverage(failIfAny(off, (n) => `EBS encryption by default disabled in ${n} of ${res.results.length} regions.`, 'EBS encryption by default enabled in all evaluated regions.', 'warn'), res);
   },
 
   async 'aws.sg-admin-ports'(ctx) {
@@ -307,8 +333,8 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
       } while (token);
       return out;
     });
-    const bad = res.flatMap((r) => r.value);
-    return failIfAny(bad, (n) => `${n} security group rule(s) expose admin/database ports to the internet.`, 'No security groups expose admin ports to the internet.');
+    const bad = res.results.flatMap((r) => r.value);
+    return regionCoverage(failIfAny(bad, (n) => `${n} security group rule(s) expose admin/database ports to the internet.`, 'No security groups expose admin ports to the internet.'), res);
   },
 
   async 'aws.ec2-imdsv2'(ctx) {
@@ -331,49 +357,50 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
       } while (token);
       return { out, total };
     });
-    const total = res.reduce((a, r) => a + r.value.total, 0);
-    if (!total) return na('No EC2 instances found.');
-    const bad = res.flatMap((r) => r.value.out);
-    return failIfAny(bad, (n) => `${n} of ${total} instances allow IMDSv1.`, `All ${total} instances require IMDSv2.`);
+    const total = res.results.reduce((a, r) => a + r.value.total, 0);
+    if (!total) return regionCoverage(na('No EC2 instances found.'), res);
+    const bad = res.results.flatMap((r) => r.value.out);
+    return regionCoverage(failIfAny(bad, (n) => `${n} of ${total} instances allow IMDSv1.`, `All ${total} instances require IMDSv2.`), res);
   },
 
   async 'aws.rds-public'(ctx) {
-    const dbs = await rdsInstances(ctx);
-    if (!dbs.length) return na('No RDS instances found.');
-    return failIfAny(
+    const { dbs, run } = await rdsInstances(ctx);
+    if (!dbs.length) return regionCoverage(na('No RDS instances found.'), run);
+    return regionCoverage(failIfAny(
       dbs.filter((d) => d.db.PubliclyAccessible).map((d) => ({ id: d.db.DBInstanceArn!, name: d.db.DBInstanceIdentifier, detail: d.region })),
       (n) => `${n} RDS instance(s) are publicly accessible.`,
       `None of ${dbs.length} RDS instances are publicly accessible.`,
-    );
+    ), run);
   },
 
   async 'aws.rds-encryption'(ctx) {
-    const dbs = await rdsInstances(ctx);
-    if (!dbs.length) return na('No RDS instances found.');
-    return failIfAny(
+    const { dbs, run } = await rdsInstances(ctx);
+    if (!dbs.length) return regionCoverage(na('No RDS instances found.'), run);
+    return regionCoverage(failIfAny(
       dbs.filter((d) => !d.db.StorageEncrypted).map((d) => ({ id: d.db.DBInstanceArn!, name: d.db.DBInstanceIdentifier, detail: d.region })),
       (n) => `${n} RDS instance(s) without storage encryption.`,
       `All ${dbs.length} RDS instances are encrypted.`,
-    );
+    ), run);
   },
 
   async 'aws.rds-backup'(ctx) {
-    const dbs = await rdsInstances(ctx);
-    if (!dbs.length) return na('No RDS instances found.');
-    return failIfAny(
+    const { dbs, run } = await rdsInstances(ctx);
+    if (!dbs.length) return regionCoverage(na('No RDS instances found.'), run);
+    return regionCoverage(failIfAny(
       dbs
         .filter((d) => (d.db.BackupRetentionPeriod ?? 0) < 7)
         .map((d) => ({ id: d.db.DBInstanceArn!, name: d.db.DBInstanceIdentifier, detail: `retention ${d.db.BackupRetentionPeriod ?? 0} days` })),
       (n) => `${n} RDS instance(s) keep backups for less than 7 days.`,
       `All ${dbs.length} RDS instances retain backups for 7+ days.`,
       'warn',
-    );
+    ), run);
   },
 
   async 'aws.kms-rotation'(ctx) {
     const res = await perRegion(ctx, async (region) => {
       const kms = new KMSClient(clientOpts(ctx, region));
       const out: ResourceRef[] = [];
+      const denied: string[] = [];
       let total = 0;
       let marker: string | undefined;
       do {
@@ -382,21 +409,28 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
           try {
             const d = (await kms.send(new DescribeKeyCommand({ KeyId: k.KeyId }))).KeyMetadata!;
             if (d.KeyManager !== 'CUSTOMER' || d.KeyState !== 'Enabled' || d.KeySpec !== 'SYMMETRIC_DEFAULT' || d.Origin !== 'AWS_KMS') continue;
-            total++;
             const rot = await kms.send(new GetKeyRotationStatusCommand({ KeyId: k.KeyId }));
+            // Count a key only once its rotation status was actually read.
+            total++;
             if (!rot.KeyRotationEnabled) out.push({ id: d.Arn!, name: d.Description || k.KeyId, detail: region });
           } catch (e) {
             if (!isAccessDenied(e)) throw e;
+            denied.push(`${k.KeyId} (${region})`);
           }
         }
         marker = r.Truncated ? r.NextMarker : undefined;
         ctx.signal?.throwIfAborted();
       } while (marker);
-      return { out, total };
+      return { out, total, denied };
     });
-    const total = res.reduce((a, r) => a + r.value.total, 0);
-    if (!total) return na('No customer managed symmetric KMS keys found.');
-    return failIfAny(res.flatMap((r) => r.value.out), (n) => `${n} of ${total} customer managed keys without rotation.`, `All ${total} customer managed keys rotate automatically.`, 'warn');
+    const total = res.results.reduce((a, r) => a + r.value.total, 0);
+    const denied = res.results.flatMap((r) => r.value.denied);
+    const outcome =
+      !total && !denied.length
+        ? na('No customer managed symmetric KMS keys found.')
+        : failIfAny(res.results.flatMap((r) => r.value.out), (n) => `${n} of ${total} customer managed keys without rotation.`, `All ${total} evaluated customer managed keys rotate automatically.`, 'warn');
+    const keyCoverage = applyCoverage(outcome, { evaluated: total, total: total + denied.length, skipped: denied, unit: 'KMS keys', hint: 'The scanner role cannot read these keys (key policy denies kms:DescribeKey or kms:GetKeyRotationStatus).' });
+    return regionCoverage(keyCoverage, res);
   },
 
   async 'aws.access-analyzer'(ctx) {
@@ -404,9 +438,10 @@ const checks: Record<string, (ctx: AwsCtx) => Promise<CheckOutcome>> = {
       const r = await new AccessAnalyzerClient(clientOpts(ctx, region)).send(new ListAnalyzersCommand({}));
       return (r.analyzers ?? []).some((a) => a.status === 'ACTIVE');
     });
-    const off = res.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
-    if (off.length === res.length) return fail('IAM Access Analyzer is not enabled in any region.');
-    return failIfAny(off, (n) => `Access Analyzer missing in ${n} of ${res.length} regions.`, 'Access Analyzer active in all regions.', 'warn');
+    const off = res.results.filter((r) => !r.value).map((r) => ({ id: r.region, name: r.region }));
+    const n = res.results.length;
+    if (off.length === n) return regionCoverage(fail(`IAM Access Analyzer is not enabled in any of the ${n} evaluated regions.`), res);
+    return regionCoverage(failIfAny(off, (k) => `Access Analyzer missing in ${k} of ${n} regions.`, 'Access Analyzer active in all evaluated regions.', 'warn'), res);
   },
 };
 
@@ -424,7 +459,7 @@ async function rdsInstances(ctx: AwsCtx) {
       } while (marker);
       return out;
     });
-    return res.flatMap((r) => r.value.map((db) => ({ region: r.region, db })));
+    return { dbs: res.results.flatMap((r) => r.value.map((db) => ({ region: r.region, db }))), run: res };
   });
 }
 
@@ -460,8 +495,20 @@ export const awsModule: ProviderModule<AwsCtx> = {
     try {
       await new IAMClient(clientOpts(ctx)).send(new GetAccountSummaryCommand({}));
       probes.push('IAM read');
-      await new EC2Client(clientOpts(ctx)).send(new DescribeRegionsCommand({}));
+      const all = (await new EC2Client(clientOpts(ctx)).send(new DescribeRegionsCommand({ AllRegions: true }))).Regions ?? [];
       probes.push('EC2 read');
+      // Configured regions must exist and be enabled, otherwise every regional check would silently skip them.
+      const status = new Map(all.map((r) => [r.RegionName, r.OptInStatus]));
+      const unknown = ctx.configuredRegions.filter((r) => !status.has(r));
+      const disabled = ctx.configuredRegions.filter((r) => status.get(r) === 'not-opted-in');
+      if (unknown.length || disabled.length) {
+        const parts = [unknown.length ? `unknown region(s): ${unknown.join(', ')}` : '', disabled.length ? `region(s) not enabled for this account: ${disabled.join(', ')}` : ''].filter(Boolean);
+        return {
+          ok: false,
+          message: `Connected to account ${ctx.accountId}, but the configured regions cannot be scanned (${parts.join('; ')}). Fix the region list or enable the regions in the AWS account.`,
+          details: { accountId: ctx.accountId, arn: ctx.arn, probes, unknownRegions: unknown, disabledRegions: disabled },
+        };
+      }
     } catch (e: any) {
       return { ok: false, message: `Authenticated as ${ctx.arn}, but read permissions are missing (${e?.name}). Deploy the QuickScan read-only role (or attach SecurityAudit).` };
     }

@@ -7,7 +7,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { authRoutes } from './auth/routes.js';
+import { authRoutes, localAccessToken } from './auth/routes.js';
 import { loadSession, verifyCsrf } from './auth/session.js';
 import { LOOPBACK, type Config } from './config.js';
 import { HttpError, type AppCtx } from './context.js';
@@ -18,6 +18,7 @@ import { adminRoutes } from './routes/admin.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { scanRoutes } from './routes/scans.js';
+import { tenantRoutes } from './routes/tenants.js';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -55,7 +56,7 @@ export function loggerOptions(config: Config) {
       // Never log one-time OAuth codes or consent state from query strings.
       req: (req: { method: string; url: string; ip?: string }) => ({
         method: req.method,
-        url: /^\/(api\/auth\/callback|consent\/callback)/.test(req.url) ? req.url.split('?')[0] : req.url,
+        url: /^\/(api\/auth\/callback|consent\/callback)/.test(req.url) || req.url.includes('local_token=') ? req.url.split('?')[0] : req.url,
         ip: req.ip,
       }),
     },
@@ -64,6 +65,7 @@ export function loggerOptions(config: Config) {
 
 /**
  * A hop count (never a blanket 'true') so a client cannot spoof its IP with X-Forwarded-For.
+ * The default is 'false' (no proxy) and 1 on Railway (see config.ts); behind your own reverse proxy set TRUST_PROXY=1.
  * Fastify accepts a number at runtime; its typings only list string/boolean.
  */
 function trustProxySetting(v: string): boolean | string {
@@ -78,7 +80,7 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     trustProxy: trustProxySetting(config.TRUST_PROXY),
     bodyLimit: 1024 * 1024,
   });
-  const ctx: AppCtx = { config, db, envelope: new Envelope(config.MASTER_KEY), log: app.log };
+  const ctx: AppCtx = { config, db, envelope: new Envelope([config.MASTER_KEY, config.MASTER_KEY_PREVIOUS]), log: app.log };
   const appOrigin = new URL(config.APP_URL).origin;
 
   await app.register(cookie);
@@ -127,6 +129,17 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
       // Outside a container the peer must be this machine too (in Docker it is the bridge gateway).
       if (!inContainer && !LOOPBACK_IPS.has(String(req.socket.remoteAddress ?? ''))) return reply.code(403).send({ error: 'Local mode only accepts connections from this machine' });
     });
+    // Same host choice as main.ts: in a container local mode listens on all interfaces.
+    const host = config.HOST ?? (inContainer ? '0.0.0.0' : '127.0.0.1');
+    if (host === '0.0.0.0' || host === '::') {
+      app.log.warn(
+        `LOCAL_MODE has no login and listens on ${host}. Publish the port on 127.0.0.1 only (e.g. -p 127.0.0.1:${config.PORT}:${config.PORT}), never on all interfaces.`,
+      );
+    }
+    if (config.LOCAL_REQUIRE_TOKEN) {
+      // Like Jupyter: the first session needs this link; afterwards the browser keeps its session cookie.
+      app.log.warn(`Open Security QuickScan with this one-time link: ${config.APP_URL}/?local_token=${localAccessToken(ctx)}`);
+    }
   }
 
   app.addHook('onRequest', async (req) => {
@@ -149,7 +162,11 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
 
   app.setErrorHandler((err: any, req, reply) => {
     if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
-    if (err.statusCode === 429) return reply.status(429).send({ error: 'Too many requests, slow down.' });
+    if (err.statusCode === 429) {
+      // Microsoft sign-in runs as full-page navigations: show the login page instead of raw JSON.
+      if (req.method === 'GET' && /^\/api\/auth\/(login|callback)(\?|$)/.test(req.url)) return reply.redirect('/login?error=rate_limited');
+      return reply.status(429).send({ error: 'Too many requests, slow down.' });
+    }
     if (err.statusCode && err.statusCode < 500) return reply.status(err.statusCode).send({ error: err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' ? 'Request too large' : 'Bad request' });
     req.log.error({ err }, 'unhandled error');
     return reply.status(500).send({ error: 'Internal error' });
@@ -165,6 +182,7 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
   scanRoutes(app, ctx);
   reportRoutes(app, ctx);
   adminRoutes(app, ctx);
+  tenantRoutes(app, ctx);
   demoLoginRoutes(app, ctx);
 
   const dist = webDist();

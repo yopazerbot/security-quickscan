@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { clearAttempts, takeAttempt } from '../auth/routes.js';
+import { attemptsExhausted, clearAttempts, clientKey, takeAttempt } from '../auth/routes.js';
 import { createSession, requireRole } from '../auth/session.js';
 import { HttpError, notFound, type AppCtx } from '../context.js';
 import { customerAssignments, customers, sessions, settings, users } from '../db/schema.js';
@@ -11,6 +11,7 @@ import { parse } from '../routes/helpers.js';
 
 const KEY = 'demo_login';
 const DEMO_EMAIL = 'demo-visitor@local';
+const DEMO_GLOBAL_MAX = 300;
 
 interface DemoLoginSetting {
   enabled: boolean;
@@ -83,15 +84,16 @@ export function demoLoginRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.post('/api/auth/demo', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!(await demoLoginAvailable(ctx))) throw notFound();
     const { pin } = parse(z.object({ pin: z.string().max(20) }), req.body);
-    const ipKey = `demo:ip:${req.ip}`;
-    // Per IP 5 attempts per 15 minutes, plus a global ceiling against distributed guessing.
-    // A global lock only blocks demo access, never real accounts.
-    if (!(await takeAttempt(ctx, ipKey)) || !(await takeAttempt(ctx, 'demo:all', 300))) {
+    const ipKey = `demo:ip:${clientKey(req.ip)}`;
+    // Per IP 5 attempts per 15 minutes, plus a global ceiling of wrong PINs against distributed guessing.
+    // A global lock only blocks demo access, never real accounts; successful logins do not count towards it.
+    if (!(await takeAttempt(ctx, ipKey)) || (await attemptsExhausted(ctx, 'demo:all', DEMO_GLOBAL_MAX))) {
       throw new HttpError(429, 'Too many attempts. Try again later.');
     }
     const s = await getDemoLogin(ctx);
     const ok = /^\d{8,12}$/.test(pin) && (await verify(s.pinHash!, pin).catch(() => false));
     if (!ok) {
+      await takeAttempt(ctx, 'demo:all', DEMO_GLOBAL_MAX);
       await audit(ctx, req, 'auth.demo_failed');
       throw new HttpError(401, 'Invalid PIN');
     }

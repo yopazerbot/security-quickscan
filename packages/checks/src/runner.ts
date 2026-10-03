@@ -6,7 +6,7 @@ import { azureModule } from './ms/azure.js';
 import { m365Module } from './ms/m365.js';
 import type { ConnectionResult, ProviderModule, ScannerEnv } from './types.js';
 import { msToken } from './ms/client.js';
-import { mapLimit, Memo, NotApplicable, withTimeout } from './util.js';
+import { fetchJson, mapLimit, Memo, NotApplicable, withTimeout } from './util.js';
 
 export const MODULES: Record<Provider, ProviderModule<any>> = {
   aws: awsModule,
@@ -52,6 +52,16 @@ export interface RunSystemInput {
   shouldStop(): Promise<boolean>;
 }
 
+/** Persistence callbacks may fail (database hiccup): that must only affect the one check, never the whole system. */
+async function attempt(fn: () => Promise<void>): Promise<boolean> {
+  try {
+    await fn();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function runSystem(input: RunSystemInput): Promise<void> {
   const mod = MODULES[input.provider];
   const demo = input.config?.authMode === 'demo';
@@ -62,31 +72,40 @@ export async function runSystem(input: RunSystemInput): Promise<void> {
       ctx = await withTimeout(mod.connect(input.config, input.secret, input.env, new Memo(), input.systemId), 60_000, 'Connecting');
     } catch (e) {
       const err = safeError(e, secrets);
-      for (const id of input.checkIds) await input.onResult(id, { status: 'error', summary: `Could not connect: ${err}` }, err);
+      for (const id of input.checkIds) await attempt(() => input.onResult(id, { status: 'error', summary: `Could not connect: ${err}` }, err));
       return;
     }
   }
   await mapLimit(input.checkIds, demo ? 4 : 3, async (checkId) => {
     if (await input.shouldStop()) return;
-    await input.onStart(checkId);
+    if (!(await attempt(() => input.onStart(checkId)))) {
+      await attempt(() => input.onResult(checkId, { status: 'error', summary: 'The check could not be started because of an internal error.' }));
+      return;
+    }
     // Each check gets its own abort signal: on timeout the API calls really stop (they hold live credentials).
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(new Error(`${checkId} timed out`)), CHECK_TIMEOUT_MS);
+    let outcome: CheckOutcome;
+    let error: string | undefined;
     try {
       const impl = mod.checks[checkId];
-      const outcome = demo
+      outcome = demo
         ? await demoOutcome(input.systemId, checkId, { maturity: typeof input.config?.demoMaturity === 'number' ? input.config.demoMaturity : undefined })
         : impl
           ? await withTimeout(impl({ ...(ctx as object), signal: abort.signal }), CHECK_TIMEOUT_MS, checkId)
           : { status: 'error' as const, summary: 'Check not implemented.' };
-      await input.onResult(checkId, outcome);
     } catch (e) {
-      if (e instanceof NotApplicable) return input.onResult(checkId, { status: 'na', summary: safeError(new Error(e.message), secrets) });
-      const err = safeError(e, secrets);
-      await input.onResult(checkId, { status: 'error', summary: `The check could not be completed: ${err}` }, err);
+      if (e instanceof NotApplicable) outcome = { status: 'na', summary: safeError(new Error(e.message), secrets) };
+      else {
+        error = safeError(e, secrets);
+        outcome = { status: 'error', summary: `The check could not be completed: ${error}` };
+      }
     } finally {
       clearTimeout(timer);
       abort.abort();
+    }
+    if (!(await attempt(() => input.onResult(checkId, outcome, error)))) {
+      await attempt(() => input.onResult(checkId, { status: 'error', summary: 'The check result could not be stored because of an internal error.' }));
     }
   });
 }
@@ -98,7 +117,7 @@ export async function testConnection(provider: Provider, config: any, secret: an
     const ctx = await withTimeout(mod.connect(config, secret, env, new Memo(), systemId), 45_000, 'Connecting');
     return await withTimeout(mod.identity(ctx), 45_000, 'Verifying permissions');
   } catch (e) {
-    return { ok: false, message: safeError(e) };
+    return { ok: false, message: safeError(e, secretValues(secret)) };
   }
 }
 
@@ -121,5 +140,37 @@ export async function verifyMsConsent(env: ScannerEnv, tenantId: string): Promis
     return true;
   } catch {
     return false;
+  }
+}
+
+export type ConsentProof = { ok: true } | { ok: false; reason: 'not_configured' | 'not_found' | 'stale' | 'error'; detail?: string };
+
+const CLOCK_SKEW_MS = 5 * 60_000;
+
+/**
+ * Proof that admin consent was granted by this flow: the platform app's service principal in the tenant
+ * (or its newest app role assignment) must have been created after the consent link was issued.
+ * An older consent (for example from another instance or organisation) does not count.
+ */
+export async function verifyMsConsentSince(env: ScannerEnv, tenantId: string, issuedAt: Date): Promise<ConsentProof> {
+  if (!env.ms) return { ok: false, reason: 'not_configured' };
+  const { clientId, clientSecret } = env.ms;
+  try {
+    const token = await msToken(tenantId, clientId, clientSecret, 'https://graph.microsoft.com/.default');
+    const get = async (path: string) => {
+      const r = await fetchJson<any>({ url: `https://graph.microsoft.com/beta${path}`, token, allowedHosts: ['graph.microsoft.com'] });
+      if (r.status >= 400) throw new Error(`Graph ${r.status}: ${r.data?.error?.code ?? 'error'}`);
+      return r.data;
+    };
+    const sp = (await get(`/servicePrincipals?$filter=${encodeURIComponent(`appId eq '${clientId.replace(/'/g, "''")}'`)}`))?.value?.[0];
+    if (!sp?.id) return { ok: false, reason: 'not_found' };
+    const assignments: any[] = (await get(`/servicePrincipals/${encodeURIComponent(sp.id)}/appRoleAssignments?$top=999`))?.value ?? [];
+    const times = [sp.createdDateTime, ...assignments.map((a) => a.creationTimestamp ?? a.createdDateTime)]
+      .map((t) => (typeof t === 'string' ? Date.parse(t) : NaN))
+      .filter(Number.isFinite);
+    if (!times.length) return { ok: false, reason: 'stale' };
+    return Math.max(...times) >= issuedAt.getTime() - CLOCK_SKEW_MS ? { ok: true } : { ok: false, reason: 'stale' };
+  } catch (e) {
+    return { ok: false, reason: 'error', detail: safeError(e, [clientSecret]) };
   }
 }

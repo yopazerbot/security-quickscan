@@ -7,7 +7,7 @@ import { audit } from '../audit.js';
 import { entraEnabled } from '../config.js';
 import type { AppCtx } from '../context.js';
 import { HttpError } from '../context.js';
-import { safeEqual, sha256 } from '../crypto/envelope.js';
+import { randomToken, safeEqual, sha256 } from '../crypto/envelope.js';
 import { authStates, loginAttempts, users } from '../db/schema.js';
 import { cookieName, createSession, destroySession, loadSession, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
@@ -43,9 +43,14 @@ function entraConfig(ctx: AppCtx) {
   return discovered;
 }
 
+/** Global ceiling for failed break-glass attempts from all addresses together (warns and slows down, never locks). */
+const BREAKGLASS_GLOBAL_MAX = 50;
+const BREAKGLASS_SLOWDOWN_MS = 3000;
+
 /**
  * Counts an attempt atomically *before* the credentials are verified (so parallel requests cannot
- * all slip in under the limit). The counter resets after LOCK_MINUTES without attempts.
+ * all slip in under the limit). Fixed window: updated_at holds the window start, and the counter only
+ * resets once that start is older than LOCK_MINUTES, so further (blocked) attempts never extend a lock.
  * Returns false when the key is over its limit.
  */
 export async function takeAttempt(ctx: AppCtx, key: string, max = MAX_FAILURES): Promise<boolean> {
@@ -53,9 +58,29 @@ export async function takeAttempt(ctx: AppCtx, key: string, max = MAX_FAILURES):
     insert into login_attempts (key, failures, updated_at) values (${key}, 1, now())
     on conflict (key) do update set
       failures = case when login_attempts.updated_at < now() - make_interval(mins => ${LOCK_MINUTES}) then 1 else login_attempts.failures + 1 end,
-      updated_at = now()
+      updated_at = case when login_attempts.updated_at < now() - make_interval(mins => ${LOCK_MINUTES}) then now() else login_attempts.updated_at end
     returning failures`);
   return Number((r.rows[0] as { failures: number }).failures) <= max;
+}
+
+/** True when the key already reached its limit in the current window (does not count an attempt). */
+export async function attemptsExhausted(ctx: AppCtx, key: string, max: number): Promise<boolean> {
+  const r = await ctx.db.execute(sql`
+    select failures from login_attempts where key = ${key} and updated_at >= now() - make_interval(mins => ${LOCK_MINUTES})`);
+  return r.rows.length > 0 && Number((r.rows[0] as { failures: number }).failures) >= max;
+}
+
+/** Rate-limit key part for a client address: IPv6 clients usually control a whole /64, so they share one key. */
+export function clientKey(ip: string): string {
+  if (!ip.includes(':') || /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(ip)) return ip.replace(/^::ffff:/i, '');
+  const [head, tail = ''] = ip.split('%')[0].split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return `${groups
+    .slice(0, 4)
+    .map((g) => (parseInt(g || '0', 16) || 0).toString(16))
+    .join(':')}::/64`;
 }
 
 export async function clearAttempts(ctx: AppCtx, ...keys: string[]) {
@@ -65,7 +90,8 @@ export async function clearAttempts(ctx: AppCtx, ...keys: string[]) {
 export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   const { config } = ctx;
   const redirectUri = `${config.APP_URL}/api/auth/callback`;
-  const strictLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+  // Sign-in redirects: generous enough for a shared office IP; a 429 here redirects to /login?error=rate_limited (app.ts).
+  const ssoLimit = { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } };
 
   app.get('/api/auth/config', async () => ({
     entra: entraEnabled(config),
@@ -75,8 +101,17 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   }));
 
   app.get('/api/auth/me', async (req, reply) => {
-    // Local mode: no login, the browser on this machine gets a local administrator session.
+    // Local mode: no login, the browser on this machine gets a local administrator session. Inside a container
+    // the first session needs the one-time startup link (?local_token=...), sent once as query or header.
     if (config.LOCAL_MODE && !req.user) {
+      if (config.LOCAL_REQUIRE_TOKEN) {
+        const q = (req.query as Record<string, unknown>)?.local_token;
+        const h = req.headers['x-local-token'];
+        const presented = typeof q === 'string' ? q : typeof h === 'string' ? h : '';
+        if (!presented || !safeEqual(presented, localAccessToken(ctx))) {
+          throw new HttpError(401, 'Open the sign-in link printed in the container log (docker logs) to start a session');
+        }
+      }
       const id = await ensureLocalAdmin(ctx);
       req.cookies[cookieName(ctx)] = await createSession(ctx, req, reply, id, 'local');
       await loadSession(ctx, req);
@@ -87,6 +122,8 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       csrfToken: req.session!.csrfToken,
       authMethod: req.session!.authMethod,
       sessionExpiresAt: req.session!.expiresAt,
+      /** Sessions end after this many minutes without requests (in addition to sessionExpiresAt). */
+      idleMinutes: config.SESSION_IDLE_MINUTES,
       features: {
         demo: config.DEMO_MODE,
         local: config.LOCAL_MODE,
@@ -97,7 +134,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     };
   });
 
-  app.get('/api/auth/login', strictLimit, async (req, reply) => {
+  app.get('/api/auth/login', ssoLimit, async (req, reply) => {
     if (!entraEnabled(config)) throw new HttpError(404, 'Microsoft sign-in is not configured');
     const oc = await entraConfig(ctx);
     const state = oidc.randomState();
@@ -125,7 +162,7 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     return reply.redirect(url.href);
   });
 
-  app.get('/api/auth/callback', strictLimit, async (req, reply) => {
+  app.get('/api/auth/callback', ssoLimit, async (req, reply) => {
     const fail = (code: string, detail?: string) =>
       reply.redirect(`/login?error=${encodeURIComponent(code)}${detail ? `&code=${encodeURIComponent(detail)}` : ''}`);
     const q = req.query as Record<string, string>;
@@ -174,9 +211,13 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
         await audit(ctx, req, 'user.bootstrap_admin', { type: 'user', id: user.id }, undefined, { id: user.id, email });
       }
     }
-    if (!user || !user.active) {
-      await audit(ctx, req, 'auth.login_denied', undefined, { email, oid, reason: user ? 'inactive' : 'not_invited' });
+    if (!user) {
+      await audit(ctx, req, 'auth.login_denied', undefined, { email, oid, reason: 'not_invited' });
       return fail('not_invited');
+    }
+    if (!user.active) {
+      await audit(ctx, req, 'auth.login_denied', { type: 'user', id: user.id }, { email, oid, reason: 'inactive' });
+      return fail('account_disabled');
     }
     await createSession(ctx, req, reply, user.id, 'entra');
     await audit(ctx, req, 'auth.login', { type: 'user', id: user.id }, { method: 'entra' }, { id: user.id, email: user.email });
@@ -196,10 +237,15 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     const body = parse(bgSchema, req.body);
     // Per client IP only: a shared lock would let anyone keep the emergency account locked out.
     // Password (Argon2id) plus TOTP makes guessing infeasible within the per-IP limit.
-    const ipKey = `bg:ip:${req.ip}`;
+    const ipKey = `bg:ip:${clientKey(req.ip)}`;
     if (!(await takeAttempt(ctx, ipKey))) {
       await audit(ctx, req, 'auth.breakglass_locked');
       throw new HttpError(429, 'Too many failed attempts. Try again later.');
+    }
+    // Distributed guessing: past the global ceiling every attempt is slowed down (no hard lock, see above).
+    if (await attemptsExhausted(ctx, 'bg:all', BREAKGLASS_GLOBAL_MAX)) {
+      req.log.warn({ ceiling: BREAKGLASS_GLOBAL_MAX }, 'break-glass: global failure ceiling reached, slowing down attempts');
+      await new Promise((r) => setTimeout(r, BREAKGLASS_SLOWDOWN_MS));
     }
     const userOk = safeEqual(body.username, config.BREAKGLASS_USERNAME!);
     const pwOk = await argonVerify(config.BREAKGLASS_PASSWORD_HASH!, body.password).catch(() => false);
@@ -215,7 +261,11 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       replay = used.length === 0;
     }
     if (!(userOk && pwOk && step !== null) || replay) {
-      await audit(ctx, req, 'auth.breakglass_failed', undefined, { username: body.username.slice(0, 50) });
+      // Never log the typed username: it may be a password pasted into the wrong field.
+      await audit(ctx, req, 'auth.breakglass_failed', undefined, { usernameMatched: userOk });
+      if (!(await takeAttempt(ctx, 'bg:all', BREAKGLASS_GLOBAL_MAX))) {
+        req.log.warn({ ceiling: BREAKGLASS_GLOBAL_MAX }, 'break-glass: many failed attempts from several addresses');
+      }
       throw new HttpError(401, 'Invalid credentials');
     }
     await clearAttempts(ctx, ipKey);
@@ -240,6 +290,17 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
 }
 
 const LOCAL_EMAIL = 'local-admin@localhost';
+const localTokens = new WeakMap<AppCtx, string>();
+
+/** One-time startup token of a local installation in a container (kept in memory, new on every start). */
+export function localAccessToken(ctx: AppCtx): string {
+  let t = localTokens.get(ctx);
+  if (!t) {
+    t = randomToken(24);
+    localTokens.set(ctx, t);
+  }
+  return t;
+}
 
 /** The single administrator account of a local installation. */
 async function ensureLocalAdmin(ctx: AppCtx): Promise<string> {

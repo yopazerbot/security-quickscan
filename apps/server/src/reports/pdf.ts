@@ -1,11 +1,17 @@
 import {
   DOMAIN_LABELS,
+  GRADE_COLORS,
   INDUSTRIES,
   ISO_BY_ID,
   PROVIDER_LABELS,
   REGULATIONS,
+  PRODUCT_NAME,
+  REPORT_TITLE,
+  REPORT_TITLE_SHORT,
   VERDICT_LABELS,
+  executiveSummarySentences,
   gradeFor,
+  partialLabel,
   type ControlVerdict,
   type Severity,
 } from '@qs/shared';
@@ -26,7 +32,7 @@ const C = {
 const SEV: Record<Severity, string> = { critical: '#7f1d1d', high: '#dc2626', medium: '#d97706', low: '#2563eb', info: '#64748b' };
 // Same verdict colours as the web report.
 const VERDICT: Record<ControlVerdict, string> = { effective: '#047857', partial: '#b45309', not_effective: '#b91c1c', not_assessed: C.na };
-const GRADE: Record<string, string> = { A: '#059669', B: '#65a30d', C: '#ca8a04', D: '#ea580c', E: '#dc2626', F: '#991b1b' };
+const GRADE = GRADE_COLORS;
 
 type Doc = PDFKit.PDFDocument;
 const M = 50;
@@ -76,7 +82,25 @@ const scoreColor = (s: number | null) => (s === null ? C.na : GRADE[gradeFor(s)]
 const statusColor = (s: string) => (s === 'pass' ? C.pass : s === 'warn' ? C.warn : s === 'fail' ? C.fail : C.na);
 const STATUS_LABEL: Record<string, string> = { pass: 'PASS', warn: 'WARNING', fail: 'FAIL', na: 'N/A', error: 'ERROR' };
 
-function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
+/** "Cloud Security Quick Scan Report" -> ["Cloud Security", "Quick Scan Report"]. */
+function splitTitle(title: string): [string, string] {
+  const words = title.split(' ');
+  const cut = Math.min(2, words.length - 1);
+  return [words.slice(0, cut).join(' '), words.slice(cut).join(' ')];
+}
+
+function retentionText(m: ReportModel): string {
+  if (m.scan.retentionMode === 'purge_on_completion') return 'secrets were deleted automatically when the scan finished';
+  if (m.scan.retentionMode === 'days') {
+    const expiry = m.systems.map((s) => s.credentialsExpireAt).filter((d): d is Date => Boolean(d)).sort((a, b) => +new Date(b) - +new Date(a))[0];
+    const days = m.scan.retentionDays;
+    const kept = days ? `secrets are stored encrypted and kept for ${days} day${days === 1 ? '' : 's'}, then deleted automatically` : 'secrets are stored encrypted for a limited time, then deleted automatically';
+    return expiry ? `${kept} (on ${fmtDate(expiry)} at the latest)` : kept;
+  }
+  return 'secrets are stored encrypted until they are deleted manually';
+}
+
+export function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
   const accent = m.branding.accentColor;
   const W = doc.page.width;
   doc.rect(0, 0, W, 300).fill(accent);
@@ -88,8 +112,10 @@ function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
       /* ignore broken logo */
     }
   }
-  doc.font('Helvetica-Bold').fontSize(30).text('Cloud Security', M, 150);
-  doc.text('Quick Scan Report');
+  // Title words split over two lines; always white on the accent band.
+  const [titleTop, titleBottom] = splitTitle(REPORT_TITLE);
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(30).text(titleTop, M, 150);
+  doc.text(titleBottom);
   doc.font('Helvetica').fontSize(13).fillColor('#e0e7ff').text('Assessment against ISO/IEC 27001:2022 Annex A', M, 240);
 
   doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(24).text(m.customer.name, M, 360, { width: W - 2 * M - 140 });
@@ -101,15 +127,25 @@ function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
   // Grade badge
   const cx = W - M - 60;
   const cy = 400;
-  doc.circle(cx, cy, 52).fill(GRADE[m.summary.grade] ?? C.ink);
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(46).text(m.summary.grade, cx - 52, cy - 26, { width: 104, align: 'center' });
-  doc.fillColor(C.muted).font('Helvetica').fontSize(10).text(`Score ${m.summary.score}/100`, cx - 52, cy + 60, { width: 104, align: 'center' });
+  const g = m.summary.grade;
+  if (g === null) {
+    doc.circle(cx, cy, 52).fill(C.muted);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(15).text('Not\nassessed', cx - 46, cy - 18, { width: 92, align: 'center' });
+    doc.fillColor(C.muted).font('Helvetica').fontSize(9).text(`${m.summary.coverage.assessed} of ${m.summary.coverage.inScope} checks assessed`, cx - 60, cy + 60, { width: 120, align: 'center' });
+  } else {
+    doc.circle(cx, cy, 52).fill(GRADE[g] ?? C.ink);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(46).text(g, cx - 52, cy - 26, { width: 104, align: 'center' });
+    doc.fillColor(C.muted).font('Helvetica').fontSize(10).text(`Score ${m.summary.score}/100`, cx - 60, cy + 60, { width: 120, align: 'center' });
+    const partial = partialLabel(m.summary);
+    if (partial) doc.fillColor(C.warn).font('Helvetica-Bold').fontSize(8.5).text(partial, cx - 60, doc.y + 2, { width: 120, align: 'center' });
+  }
 
   const by = [m.branding.consultantName, m.branding.companyName].filter(Boolean).join(', ');
   if (by || m.branding.contactEmail) {
-    doc.fillColor(C.muted).fontSize(10).text('Prepared by', M, 640);
-    doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(12).text(by || m.branding.contactEmail, M, 655);
-    doc.font('Helvetica').fontSize(10).fillColor(C.muted).text([m.branding.contactEmail, m.branding.website].filter(Boolean).join('  |  '), M, 672);
+    doc.fillColor(C.muted).font('Helvetica').fontSize(10).text('Prepared by', M, 640);
+    doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(12).text(by || m.branding.contactEmail, M, 655, { width: W - 2 * M });
+    // Below the name, however many lines it wrapped to.
+    doc.font('Helvetica').fontSize(10).fillColor(C.muted).text([m.branding.contactEmail, m.branding.website].filter(Boolean).join('  |  '), M, doc.y + 2, { width: W - 2 * M });
   }
 }
 
@@ -117,17 +153,11 @@ function summaryPage(doc: Doc, m: ReportModel) {
   const accent = m.branding.accentColor;
   h1(doc, 'Executive summary', accent);
   const s = m.summary;
-  const open = m.findings.filter((f) => !f.triage || f.triage.status === 'open');
-  const crit = open.filter((f) => f.severity === 'critical' && f.status === 'fail').length;
-  const high = open.filter((f) => f.severity === 'high' && f.status === 'fail').length;
   para(
     doc,
-    `${m.customer.name} was assessed with ${m.findings.length + m.passed.length + m.notAssessed.length} automated, read-only checks across ${m.systems.length} system(s). ` +
-      `The overall security score is ${s.score}/100 (grade ${s.grade}). ` +
-      (crit + high > 0
-        ? `${crit} critical and ${high} high severity issue(s) need prompt attention.`
-        : 'No critical or high severity failures were found.') +
-      ` Based on the organisation context the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
+    `${m.customer.name} was assessed with automated, read-only checks across ${m.systems.length} system(s). ` +
+      executiveSummarySentences(s).join(' ') +
+      ` Based on the organisation context at the time of the scan the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
       (m.scan.status === 'failed'
         ? ' Note: this scan did not complete, so the results are partial and the score may not reflect the full environment.'
         : m.scan.status === 'cancelled'
@@ -138,20 +168,22 @@ function summaryPage(doc: Doc, m: ReportModel) {
   // KPI tiles
   doc.moveDown(1);
   const y = doc.y;
+  // Failed + warnings + passed + accepted/triaged + not assessed = every check in the report.
   const tiles: [string, string, string][] = [
-    ['Score', `${s.score}`, GRADE[s.grade] ?? C.ink],
+    ['Score', s.score === null ? '-' : `${s.score}`, s.grade === null ? C.muted : (GRADE[s.grade] ?? C.ink)],
     ['Failed', `${s.counts.fail}`, C.fail],
     ['Warnings', `${s.counts.warn}`, C.warn],
     ['Passed', `${s.counts.pass}`, C.pass],
-    ['Not assessed', `${s.counts.na + s.counts.error}`, C.na],
+    ['Accepted / triaged', `${s.counts.accepted + s.counts.false_positive}`, C.muted],
+    ['Not assessed', `${s.counts.na + s.counts.error}`, C.muted],
   ];
-  const tw = (doc.page.width - 2 * M - 4 * 10) / 5;
+  const tw = (doc.page.width - 2 * M - (tiles.length - 1) * 8) / tiles.length;
   tiles.forEach(([label, value, color], i) => {
-    const x = M + i * (tw + 10);
+    const x = M + i * (tw + 8);
     doc.roundedRect(x, y, tw, 58, 6).fill(C.soft);
     doc.rect(x, y, 3, 58).fill(color);
     doc.fillColor(color).font('Helvetica-Bold').fontSize(22).text(value, x + 12, y + 10, { width: tw - 16 });
-    doc.fillColor(C.muted).font('Helvetica').fontSize(8.5).text(label.toUpperCase(), x + 12, y + 38, { width: tw - 16 });
+    doc.fillColor(C.muted).font('Helvetica').fontSize(7.5).text(label.toUpperCase(), x + 12, y + 36, { width: tw - 16 });
   });
   doc.y = y + 75;
   doc.x = M;
@@ -179,11 +211,11 @@ function summaryPage(doc: Doc, m: ReportModel) {
   if (m.comparison) {
     h2(doc, 'Compared to the previous scan');
     const c = m.comparison;
-    para(
-      doc,
-      `Previous scan on ${fmtDate(c.previousDate)} scored ${c.previousScore ?? '-'} (grade ${c.previousGrade ?? '-'}); now ${s.score} (grade ${s.grade}). ` +
-        `${c.resolved.length} issue(s) resolved, ${c.newFindings.length} new, ${c.persisting.length} persisting.`,
-    );
+    const scores =
+      c.differentScope || c.previousScore === null || s.score === null
+        ? `Previous scan on ${fmtDate(c.previousDate)} covered a different scope, so only the ${c.sharedSystems} system(s) in both scans are compared and the scores are not. `
+        : `Previous scan on ${fmtDate(c.previousDate)} scored ${c.previousScore} (grade ${c.previousGrade ?? '-'}); now ${s.score} (grade ${s.grade}). `;
+    para(doc, scores + `${c.resolved.length} issue(s) resolved, ${c.newFindings.length} new, ${c.persisting.length} persisting.`);
   }
 
   h2(doc, 'Risk profile');
@@ -320,7 +352,7 @@ function appendix(doc: Doc, m: ReportModel) {
   h2(doc, 'Access revocation');
   para(
     doc,
-    `Credentials handling for this scan: ${m.scan.retentionMode === 'purge_on_completion' ? 'secrets were deleted automatically when the scan completed' : m.scan.retentionMode === 'days' ? 'secrets are stored encrypted for a limited number of days' : 'secrets are stored encrypted until manually deleted'}. ` +
+    `Credentials handling for this scan: ${retentionText(m)}. ` +
       'We recommend removing the scanner access (IAM role, app consent / registration, Azure role assignments, GitHub token) once it is no longer needed.',
   );
 
@@ -356,7 +388,7 @@ export function renderPdf(m: ReportModel, logo: Buffer | null): Promise<Buffer> 
       size: 'A4',
       margin: M,
       bufferPages: true,
-      info: { Title: `Cloud Security Quick Scan - ${m.customer.name}`, Author: m.branding.companyName || m.branding.consultantName || 'Security QuickScan', Subject: 'ISO 27001 Annex A technical assessment' },
+      info: { Title: `${REPORT_TITLE} - ${m.customer.name}`, Author: m.branding.companyName || m.branding.consultantName || PRODUCT_NAME, Subject: 'ISO 27001 Annex A technical assessment', Creator: PRODUCT_NAME },
     });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
@@ -386,7 +418,7 @@ export function renderPdf(m: ReportModel, logo: Buffer | null): Promise<Buffer> 
       doc.page.margins.bottom = 0;
       doc.moveTo(M, y - 8).lineTo(doc.page.width - M, y - 8).strokeColor(C.line).lineWidth(0.5).stroke();
       doc.fillColor(C.muted).font('Helvetica').fontSize(7.5);
-      doc.text(`${m.customer.name}  |  Cloud Security Quick Scan`, M, y, { width: 350, lineBreak: false });
+      doc.text(`${m.customer.name}  |  ${REPORT_TITLE_SHORT}`, M, y, { width: 350, lineBreak: false });
       doc.text(`Page ${i + 1} of ${range.count}`, doc.page.width - M - 100, y, { width: 100, align: 'right', lineBreak: false });
     }
     doc.end();

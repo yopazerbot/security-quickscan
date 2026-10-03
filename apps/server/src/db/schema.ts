@@ -93,7 +93,7 @@ export const customers = pgTable('customers', {
   ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
-});
+}, (t) => [index('customers_owner_idx').on(t.ownerId)]);
 
 /** Organisation shares: who else may view or edit an organisation, granted by its owner or an admin. */
 export const customerAssignments = pgTable(
@@ -109,7 +109,7 @@ export const customerAssignments = pgTable(
     grantedBy: uuid('granted_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.customerId] })],
+  (t) => [primaryKey({ columns: [t.userId, t.customerId] }), index('customer_assignments_customer_idx').on(t.customerId)],
 );
 
 export const scans = pgTable(
@@ -156,6 +156,8 @@ export const scanSystems = pgTable(
     connectionMessage: text('connection_message'),
     connectionDetails: jsonb('connection_details'),
     connectionCheckedAt: ts('connection_checked_at'),
+    /** Config frozen when the scan starts; the worker scans exactly what was validated. */
+    startedConfig: jsonb('started_config'),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [index('scan_systems_scan_idx').on(t.scanId)],
@@ -219,12 +221,14 @@ export const findingTriage = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: 'cascade' }),
     checkId: text('check_id').notNull(),
+    /** System identity the decision applies to (e.g. aws:111122223333); '*' = every system (legacy rows). */
+    systemKey: text('system_key').notNull().default('*'),
     status: triageEnum('status').notNull().default('open'),
     note: text('note').notNull().default(''),
     updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.customerId, t.checkId] })],
+  (t) => [primaryKey({ columns: [t.customerId, t.checkId, t.systemKey] })],
 );
 
 export const auditLog = pgTable(
@@ -253,11 +257,13 @@ export const settings = pgTable('settings', {
  * Microsoft tenants that granted admin consent to the platform scanner app, bound to exactly one
  * organisation. Prevents using the platform app against another organisation's tenant.
  */
+/**
+ * One Microsoft tenant belongs to one organisation. The binding outlives the organisation (customer_id becomes null)
+ * so a deleted organisation does not free its tenant for someone else; an admin releases it explicitly.
+ */
 export const msTenantBindings = pgTable('ms_tenant_bindings', {
   tenantId: text('tenant_id').primaryKey(),
-  customerId: uuid('customer_id')
-    .notNull()
-    .references(() => customers.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: ts('created_at').notNull().defaultNow(),
 });

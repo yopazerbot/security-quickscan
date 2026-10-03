@@ -1,5 +1,6 @@
 import { ISO_BY_ID, isoSort, type ControlVerdict } from './iso.js';
 import {
+  DOMAIN_LABELS,
   DOMAINS,
   SEVERITY_WEIGHT,
   type CheckMeta,
@@ -26,14 +27,32 @@ export interface ControlAssessment {
   passed: number;
 }
 
+/** Assessed = a result that says something about the control (pass, fail, warn, also when triaged). In scope = every applicable check (all results except 'na'). */
+export interface ScoreCoverage {
+  assessed: number;
+  inScope: number;
+}
+
+/** Grade only when at least half of the applicable checks were assessed; 'partial' when less than 90%. */
+export const MIN_GRADED_COVERAGE = 0.5;
+export const FULL_COVERAGE = 0.9;
+
 export interface ScoreSummary {
-  score: number;
-  grade: string;
-  counts: Record<ResultStatus | 'accepted', number>;
+  /** Null when too little was assessed to grade (see MIN_GRADED_COVERAGE). */
+  score: number | null;
+  grade: string | null;
+  coverage: ScoreCoverage;
+  /** Graded, but fewer than 90% of the applicable checks were assessed. */
+  partial: boolean;
+  /** Per result after triage. false_positive is counted separately (not as pass); tiles sum to the number of results. */
+  counts: Record<ResultStatus | 'accepted' | 'false_positive', number>;
   severityCounts: Record<Severity, number>;
   domainScores: { domain: Domain; score: number | null }[];
   controls: ControlAssessment[];
 }
+
+/** Grade colours (A to D darkened so white text reaches 4.5:1). Used by the web app and the PDF. */
+export const GRADE_COLORS: Record<string, string> = { A: '#047857', B: '#4d7c0f', C: '#a16207', D: '#c2410c', E: '#dc2626', F: '#991b1b' };
 
 export function gradeFor(score: number): string {
   if (score >= 90) return 'A';
@@ -69,7 +88,7 @@ export function computeScore(
   catalog: Record<string, CheckMeta>,
   domainWeights: Record<Domain, number>,
 ): ScoreSummary {
-  const counts = { pass: 0, fail: 0, warn: 0, na: 0, error: 0, accepted: 0 };
+  const counts = { pass: 0, fail: 0, warn: 0, na: 0, error: 0, accepted: 0, false_positive: 0 };
   const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const domainAcc = Object.fromEntries(DOMAINS.map((d) => [d, { got: 0, max: 0 }])) as Record<
     Domain,
@@ -83,7 +102,8 @@ export function computeScore(
     const meta = catalog[r.checkId];
     if (!meta) continue;
     const status = effectiveStatus(r);
-    counts[status]++;
+    const falsePositive = status === 'pass' && r.status !== 'pass';
+    counts[falsePositive ? 'false_positive' : status]++;
     if (status === 'fail' || status === 'warn') severityCounts[r.severity]++;
 
     const e = earned(status);
@@ -114,7 +134,10 @@ export function computeScore(
     });
   }
 
-  const score = max === 0 ? 100 : Math.round((got / max) * 100);
+  const inScope = results.filter((r) => catalog[r.checkId] && r.status !== 'na').length;
+  const assessed = counts.pass + counts.fail + counts.warn + counts.accepted + counts.false_positive;
+  const graded = inScope > 0 && max > 0 && assessed / inScope >= MIN_GRADED_COVERAGE;
+  const score = graded ? Math.round((got / max) * 100) : null;
   const controls: ControlAssessment[] = [...controlAcc.entries()]
     .sort(([a], [b]) => isoSort(a, b))
     .map(([id, acc]) => {
@@ -136,7 +159,9 @@ export function computeScore(
 
   return {
     score,
-    grade: gradeFor(score),
+    grade: score === null ? null : gradeFor(score),
+    coverage: { assessed, inScope },
+    partial: score !== null && assessed / inScope < FULL_COVERAGE,
     counts,
     severityCounts,
     domainScores: DOMAINS.map((d) => ({
@@ -145,4 +170,46 @@ export function computeScore(
     })),
     controls,
   };
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** "Partial: 12 of 20 checks assessed" when graded on partial coverage, otherwise null. */
+export function partialLabel(s: Pick<ScoreSummary, 'partial' | 'coverage'>): string | null {
+  return s.partial ? `Partial: ${s.coverage.assessed} of ${s.coverage.inScope} checks assessed` : null;
+}
+
+/** Executive summary sentences shared by the web report and the PDF so they never disagree. */
+export function executiveSummarySentences(s: ScoreSummary): string[] {
+  const parts: string[] = [];
+  const { assessed, inScope } = s.coverage;
+  const na = s.counts.na ?? 0;
+  const naNote = na ? ` (${na} not applicable)` : '';
+  if (inScope === 0 || assessed === 0) {
+    parts.push(`No checks could be assessed${naNote}, so no grade is given.`);
+    return parts;
+  }
+  parts.push(`${assessed} of ${plural(inScope, 'check', 'checks')} could be assessed${naNote}.`);
+  if (s.score === null || s.grade === null) parts.push('Too few checks could be assessed for a reliable grade, so no grade is given.');
+  else parts.push(`Overall grade ${s.grade} (${s.score}/100)${s.partial ? ', partial because not every check could be assessed' : ''}.`);
+  const fail = s.counts.fail ?? 0;
+  const warn = s.counts.warn ?? 0;
+  const crit = s.severityCounts.critical ?? 0;
+  const high = s.severityCounts.high ?? 0;
+  if (fail + warn === 0) parts.push('No failed checks or warnings.');
+  else {
+    const sev = [crit && `${crit} critical`, high && `${high} high`].filter(Boolean).join(' and ');
+    parts.push(`${plural(fail, 'failed check', 'failed checks')} and ${plural(warn, 'warning', 'warnings')}${sev ? `, of which ${sev} severity` : ''}.`);
+  }
+  const gaps = s.domainScores
+    .filter((d) => d.score !== null && d.score < 75)
+    .sort((a, b) => (a.score ?? 0) - (b.score ?? 0))
+    .slice(0, 2)
+    .map((d) => DOMAIN_LABELS[d.domain] ?? d.domain);
+  if (gaps.length) parts.push(`Biggest gaps: ${gaps.join(', ')}.`);
+  const accepted = s.counts.accepted ?? 0;
+  const fp = s.counts.false_positive ?? 0;
+  if (accepted) parts.push(`${plural(accepted, 'finding is', 'findings are')} risk accepted.`);
+  if (fp) parts.push(`${plural(fp, 'finding is', 'findings are')} marked as false positive.`);
+  return parts;
 }

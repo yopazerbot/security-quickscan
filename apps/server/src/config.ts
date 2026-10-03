@@ -23,18 +23,29 @@ const schema = z
     DATABASE_SSL: z.enum(['true', 'false', '1', '0', 'no-verify']).optional(),
     /** 32 random bytes, base64. Generate with: openssl rand -base64 32 */
     MASTER_KEY: z.string().refine((v) => Buffer.from(v, 'base64').length === 32, 'MASTER_KEY must be 32 bytes, base64 encoded'),
-    /** Optional previous key, used only by the key rotation command. */
-    MASTER_KEY_PREVIOUS: z.string().optional(),
+    /** Previous key during a rotation: still accepted for decryption until rotate-master-key has re-wrapped everything. */
+    MASTER_KEY_PREVIOUS: z
+      .string()
+      .refine((v) => Buffer.from(v, 'base64').length === 32, 'MASTER_KEY_PREVIOUS must be 32 bytes, base64 encoded')
+      .optional(),
     MODE: z.enum(['all', 'api', 'worker']).default('all'),
     /**
      * Single-user local installation (e.g. Docker on a laptop): no login, only reachable via localhost,
      * master key generated and stored in KEY_FILE.
      */
     LOCAL_MODE: bool,
+    /**
+     * Local mode only: require the one-time startup link (?local_token=...) before the first local session is
+     * created. Defaults to true inside a container, where the peer address cannot be checked.
+     */
+    LOCAL_REQUIRE_TOKEN: bool,
     KEY_FILE: z.string().default(defaultKeyFile()),
     HOST: z.string().optional(),
-    /** Number of reverse-proxy hops to trust for the client IP (Railway and most PaaS: 1). 'false' disables. */
-    TRUST_PROXY: z.string().default('1'),
+    /**
+     * Number of reverse-proxy hops to trust for the client IP. Default: 1 on Railway (RAILWAY_ENVIRONMENT set),
+     * otherwise 'false' so clients cannot spoof their IP with X-Forwarded-For. Set it to 1 behind your own proxy.
+     */
+    TRUST_PROXY: z.string().default('false'),
     COOKIE_SECURE: z.string().default('true').transform((v) => v !== 'false'),
 
     ENTRA_TENANT_ID: z.string().optional(),
@@ -58,6 +69,8 @@ const schema = z
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(480).default(30),
     SESSION_MAX_HOURS: z.coerce.number().int().min(1).max(24).default(8),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+    /** Audit log entries older than this are deleted by housekeeping (at most once a day). */
+    AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(1).max(240).default(24),
   })
   .superRefine((c, ctx) => {
     if (c.LOCAL_MODE) {
@@ -99,10 +112,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       APP_URL: `http://localhost:${port}`,
       COOKIE_SECURE: 'false',
       TRUST_PROXY: 'false',
+      LOCAL_REQUIRE_TOKEN: existsSync('/.dockerenv') ? 'true' : 'false',
       ...env,
     };
     if (!env.MASTER_KEY) env = { ...env, MASTER_KEY: localMasterKey(env.KEY_FILE || defaultKeyFile()) };
   }
+  if (!env.TRUST_PROXY) env = { ...env, TRUST_PROXY: env.RAILWAY_ENVIRONMENT ? '1' : 'false' };
   const r = schema.safeParse(env);
   if (!r.success) {
     const msg = r.error.issues.map((i) => `  ${i.path.join('.') || 'config'}: ${i.message}`).join('\n');

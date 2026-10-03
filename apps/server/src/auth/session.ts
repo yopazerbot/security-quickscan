@@ -135,7 +135,7 @@ export async function assertCustomerAccess(ctx: AppCtx, req: FastifyRequest, cus
   const n: AccessNeed = need === true ? 'edit' : need === false ? 'view' : need;
   const access = await customerAccess(ctx, u, customerId);
   if (!access) throw new HttpError(404, 'Not found');
-  if (!allows(access, n)) throw forbidden(u.role === 'viewer' ? 'Read-only account' : n === 'manage' ? 'Only the owner can do this' : 'You have view-only access');
+  if (!allows(access, n)) throw forbidden(u.role === 'viewer' ? 'Viewer accounts are read-only' : n === 'manage' ? 'Only the owner can do this' : 'You have view-only access');
   return u;
 }
 

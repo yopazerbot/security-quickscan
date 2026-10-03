@@ -16,11 +16,13 @@ async function main() {
 
   await runMigrations(db);
   log.info({ mode }, 'database migrated');
+  // The previous key stays readable during a master key rotation.
+  const envelope = new Envelope([config.MASTER_KEY, config.MASTER_KEY_PREVIOUS]);
   if (config.DEMO_MODE && mode !== 'worker') {
-    await seedDemo({ config, db, envelope: new Envelope(config.MASTER_KEY), log }).catch((e) => log.error({ err: e }, 'demo seeding failed'));
+    await seedDemo({ config, db, envelope, log }).catch((e) => log.error({ err: e }, 'demo seeding failed'));
   }
 
-  let stopWorker: (() => Promise<void>) | null = null;
+  let stopWorker: ((deadlineMs?: number) => Promise<void>) | null = null;
   let close: (() => Promise<void>) | null = null;
 
   if (mode === 'api' || mode === 'all') {
@@ -31,14 +33,23 @@ async function main() {
     close = () => app.close();
     if (mode === 'all') stopWorker = startWorker(ctx);
   } else {
-    stopWorker = startWorker({ config, db, envelope: new Envelope(config.MASTER_KEY), log });
+    stopWorker = startWorker({ config, db, envelope, log });
   }
 
+  let shuttingDown = false;
   const shutdown = async (sig: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info({ sig }, 'shutting down');
-    await close?.();
-    await stopWorker?.();
-    await pool.end();
+    setTimeout(() => process.exit(1), 40_000).unref();
+    try {
+      // Worker first: running scans get up to 20 s, then go back to the queue for the next instance.
+      await stopWorker?.(20_000);
+      await close?.();
+      await pool.end();
+    } catch (e) {
+      log.error({ err: e }, 'shutdown failed');
+    }
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

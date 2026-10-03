@@ -1,5 +1,5 @@
 import type { ScannerEnv } from '../types.js';
-import { CheckError, fetchJson, MAX_PAGES, Memo, NotApplicable } from '../util.js';
+import { CheckError, fetchJson, listed, type Listed, MAX_PAGES, Memo, NotApplicable } from '../util.js';
 
 export interface MsCtx {
   tenantId: string;
@@ -67,19 +67,24 @@ export async function graph<T = any>(ctx: MsCtx, path: string, beta = false): Pr
   return r.data;
 }
 
-export async function graphAll<T = any>(ctx: MsCtx, path: string, beta = false, max = 20000): Promise<T[]> {
+/** Follow nextLink pages; the result is flagged `truncated` when a cap or a looping link stopped it early. */
+async function pageAll<T>(first: string, max: number, fetchPage: (url: string) => Promise<any>, nextOf: (page: any) => string | undefined): Promise<Listed<T>> {
   const out: T[] = [];
-  let next: string | undefined = path;
+  let next: string | undefined = first;
   const seen = new Set<string>();
-  for (let pages = 0; next && out.length < max && pages < MAX_PAGES; pages++) {
+  for (let pages = 0; next; pages++) {
+    if (out.length >= max || pages >= MAX_PAGES || seen.has(next)) return listed(out, true);
     seen.add(next);
-    const page: any = await graph(ctx, next, beta);
-    const items = page.value ?? [];
+    const page: any = await fetchPage(next);
+    const items = page?.value ?? [];
     out.push(...items);
-    next = items.length ? page['@odata.nextLink'] : undefined;
-    if (next && seen.has(next)) break;
+    next = items.length ? nextOf(page) : undefined;
   }
-  return out;
+  return listed(out, false);
+}
+
+export function graphAll<T = any>(ctx: MsCtx, path: string, beta = false, max = 20000): Promise<Listed<T>> {
+  return pageAll<T>(path, max, (u) => graph(ctx, u, beta), (p) => p['@odata.nextLink']);
 }
 
 export async function arm<T = any>(ctx: MsCtx, path: string): Promise<T> {
@@ -89,17 +94,6 @@ export async function arm<T = any>(ctx: MsCtx, path: string): Promise<T> {
   return r.data;
 }
 
-export async function armAll<T = any>(ctx: MsCtx, path: string, max = 20000): Promise<T[]> {
-  const out: T[] = [];
-  let next: string | undefined = path;
-  const seen = new Set<string>();
-  for (let pages = 0; next && out.length < max && pages < MAX_PAGES; pages++) {
-    seen.add(next);
-    const page: any = await arm(ctx, next);
-    const items = page.value ?? [];
-    out.push(...items);
-    next = items.length ? page.nextLink : undefined;
-    if (next && seen.has(next)) break;
-  }
-  return out;
+export function armAll<T = any>(ctx: MsCtx, path: string, max = 20000): Promise<Listed<T>> {
+  return pageAll<T>(path, max, (u) => arm(ctx, u), (p) => p.nextLink);
 }

@@ -33,6 +33,52 @@ export function failIfAny(resources: ResourceRef[], failMsg: (n: number) => stri
   return level === 'fail' ? fail(failMsg(resources.length), resources) : warn(failMsg(resources.length), resources);
 }
 
+/** A list that may be incomplete because pagination stopped at a cap or a looping link. */
+export type Listed<T> = T[] & { truncated: boolean };
+export const listed = <T>(items: T[], truncated: boolean): Listed<T> => Object.assign(items, { truncated });
+
+export interface Coverage {
+  /** Units (regions, subscriptions, repositories, buckets, ...) that were actually evaluated. */
+  evaluated: number;
+  /** Units in scope. */
+  total: number;
+  /** Labels of what could not be evaluated (shown in the summary and kept in the evidence). */
+  skipped: string[];
+  /** Plural noun for the units, e.g. 'regions'. */
+  unit: string;
+  /** Extra guidance appended when nothing could be evaluated. */
+  hint?: string;
+}
+
+const listLabels = (labels: string[], max = 8) => labels.slice(0, max).join(', ') + (labels.length > max ? ` and ${labels.length - max} more` : '');
+
+/**
+ * Downgrade an outcome when only part of the data could be evaluated, so a weaker token never scores better:
+ * nothing evaluated gives error, partial coverage turns pass and n/a into warn and adds a note to any other outcome.
+ */
+export function applyCoverage(o: CheckOutcome, c: Coverage): CheckOutcome {
+  const missing = Math.max(c.total - c.evaluated, c.skipped.length);
+  if (missing <= 0) return o;
+  const total = Math.max(c.total, c.evaluated + missing);
+  const list = c.skipped.length ? `: ${listLabels(c.skipped)}` : '';
+  const evidence = { ...o.evidence, coverage: { evaluated: c.evaluated, total, unit: c.unit, skipped: c.skipped.slice(0, 200) } };
+  if (c.evaluated <= 0) {
+    return { status: 'error', summary: `None of the ${total} ${c.unit} could be evaluated${list}.${c.hint ? ` ${c.hint}` : ''}`, evidence };
+  }
+  const summary = `${o.summary} ${missing} of ${total} ${c.unit} could not be evaluated${list}.`;
+  if (o.status === 'pass' || o.status === 'na') return { status: 'warn', summary, resources: o.resources, evidence };
+  return { ...o, summary, evidence };
+}
+
+/** Downgrade pass and n/a to warn when a list was cut off (pagination cap or looping link). */
+export function applyTruncation(o: CheckOutcome, truncated: boolean, evaluated: number, unit: string, total?: number): CheckOutcome {
+  if (!truncated) return o;
+  const note = `Only the first ${evaluated}${total && total > evaluated ? ` of ${total}` : ''} ${unit} were evaluated.`;
+  const evidence = { ...o.evidence, truncated: { evaluated, total: total ?? null, unit } };
+  if (o.status === 'pass' || o.status === 'na') return { status: 'warn', summary: `${o.summary} ${note}`, resources: o.resources, evidence };
+  return { ...o, summary: `${o.summary} ${note}`, evidence };
+}
+
 export class Memo {
   private store = new Map<string, Promise<unknown>>();
   get<T>(key: string, fn: () => Promise<T>): Promise<T> {

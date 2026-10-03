@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { localAccessToken } from '../src/auth/routes.js';
 import { loadConfig } from '../src/config.js';
 import { createDb, runMigrations } from '../src/db/index.js';
 
@@ -34,6 +35,13 @@ describe('local mode configuration', () => {
     expect(c.LOCAL_MODE).toBe(true);
   });
 
+  it('trusts no proxy by default, except on Railway', () => {
+    const base = { DATABASE_URL: 'postgres://x/y', APP_URL: 'https://scan.example.com', MASTER_KEY: Buffer.alloc(32).toString('base64'), BREAKGLASS_ENABLED: 'true', BREAKGLASS_USERNAME: 'a', BREAKGLASS_PASSWORD_HASH: 'b', BREAKGLASS_TOTP_SECRET: 'c' };
+    expect(loadConfig(base as any).TRUST_PROXY).toBe('false');
+    expect(loadConfig({ ...base, RAILWAY_ENVIRONMENT: 'production' } as any).TRUST_PROXY).toBe('1');
+    expect(loadConfig({ ...base, RAILWAY_ENVIRONMENT: 'production', TRUST_PROXY: '2' } as any).TRUST_PROXY).toBe('2');
+  });
+
   it('refuses to run without login on a non-localhost address', () => {
     expect(() => loadConfig({ LOCAL_MODE: 'true', DATABASE_URL: 'postgres://x/y', APP_URL: 'https://scan.example.com', MASTER_KEY: Buffer.alloc(32).toString('base64') } as any)).toThrow(/localhost/);
   });
@@ -42,7 +50,7 @@ describe('local mode configuration', () => {
 const url = process.env.TEST_DATABASE_URL;
 (url ? describe : describe.skip)('local mode API', () => {
   const dir = mkdtempSync(join(tmpdir(), 'qs-'));
-  const config = loadConfig({ LOCAL_MODE: 'true', DATABASE_URL: url ?? 'postgres://skipped/none', KEY_FILE: join(dir, 'k'), LOG_LEVEL: 'fatal' } as any);
+  const config = loadConfig({ LOCAL_MODE: 'true', LOCAL_REQUIRE_TOKEN: 'false', DATABASE_URL: url ?? 'postgres://skipped/none', KEY_FILE: join(dir, 'k'), LOG_LEVEL: 'fatal' } as any);
   const { db, pool } = createDb(config);
   let app: Awaited<ReturnType<typeof buildApp>>['app'];
 
@@ -78,5 +86,39 @@ const url = process.env.TEST_DATABASE_URL;
     expect(r.statusCode).toBe(421);
     const cross = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: { host: 'localhost:8080', origin: 'https://evil.example' } });
     expect(cross.statusCode).toBe(403);
+  });
+});
+
+(url ? describe : describe.skip)('local mode in a container (startup token)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qs-'));
+  const config = loadConfig({ LOCAL_MODE: 'true', LOCAL_REQUIRE_TOKEN: 'true', DATABASE_URL: url ?? 'postgres://skipped/none', KEY_FILE: join(dir, 'k'), LOG_LEVEL: 'fatal' } as any);
+  const { db, pool } = createDb(config);
+  let built: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    await runMigrations(db);
+    built = await buildApp(config, db);
+  });
+  afterAll(async () => {
+    await built.app.close();
+    await pool.end();
+  });
+
+  it('creates the local session only with the startup token, then keeps the session', async () => {
+    const { app, ctx } = built;
+    const host = { host: 'localhost:8080' };
+    const none = await app.inject({ method: 'GET', url: '/api/auth/me', headers: host });
+    expect(none.statusCode).toBe(401);
+    expect(none.headers['set-cookie']).toBeUndefined();
+    expect((await app.inject({ method: 'GET', url: '/api/auth/me?local_token=wrong', headers: host })).statusCode).toBe(401);
+    const token = localAccessToken(ctx);
+    const viaHeader = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { ...host, 'x-local-token': token } });
+    expect(viaHeader.statusCode).toBe(200);
+    const ok = await app.inject({ method: 'GET', url: `/api/auth/me?local_token=${token}`, headers: host });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().user.role).toBe('admin');
+    const cookie = String(ok.headers['set-cookie']).split(';')[0];
+    const again = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { ...host, cookie } });
+    expect(again.statusCode).toBe(200);
   });
 });

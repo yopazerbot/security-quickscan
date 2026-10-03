@@ -74,9 +74,25 @@ export const userInputSchema = z.object({
   active: z.boolean().default(true),
 });
 
+/**
+ * PATCH /api/users/:id. Every field is optional and has no default, so omitted fields stay unchanged.
+ * newOwnerId: required when deactivating or demoting to viewer a user who owns organisations.
+ */
+export const userUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    role: z.enum(ROLES),
+    active: z.boolean(),
+    newOwnerId: z.uuid(),
+  })
+  .partial();
+export type UserUpdate = z.infer<typeof userUpdateSchema>;
+
 export const providerSchema = z.enum(PROVIDERS);
 
 export const triageSchema = z.object({
+  /** systemKey() of the system the decision applies to. */
+  systemKey: z.string().min(1).max(300),
   status: z.enum(['open', 'accepted', 'false_positive']),
   note: z.string().max(5000).default(''),
 });

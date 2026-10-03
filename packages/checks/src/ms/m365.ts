@@ -3,8 +3,33 @@ import { Resolver } from 'node:dns/promises';
 const dns = new Resolver({ timeout: 3000, tries: 2 });
 import type { CheckOutcome, ResourceRef } from '@qs/shared';
 import type { ProviderModule } from '../types.js';
-import { fail, failIfAny, mapLimit, na, pass, warn } from '../util.js';
+import { applyCoverage, applyTruncation, fail, failIfAny, mapLimit, na, NotApplicable, pass, warn } from '../util.js';
 import { graph, graphAll, msAppCredentials, msToken, type MsCtx } from './client.js';
+
+const MAX_MAIL_DOMAINS = 50;
+const DMARC_POLICIES = new Set(['none', 'quarantine', 'reject']);
+/** DNS answers that mean "no such record"; anything else (timeouts, SERVFAIL, refused) means the record could not be checked. */
+const DNS_MISSING = new Set(['ENODATA', 'ENOTFOUND']);
+
+async function txtRecords(name: string): Promise<{ records: string[] } | { error: string }> {
+  try {
+    return { records: (await dns.resolveTxt(name)).map((r) => r.join('')) };
+  } catch (e: any) {
+    if (DNS_MISSING.has(e?.code)) return { records: [] };
+    return { error: String(e?.code ?? 'DNS error') };
+  }
+}
+
+/** SPF must end in -all or ~all (or delegate with redirect=); +all, a bare "all" or ?all let anyone send. */
+function spfProblem(spf: string): { text: string; severe: boolean } | null {
+  const terms = spf.trim().toLowerCase().split(/\s+/).slice(1);
+  const all = terms.find((t) => /^[-~?+]?all$/.test(t));
+  if (all === '-all' || all === '~all') return null;
+  if (all === 'all' || all === '+all') return { text: `SPF "${all}" allows any sender`, severe: true };
+  if (all === '?all') return { text: 'SPF ?all (neutral) does not reject other senders', severe: false };
+  if (terms.some((t) => t.startsWith('redirect='))) return null;
+  return { text: 'SPF without -all or ~all', severe: false };
+}
 
 const GLOBAL_ADMIN = '62e90394-69f5-4237-9190-012177145e10';
 const PRIVILEGED_ROLES = [
@@ -56,6 +81,21 @@ const authzPolicy = (ctx: MsCtx) =>
     return Array.isArray(p.value) ? p.value[0] : p;
   });
 
+/** Conditional Access policies, or null when the tenant has no Conditional Access licence. */
+async function caPoliciesIfLicensed(ctx: MsCtx): Promise<CaPolicy[] | null> {
+  try {
+    return await caPolicies(ctx);
+  } catch (e) {
+    if (e instanceof NotApplicable) return null;
+    throw e;
+  }
+}
+
+const SD_HINT = 'Turn on Security Defaults (Entra admin center > Overview > Properties > Manage security defaults), or license Entra ID P1 and enforce the equivalent Conditional Access policies.';
+/** Security Defaults off and no Conditional Access licence: nothing enforces the baseline. */
+const unprotected = (what: string) =>
+  fail(`Security Defaults are off and Conditional Access is not licensed: ${what}. ${SD_HINT}`, [], { securityDefaults: false, conditionalAccess: 'not licensed' });
+
 const grants = (p: CaPolicy): string[] => p.grantControls?.builtInControls ?? [];
 const requiresMfa = (p: CaPolicy) => grants(p).includes('mfa') || Boolean(p.grantControls?.authenticationStrength);
 const blocks = (p: CaPolicy) => grants(p).includes('block');
@@ -83,7 +123,9 @@ async function roleMembers(ctx: MsCtx, templateId: string): Promise<any[]> {
 const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
   async 'm365.mfa-all-users'(ctx) {
     if (await securityDefaults(ctx)) return pass('Security Defaults are enabled (MFA required for all users).');
-    const { enabled, reportOnly } = caVerdict(await caPolicies(ctx), (p) => requiresMfa(p) && allUsers(p) && allApps(p));
+    const policies = await caPoliciesIfLicensed(ctx);
+    if (!policies) return unprotected('no MFA is enforced for users');
+    const { enabled, reportOnly } = caVerdict(policies, (p) => requiresMfa(p) && allUsers(p) && allApps(p));
     if (enabled.length) return pass(`MFA enforced for all users by: ${enabled.map((p) => p.displayName).join(', ')}.`, { resources: enabled.map(ref) });
     if (reportOnly.length) return warn('An all-users MFA policy exists but is in report-only mode.', reportOnly.map(ref));
     return fail('No Security Defaults and no enabled Conditional Access policy requiring MFA for all users and all apps.');
@@ -91,7 +133,9 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
 
   async 'm365.legacy-auth'(ctx) {
     if (await securityDefaults(ctx)) return pass('Security Defaults block legacy authentication.');
-    const { enabled, reportOnly } = caVerdict(await caPolicies(ctx), (p) => {
+    const policies = await caPoliciesIfLicensed(ctx);
+    if (!policies) return unprotected('legacy authentication is not blocked');
+    const { enabled, reportOnly } = caVerdict(policies, (p) => {
       const types: string[] = p.conditions?.clientAppTypes ?? [];
       return blocks(p) && allUsers(p) && types.includes('exchangeActiveSync') && types.includes('other');
     });
@@ -102,7 +146,9 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
 
   async 'm365.admin-mfa'(ctx) {
     if (await securityDefaults(ctx)) return warn('Security Defaults require MFA for admins, but not phishing-resistant MFA.');
-    const policies = (await caPolicies(ctx)).filter((p) => p.state === 'enabled' && allApps(p));
+    const all = await caPoliciesIfLicensed(ctx);
+    if (!all) return unprotected('MFA is not enforced for administrators');
+    const policies = all.filter((p) => p.state === 'enabled' && allApps(p));
     const coversAdmins = (p: CaPolicy) => allUsers(p) || (p.conditions?.users?.includeRoles ?? []).includes(GLOBAL_ADMIN);
     const strong = policies.filter((p) => coversAdmins(p) && p.grantControls?.authenticationStrength?.id === PHISHING_RESISTANT_STRENGTH);
     if (strong.length) return pass('Administrators must use phishing-resistant MFA.', { resources: strong.map(ref) });
@@ -132,23 +178,26 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
   async 'm365.mfa-registration'(ctx) {
     const rows = await graphAll<any>(ctx, '/reports/authenticationMethods/userRegistrationDetails?$top=999');
     const members = rows.filter((r) => r.userType !== 'guest');
-    if (!members.length) return na('No users found.');
+    const cut = (o: CheckOutcome) => applyTruncation(o, rows.truncated, rows.length, 'users');
+    if (!members.length) return cut(na('No users found.'));
     const missing = members.filter((r) => !r.isMfaRegistered);
     const pct = Math.round(((members.length - missing.length) / members.length) * 100);
     const res = missing.map((r) => ({ id: r.id, name: r.userPrincipalName }));
     const ev = { registered: members.length - missing.length, total: members.length, percentage: pct };
-    if (pct >= 95) return pass(`${pct}% of ${members.length} users are registered for MFA.`, { resources: res, evidence: ev });
-    if (pct >= 80) return warn(`${pct}% of users registered for MFA (${missing.length} missing).`, res, ev);
-    return fail(`Only ${pct}% of users registered for MFA (${missing.length} missing).`, res, ev);
+    if (pct >= 95) return cut(pass(`${pct}% of ${members.length} users are registered for MFA.`, { resources: res, evidence: ev }));
+    if (pct >= 80) return cut(warn(`${pct}% of users registered for MFA (${missing.length} missing).`, res, ev));
+    return cut(fail(`Only ${pct}% of users registered for MFA (${missing.length} missing).`, res, ev));
   },
 
   async 'm365.user-consent'(ctx) {
     const p = await authzPolicy(ctx);
     const assigned: string[] = p.defaultUserRolePermissions?.permissionGrantPoliciesAssigned ?? [];
-    const legacy = assigned.find((a) => a.endsWith('microsoft-user-default-legacy'));
-    if (legacy) return fail('Users can consent to any application requesting any delegated permission.', [], { assigned });
-    if (assigned.some((a) => a.includes('microsoft-user-default-low'))) return pass('User consent is limited to verified publishers and low-impact permissions.', { evidence: { assigned } });
-    return pass('User consent to applications is disabled.', { evidence: { assigned } });
+    const self = assigned.filter((a) => a.startsWith('ManagePermissionGrantsForSelf.'));
+    if (self.some((a) => a.endsWith('microsoft-user-default-legacy'))) return fail('Users can consent to any application requesting any delegated permission.', [], { assigned });
+    if (!self.length) return pass('User consent to applications is disabled.', { evidence: { assigned } });
+    const other = self.filter((a) => a !== 'ManagePermissionGrantsForSelf.microsoft-user-default-low');
+    if (!other.length) return pass('User consent is limited to verified publishers and low-impact permissions.', { evidence: { assigned } });
+    return warn(`User consent is governed by custom or unrecognised permission grant policies: ${other.join(', ')}. Review what they allow.`, [], { assigned });
   },
 
   async 'm365.user-app-registration'(ctx) {
@@ -178,11 +227,16 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
       const last = u.signInActivity?.lastSuccessfulSignInDateTime ?? u.signInActivity?.lastSignInDateTime;
       return !last || Date.parse(last) < cutoff;
     });
-    return failIfAny(
-      stale.map((u) => ({ id: u.id, name: u.userPrincipalName, detail: `${u.userType}, last sign-in ${(u.signInActivity?.lastSignInDateTime ?? 'never').slice(0, 10)}` })),
-      (n) => `${n} enabled account(s) without sign-in for 90+ days.`,
-      'No stale enabled accounts.',
-      stale.length > 10 ? 'fail' : 'warn',
+    return applyTruncation(
+      failIfAny(
+        stale.map((u) => ({ id: u.id, name: u.userPrincipalName, detail: `${u.userType}, last sign-in ${(u.signInActivity?.lastSignInDateTime ?? 'never').slice(0, 10)}` })),
+        (n) => `${n} enabled account(s) without sign-in for 90+ days.`,
+        'No stale enabled accounts.',
+        stale.length > 10 ? 'fail' : 'warn',
+      ),
+      users.truncated,
+      users.length,
+      'accounts',
     );
   },
 
@@ -201,7 +255,12 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
       byApp.set(a.principalId, e);
     }
     const res = [...byApp.entries()].map(([id, e]) => ({ id, name: e.name, detail: [...e.perms].join(', ') }));
-    return failIfAny(res, (n) => `${n} application(s) hold high-impact Microsoft Graph application permissions.`, 'No applications hold high-impact Graph application permissions.', res.length > 3 ? 'fail' : 'warn');
+    return applyTruncation(
+      failIfAny(res, (n) => `${n} application(s) hold high-impact Microsoft Graph application permissions.`, 'No applications hold high-impact Graph application permissions.', res.length > 3 ? 'fail' : 'warn'),
+      assignments.truncated,
+      assignments.length,
+      'permission assignments',
+    );
   },
 
   async 'm365.pim'(ctx) {
@@ -234,26 +293,45 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
   },
 
   async 'm365.email-auth'(ctx) {
-    const domains = (await graphAll<any>(ctx, '/domains')).filter(
+    const all = (await graphAll<any>(ctx, '/domains')).filter(
       (d) => d.isVerified && !d.id.endsWith('.onmicrosoft.com') && (d.supportedServices ?? []).includes('Email'),
     );
-    domains.splice(50); // bounded DNS work
+    const domains = all.slice(0, MAX_MAIL_DOMAINS); // bounded DNS work
     if (!domains.length) return na('No verified custom mail domains.');
     const issues: ResourceRef[] = [];
+    const unchecked: string[] = [];
+    let severe = false;
     await mapLimit(domains, 5, async (d: any) => {
-      const txt = async (n: string) => (await dns.resolveTxt(n).catch(() => [] as string[][])).map((r) => r.join(''));
-      const spf = (await txt(d.id)).find((t) => t.toLowerCase().startsWith('v=spf1'));
-      const dmarc = (await txt(`_dmarc.${d.id}`)).find((t) => t.toLowerCase().startsWith('v=dmarc1'));
+      const [spfTxt, dmarcTxt] = await Promise.all([txtRecords(d.id), txtRecords(`_dmarc.${d.id}`)]);
+      if ('error' in spfTxt || 'error' in dmarcTxt) {
+        unchecked.push(`${d.id} (DNS lookup failed: ${'error' in spfTxt ? spfTxt.error : (dmarcTxt as { error: string }).error})`);
+        return;
+      }
+      const spf = spfTxt.records.find((t) => t.toLowerCase().startsWith('v=spf1'));
+      const dmarc = dmarcTxt.records.find((t) => t.toLowerCase().startsWith('v=dmarc1'));
       const problems: string[] = [];
-      if (!spf) problems.push('no SPF');
-      else if (/[+?]all\b/.test(spf)) problems.push('SPF too permissive');
-      const pol = dmarc?.match(/\bp=(\w+)/i)?.[1]?.toLowerCase();
-      if (!dmarc) problems.push('no DMARC');
-      else if (pol === 'none') problems.push('DMARC p=none');
+      if (!spf) {
+        problems.push('no SPF');
+        severe = true;
+      } else {
+        const p = spfProblem(spf);
+        if (p) problems.push(p.text);
+        if (p?.severe) severe = true;
+      }
+      if (!dmarc) {
+        problems.push('no DMARC');
+        severe = true;
+      } else {
+        const pol = dmarc.match(/(?:^|;)\s*p\s*=\s*([a-z]+)/i)?.[1]?.toLowerCase();
+        if (!pol || !DMARC_POLICIES.has(pol)) problems.push('DMARC without a valid p= tag (treated as p=none)');
+        else if (pol === 'none') problems.push('DMARC p=none');
+      }
       if (problems.length) issues.push({ id: d.id, name: d.id, detail: problems.join(', ') });
     });
-    const severe = issues.some((i) => /no (SPF|DMARC)/.test(i.detail ?? ''));
-    return failIfAny(issues, (n) => `${n} of ${domains.length} mail domain(s) lack SPF/DMARC enforcement.`, `All ${domains.length} mail domains have SPF and enforcing DMARC.`, severe ? 'fail' : 'warn');
+    const evaluated = domains.length - unchecked.length;
+    const outcome = failIfAny(issues, (n) => `${n} of ${evaluated} mail domain(s) lack SPF/DMARC enforcement.`, `All ${evaluated} mail domains have SPF and enforcing DMARC.`, severe ? 'fail' : 'warn');
+    const covered = applyCoverage(outcome, { evaluated, total: domains.length, skipped: unchecked, unit: 'mail domains', hint: 'DNS lookups failed; run the scan again later.' });
+    return applyTruncation(covered, all.length > domains.length, domains.length, 'mail domains', all.length);
   },
 
   async 'm365.secure-score'(ctx) {

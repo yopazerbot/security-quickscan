@@ -1,7 +1,7 @@
 import type { CheckOutcome, ResourceRef } from '@qs/shared';
 import type { ProviderModule } from '../types.js';
-import { CheckError, fail, failIfAny, mapLimit, na, pass, warn } from '../util.js';
-import { armAll, msAppCredentials, msToken, type MsCtx } from './client.js';
+import { applyCoverage, applyTruncation, CheckError, fail, failIfAny, mapLimit, na, pass, warn } from '../util.js';
+import { armAll, GraphError, msAppCredentials, msToken, type MsCtx } from './client.js';
 
 interface Sub {
   subscriptionId: string;
@@ -13,21 +13,52 @@ const KEY_PLANS = ['VirtualMachines', 'StorageAccounts', 'KeyVaults', 'Arm', 'Sq
 const MGMT_PORTS = [22, 3389];
 const ANY_SOURCE = new Set(['*', 'internet', '0.0.0.0/0', 'any', '::/0']);
 
-const subs = (ctx: MsCtx) =>
-  ctx.memo.get('subs', async () => {
-    const all = (await armAll<any>(ctx, '/subscriptions?api-version=2022-12-01')).filter((s) => s.state === 'Enabled');
-    const wanted = ctx.subscriptionIds.map((s) => s.toLowerCase());
-    return (wanted.length ? all.filter((s) => wanted.includes(s.subscriptionId.toLowerCase())) : all) as Sub[];
-  });
+/** Subscription states the scanner still evaluates (Warned and PastDue subscriptions keep running resources). */
+const LIVE_STATES = new Set(['Enabled', 'Warned', 'PastDue']);
+const NO_SUBS = 'No subscriptions visible to the scanner identity. Assign Reader on the subscriptions in scope.';
 
-/** Collect resources of a type across subscriptions. */
-async function listAcross(ctx: MsCtx, provider: string, apiVersion: string) {
-  return ctx.memo.get(`list:${provider}`, async () => {
-    const out = await mapLimit(await subs(ctx), 4, async (s) =>
-      (await armAll<any>(ctx, `/subscriptions/${s.subscriptionId}/providers/${provider}?api-version=${apiVersion}`)).map((r) => ({ sub: s, r })),
-    );
-    return out.flat();
+/** Subscriptions in scope plus configured subscription IDs the scanner cannot see (or that are disabled). */
+const subScope = (ctx: MsCtx) =>
+  ctx.memo.get('subs', async () => {
+    const all = (await armAll<any>(ctx, '/subscriptions?api-version=2022-12-01')).filter((s) => LIVE_STATES.has(s.state));
+    const wanted = ctx.subscriptionIds.map((s) => s.toLowerCase());
+    const visible = (wanted.length ? all.filter((s) => wanted.includes(s.subscriptionId.toLowerCase())) : all) as Sub[];
+    const seen = new Set(visible.map((s) => s.subscriptionId.toLowerCase()));
+    return { visible, invisible: wanted.filter((w) => !seen.has(w)) };
   });
+const subs = async (ctx: MsCtx) => (await subScope(ctx)).visible;
+
+/** Per check run: subscriptions that were denied and lists that were cut off. */
+interface AzCtx extends MsCtx {
+  skippedSubs: Set<string>;
+  truncatedLists: Set<string>;
+}
+
+const deniedSub = (e: unknown) => e instanceof GraphError && (e.status === 403 || e.status === 401 || /AuthorizationFailed|InvalidAuthenticationToken/i.test(e.code));
+
+/** Collect resources of a type across subscriptions; subscriptions that deny the listing are reported as skipped. */
+async function listAcross(ctx: AzCtx, provider: string, apiVersion: string) {
+  const res = await ctx.memo.get(`list:${provider}`, async () => {
+    const ss = await subs(ctx);
+    if (!ss.length) throw new CheckError(NO_SUBS);
+    const skipped: string[] = [];
+    let truncated = false;
+    const out = await mapLimit(ss, 4, async (s) => {
+      try {
+        const items = await armAll<any>(ctx, `/subscriptions/${s.subscriptionId}/providers/${provider}?api-version=${apiVersion}`);
+        truncated ||= items.truncated;
+        return items.map((r) => ({ sub: s, r }));
+      } catch (e) {
+        if (!deniedSub(e)) throw e;
+        skipped.push(s.displayName || s.subscriptionId);
+        return [];
+      }
+    });
+    return { items: out.flat(), skipped, truncated };
+  });
+  for (const s of res.skipped) ctx.skippedSubs.add(s);
+  if (res.truncated) ctx.truncatedLists.add(provider);
+  return res.items;
 }
 
 function portCovered(range: string, port: number) {
@@ -36,15 +67,24 @@ function portCovered(range: string, port: number) {
   return b === undefined ? a === port : a <= port && port <= b;
 }
 
-async function perSub<T>(ctx: MsCtx, fn: (s: Sub) => Promise<T>) {
+async function perSub<T>(ctx: AzCtx, fn: (s: Sub) => Promise<T>) {
   const ss = await subs(ctx);
-  if (!ss.length) throw new CheckError('No subscriptions visible to the scanner identity. Assign Reader on the subscriptions in scope.');
-  return mapLimit(ss, 4, async (s) => ({ sub: s, value: await fn(s) }));
+  if (!ss.length) throw new CheckError(NO_SUBS);
+  const out = await mapLimit(ss, 4, async (s): Promise<{ sub: Sub; value: T } | null> => {
+    try {
+      return { sub: s, value: await fn(s) };
+    } catch (e) {
+      if (!deniedSub(e)) throw e;
+      ctx.skippedSubs.add(s.displayName || s.subscriptionId);
+      return null;
+    }
+  });
+  return out.filter((x): x is { sub: Sub; value: T } => x !== null);
 }
 
 const subRef = (s: Sub, detail?: string): ResourceRef => ({ id: s.subscriptionId, name: s.displayName, detail });
 
-const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
+const rawChecks: Record<string, (ctx: AzCtx) => Promise<CheckOutcome>> = {
   async 'azure.defender-plans'(ctx) {
     const res = await perSub(ctx, async (s) => {
       const p = await armAll<any>(ctx, `/subscriptions/${s.subscriptionId}/providers/Microsoft.Security/pricings?api-version=2024-01-01`);
@@ -59,7 +99,10 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
 
   async 'azure.security-contact'(ctx) {
     const res = await perSub(ctx, async (s) => {
-      const c = await armAll<any>(ctx, `/subscriptions/${s.subscriptionId}/providers/Microsoft.Security/securityContacts?api-version=2020-01-01-preview`).catch(() => []);
+      const c = await armAll<any>(ctx, `/subscriptions/${s.subscriptionId}/providers/Microsoft.Security/securityContacts?api-version=2020-01-01-preview`).catch((e) => {
+        if (deniedSub(e)) throw e;
+        return [];
+      });
       return c.some((x) => x.properties?.email || x.properties?.emails);
     });
     return failIfAny(res.filter((r) => !r.value).map((r) => subRef(r.sub)), (n) => `${n} subscription(s) without a security contact.`, 'Security contacts are configured.', 'warn');
@@ -131,18 +174,24 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
     if (!servers.length) return na('No Azure SQL servers found.');
     const bad: ResourceRef[] = [];
     let azureServices = 0;
+    const denied: string[] = [];
     await mapLimit(servers, 4, async ({ r }) => {
       if (r.properties?.publicNetworkAccess === 'Disabled') return;
-      const rules = await armAll<any>(ctx, `${r.id}/firewallRules?api-version=2023-08-01`);
+      const rules = await armAll<any>(ctx, `${r.id}/firewallRules?api-version=2023-08-01`).catch((e) => {
+        if (!deniedSub(e)) throw e;
+        denied.push(r.name);
+        return [];
+      });
       for (const fr of rules) {
         const { startIpAddress: s, endIpAddress: e } = fr.properties ?? {};
         if (s === '0.0.0.0' && e === '255.255.255.255') bad.push({ id: r.id, name: r.name, detail: `rule ${fr.name} allows all IPs` });
         else if (s === '0.0.0.0' && e === '0.0.0.0') azureServices++;
       }
     });
-    if (bad.length) return fail(`${bad.length} SQL server firewall rule(s) allow the whole internet.`, bad);
-    if (azureServices) return warn(`${azureServices} server(s) allow access from all Azure services (including other tenants).`);
-    return pass(`None of ${servers.length} SQL servers are open to all IPs.`);
+    const cov = { evaluated: servers.length - denied.length, total: servers.length, skipped: denied, unit: 'SQL servers' };
+    if (bad.length) return applyCoverage(fail(`${bad.length} SQL server firewall rule(s) allow the whole internet.`, bad), cov);
+    if (azureServices) return applyCoverage(warn(`${azureServices} server(s) allow access from all Azure services (including other tenants).`), cov);
+    return applyCoverage(pass(`None of ${servers.length - denied.length} SQL servers are open to all IPs.`), cov);
   },
 
   async 'azure.subscription-owners'(ctx) {
@@ -159,6 +208,28 @@ const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = {
   },
 };
 
+/** Every Azure check reports subscriptions it could not evaluate (configured but invisible, or denied) and cut-off lists. */
+const checks: Record<string, (ctx: MsCtx) => Promise<CheckOutcome>> = Object.fromEntries(
+  Object.entries(rawChecks).map(([id, fn]) => [
+    id,
+    async (base: MsCtx) => {
+      const ctx: AzCtx = { ...base, skippedSubs: new Set(), truncatedLists: new Set() };
+      const outcome = await fn(ctx);
+      const { visible, invisible } = await subScope(ctx);
+      const skipped = [...invisible.map((id) => `${id} (not visible or disabled)`), ...[...ctx.skippedSubs].map((n) => `${n} (access denied)`)];
+      let o = applyCoverage(outcome, {
+        evaluated: visible.length - ctx.skippedSubs.size,
+        total: visible.length + invisible.length,
+        skipped,
+        unit: 'subscriptions',
+        hint: 'Assign Reader and Security Reader on the subscriptions in scope.',
+      });
+      if (ctx.truncatedLists.size) o = applyTruncation(o, true, 20000, `items per subscription (${[...ctx.truncatedLists].join(', ')})`);
+      return o;
+    },
+  ]),
+);
+
 export const azureModule: ProviderModule<MsCtx> = {
   async connect(config, secret, env, memo) {
     const app = msAppCredentials(config, secret, env);
@@ -166,10 +237,16 @@ export const azureModule: ProviderModule<MsCtx> = {
     return { tenantId: config.tenantId, token, memo, subscriptionIds: config.subscriptionIds ?? [] };
   },
   async identity(ctx) {
-    const ss = await subs(ctx);
+    const { visible: ss, invisible } = await subScope(ctx);
+    if (invisible.length) {
+      return {
+        ok: false,
+        message: `Configured subscription(s) not visible to the scanner identity or not active: ${invisible.join(', ')}. Assign Reader and Security Reader on them, or remove them from the system.`,
+        details: { invisible, subscriptions: ss.map((s) => ({ id: s.subscriptionId, name: s.displayName })) },
+      };
+    }
     if (!ss.length) return { ok: false, message: 'Authenticated, but no subscriptions are visible. Assign Reader and Security Reader on the subscriptions in scope.' };
     return { ok: true, message: `Connected: ${ss.length} subscription(s) visible (${ss.map((s) => s.displayName).slice(0, 5).join(', ')}${ss.length > 5 ? ', ...' : ''}).`, details: { subscriptions: ss.map((s) => ({ id: s.subscriptionId, name: s.displayName })) } };
   },
   checks,
 };
-

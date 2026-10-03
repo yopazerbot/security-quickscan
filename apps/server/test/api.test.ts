@@ -108,7 +108,7 @@ d('API authorisation', () => {
     const id = (await req('alice', 'POST', '/api/customers', customer('Lookup Corp'))).json().id;
     const r = await req('alice', 'POST', `/api/customers/${id}/shares`, { email: 'nobody@test.local', permission: 'view' });
     expect(r.statusCode).toBe(404);
-    expect(r.json().error).toMatch(/no active account/i);
+    expect(r.json().error).toMatch(/no account with this email/i);
     expect((await req('alice', 'POST', `/api/customers/${id}/shares`, { email: S.alice.email, permission: 'view' })).statusCode).toBe(400);
   });
 

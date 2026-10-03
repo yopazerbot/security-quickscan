@@ -14,10 +14,14 @@ const GCM = { authTagLength: 16 } as const;
 
 export class Envelope {
   private readonly key: Buffer;
+  private readonly keys: Buffer[];
 
-  constructor(masterKeyB64: string) {
-    this.key = Buffer.from(masterKeyB64, 'base64');
-    if (this.key.length !== 32) throw new Error('Master key must be 32 bytes');
+  /** Encrypts with the first key; decrypts with any of them (previous keys stay readable during a rotation). */
+  constructor(masterKeys: string | (string | undefined)[]) {
+    const list = (Array.isArray(masterKeys) ? masterKeys : [masterKeys]).filter((k): k is string => Boolean(k));
+    this.keys = [...new Set(list)].map((k) => Buffer.from(k, 'base64'));
+    if (!this.keys.length || this.keys.some((k) => k.length !== 32)) throw new Error('Master key must be 32 bytes');
+    this.key = this.keys[0];
   }
 
   encrypt(plaintext: Buffer, aad: string): Buffer {
@@ -48,10 +52,20 @@ export class Envelope {
     const tag = take(16);
     const ct = blob.subarray(o);
 
-    const u = createDecipheriv('aes-256-gcm', this.key, dekIv, GCM);
-    u.setAAD(Buffer.from(`dek:${aad}`));
-    u.setAuthTag(dekTag);
-    const dek = Buffer.concat([u.update(wrapped), u.final()]);
+    let dek: Buffer | null = null;
+    let lastErr: unknown;
+    for (const key of this.keys) {
+      try {
+        const u = createDecipheriv('aes-256-gcm', key, dekIv, GCM);
+        u.setAAD(Buffer.from(`dek:${aad}`));
+        u.setAuthTag(dekTag);
+        dek = Buffer.concat([u.update(wrapped), u.final()]);
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!dek) throw lastErr;
 
     const d = createDecipheriv('aes-256-gcm', dek, iv, GCM);
     d.setAAD(Buffer.from(aad));

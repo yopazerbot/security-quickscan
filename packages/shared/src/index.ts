@@ -5,3 +5,5 @@ export * from './scoring.js';
 export * from './catalog/index.js';
 export * from './api.js';
 export * from './aws-policy.js';
+export * from './system-key.js';
+export * from './branding-names.js';

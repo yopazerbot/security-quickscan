@@ -15,7 +15,9 @@ import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { AppCtx } from '../context.js';
 import { checkResults, credentials, customers, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
 import { getBranding } from '../routes/admin.js';
-import { scoreScan } from '../scoring.js';
+import { frozenSummary, scanSystemKey, scoreScan, triageKey, type TriageDecision } from '../scoring.js';
+import { triageLookup } from '../triage.js';
+
 
 export interface ReportItem {
   key: string;
@@ -37,17 +39,60 @@ export interface ReportItem {
   effort: string;
   systemId: string;
   systemLabel: string;
-  triage: { status: 'open' | 'accepted' | 'false_positive'; note: string } | null;
+  /** Stable identity of the system (provider plus account, tenant or org); triage is stored per (checkId, systemKey). */
+  systemKey: string;
+  /** Triage in effect for this report (frozen with the score once the scan finished). */
+  triage: TriageDecision | null;
+  /** Current triage decision for this check on this system; applies to scans that finish from now on. */
+  currentTriage: TriageDecision | null;
   isNew: boolean;
+}
+
+export interface ReportComparison {
+  previousScanId: string;
+  previousDate: Date | null;
+  previousScore: number | null;
+  previousGrade: string | null;
+  /** True when the previous scan covered other systems too or missed some of this scan's systems. Only checks on shared systems are compared; hide the score delta. */
+  differentScope: boolean;
+  /** Number of this scan's systems that were also in the previous scan. */
+  sharedSystems: number;
+  /** Item ids as `${systemKey}|${checkId}`, only for systems present in both scans. */
+  newFindings: string[];
+  resolved: string[];
+  persisting: string[];
 }
 
 export interface ReportModel {
   generatedAt: string;
-  scan: { id: string; name: string; status: string; startedAt: Date | null; finishedAt: Date | null; retentionMode: string };
+  scan: {
+    id: string;
+    name: string;
+    status: string;
+    startedAt: Date | null;
+    finishedAt: Date | null;
+    retentionMode: string;
+    /** Set when retentionMode is 'days'. */
+    retentionDays: number | null;
+    /** True when the score was stored when the scan finished and later triage does not change it. */
+    frozen: boolean;
+  };
+  /** context is the organisation context at scan time. */
   customer: { id: string; name: string; country: string; context: CustomerContext };
   riskProfile: RiskProfile;
   branding: Branding;
-  systems: { id: string; provider: Provider; providerLabel: string; label: string; identity: string | null; credentialsStored: boolean; authMode: string }[];
+  systems: {
+    id: string;
+    provider: Provider;
+    providerLabel: string;
+    label: string;
+    systemKey: string;
+    identity: string | null;
+    credentialsStored: boolean;
+    /** When the stored secret is deleted automatically; null when not stored or kept until deleted manually. */
+    credentialsExpireAt: Date | null;
+    authMode: string;
+  }[];
   summary: ScoreSummary;
   findings: ReportItem[];
   passed: ReportItem[];
@@ -55,45 +100,74 @@ export interface ReportModel {
   excluded: { checkId: string; title: string; provider: Provider; reason: string }[];
   topRisks: ReportItem[];
   quickWins: ReportItem[];
-  comparison: { previousScanId: string; previousDate: Date | null; previousScore: number | null; previousGrade: string | null; newFindings: string[]; resolved: string[]; persisting: string[] } | null;
+  comparison: ReportComparison | null;
 }
 
 const sevRank = (s: Severity) => SEVERITIES.indexOf(s);
+const failing = (status: string) => status === 'fail' || status === 'warn';
 
 export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportModel> {
   const { db } = ctx;
   const scan = (await db.select().from(scans).where(eq(scans.id, scanId)).limit(1))[0];
   const customer = (await db.select().from(customers).where(eq(customers.id, scan.customerId)).limit(1))[0];
   const systems = await db.select().from(scanSystems).where(eq(scanSystems.scanId, scanId));
-  const creds = systems.length ? await db.select({ id: credentials.systemId }).from(credentials).where(inArray(credentials.systemId, systems.map((s) => s.id))) : [];
+  const creds = systems.length
+    ? await db.select({ id: credentials.systemId, expiresAt: credentials.expiresAt }).from(credentials).where(inArray(credentials.systemId, systems.map((s) => s.id)))
+    : [];
   const results = await db.select().from(checkResults).where(eq(checkResults.scanId, scanId));
   const triage = await db.select().from(findingTriage).where(eq(findingTriage.customerId, scan.customerId));
   const criteria = await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, scanId));
-  const tmap = new Map(triage.map((t) => [t.checkId, t]));
+  const lookup = triageLookup(triage);
   const sysLabel = new Map(systems.map((s) => [s.id, s.label]));
+  const sysKey = new Map(systems.map((s) => [s.id, scanSystemKey(s)]));
+  const myKeys = new Set(sysKey.values());
 
-  // Previous completed scan of the same customer, for trend comparison.
-  const prev = scan.finishedAt
-    ? (
-        await db
-          .select()
-          .from(scans)
-          .where(and(eq(scans.customerId, scan.customerId), eq(scans.status, 'completed'), lt(scans.finishedAt, scan.finishedAt)))
-          .orderBy(desc(scans.finishedAt))
-          .limit(1)
-      )[0]
-    : undefined;
+  const frozen = frozenSummary(scan);
+  const summary: ScoreSummary = frozen ? (({ triage: _t, ...rest }) => rest)(frozen) : await scoreScan(ctx, scanId);
+
+  // Previous completed scan of the same organisation that shares at least one system, for trend comparison.
+  let prev: (typeof scans.$inferSelect & { keys: Map<string, string> }) | undefined;
+  if (scan.finishedAt && myKeys.size) {
+    const earlier = await db
+      .select()
+      .from(scans)
+      .where(and(eq(scans.customerId, scan.customerId), eq(scans.status, 'completed'), lt(scans.finishedAt, scan.finishedAt)))
+      .orderBy(desc(scans.finishedAt))
+      .limit(25);
+    const earlierSystems = earlier.length ? await db.select().from(scanSystems).where(inArray(scanSystems.scanId, earlier.map((p) => p.id))) : [];
+    for (const p of earlier) {
+      const keys = new Map(earlierSystems.filter((s) => s.scanId === p.id).map((s) => [s.id, scanSystemKey(s)]));
+      if ([...keys.values()].some((k) => myKeys.has(k))) {
+        prev = { ...p, keys };
+        break;
+      }
+    }
+  }
+  const prevKeys = new Set(prev ? prev.keys.values() : []);
+  const shared = new Set([...myKeys].filter((k) => prevKeys.has(k)));
   const prevFailing = new Set<string>();
   if (prev) {
-    const pr = await db.select({ checkId: checkResults.checkId, status: checkResults.status }).from(checkResults).where(eq(checkResults.scanId, prev.id));
-    for (const r of pr) if (r.status === 'fail' || r.status === 'warn') prevFailing.add(r.checkId);
+    const pr = await db
+      .select({ systemId: checkResults.systemId, checkId: checkResults.checkId, status: checkResults.status })
+      .from(checkResults)
+      .where(eq(checkResults.scanId, prev.id));
+    for (const r of pr) {
+      const k = prev.keys.get(r.systemId);
+      if (k && shared.has(k) && failing(r.status)) prevFailing.add(triageKey(k, r.checkId));
+    }
   }
 
   const items: ReportItem[] = results
     .filter((r) => CHECKS_BY_ID[r.checkId])
     .map((r) => {
       const m = CHECKS_BY_ID[r.checkId];
-      const t = tmap.get(r.checkId);
+      const key = sysKey.get(r.systemId) ?? '';
+      const t = lookup(r.checkId, key);
+      const current = t ? { status: t.status, note: t.note } : null;
+      // In a frozen report the triage is what the score was computed with; otherwise it is the current decision.
+      const effective = frozen?.triage ? (frozen.triage[triageKey(key, r.checkId)] ?? null) : current;
+      // A finished scan has no running checks: anything left pending or running was not assessed.
+      const unfinished = r.status === 'pending' || r.status === 'running';
       return {
         key: `${r.systemId}:${r.checkId}`,
         checkId: r.checkId,
@@ -102,8 +176,8 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         provider: m.provider,
         domain: m.domain,
         severity: m.severity,
-        status: r.status as ResultStatus,
-        summary: r.summary,
+        status: (unfinished ? 'error' : r.status) as ResultStatus,
+        summary: unfinished ? r.summary || 'Not run: the scan ended before this check ran.' : r.summary,
         resources: (r.resources as ResourceRef[]) ?? [],
         evidence: (r.evidence as Record<string, unknown>) ?? null,
         remediation: m.remediation,
@@ -114,19 +188,23 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         effort: m.effort,
         systemId: r.systemId,
         systemLabel: sysLabel.get(r.systemId) ?? '',
-        triage: t ? { status: t.status, note: t.note } : null,
-        isNew: Boolean(prev) && !prevFailing.has(r.checkId),
+        systemKey: key,
+        triage: effective,
+        currentTriage: current,
+        isNew: shared.has(key) && failing(r.status) && !prevFailing.has(triageKey(key, r.checkId)),
       };
     });
 
-  const isFinding = (i: ReportItem) => i.status === 'fail' || i.status === 'warn';
+  const isFinding = (i: ReportItem) => failing(i.status);
   const bySeverity = (a: ReportItem, b: ReportItem) =>
     sevRank(a.severity) - sevRank(b.severity) || (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1) || a.title.localeCompare(b.title);
   const findings = items.filter(isFinding).sort(bySeverity);
   const open = findings.filter((f) => f.triage?.status !== 'accepted' && f.triage?.status !== 'false_positive');
 
-  const currentFailing = new Set(findings.map((f) => f.checkId));
-  const summary = await scoreScan(ctx, scanId);
+  const currentFailing = new Set(findings.filter((f) => shared.has(f.systemKey)).map((f) => triageKey(f.systemKey, f.checkId)));
+  const currentPassing = new Set(items.filter((i) => i.status === 'pass').map((i) => triageKey(i.systemKey, i.checkId)));
+  const differentScope = Boolean(prev) && (shared.size !== myKeys.size || shared.size !== prevKeys.size);
+  const scanContext = (scan.context as CustomerContext | null) ?? (customer.context as CustomerContext);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -137,20 +215,25 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
       startedAt: scan.startedAt,
       finishedAt: scan.finishedAt,
       retentionMode: scan.retentionMode,
+      retentionDays: scan.retentionMode === 'days' ? scan.retentionDays : null,
+      frozen: Boolean(frozen),
     },
-    customer: { id: customer.id, name: customer.name, country: customer.country, context: customer.context as CustomerContext },
+    customer: { id: customer.id, name: customer.name, country: customer.country, context: scanContext },
     riskProfile: scan.riskProfile as RiskProfile,
     branding: await getBranding(ctx),
     systems: systems.map((s) => {
       const d = (s.connectionDetails ?? {}) as Record<string, any>;
       const identity = d.accountId ? `AWS account ${d.accountId}` : d.displayName ? `${d.displayName} (${d.tenantId})` : d.org ? `github.com/${d.org}` : d.subscriptions ? `${d.subscriptions.length} subscription(s)` : null;
+      const cred = creds.find((c) => c.id === s.id);
       return {
         id: s.id,
         provider: s.provider,
         providerLabel: PROVIDER_LABELS[s.provider],
         label: s.label,
+        systemKey: sysKey.get(s.id) ?? '',
         identity,
-        credentialsStored: creds.some((c) => c.id === s.id),
+        credentialsStored: Boolean(cred),
+        credentialsExpireAt: cred?.expiresAt ?? null,
         authMode: (s.config as any).authMode,
       };
     }),
@@ -169,8 +252,10 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
           previousDate: prev.finishedAt,
           previousScore: prev.score,
           previousGrade: prev.grade,
+          differentScope,
+          sharedSystems: shared.size,
           newFindings: [...currentFailing].filter((c) => !prevFailing.has(c)),
-          resolved: [...prevFailing].filter((c) => !currentFailing.has(c) && items.some((i) => i.checkId === c && i.status === 'pass')),
+          resolved: [...prevFailing].filter((c) => !currentFailing.has(c) && currentPassing.has(c)),
           persisting: [...currentFailing].filter((c) => prevFailing.has(c)),
         }
       : null,
