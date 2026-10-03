@@ -106,6 +106,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
   const [consentUrl, setConsentUrl] = useState<string | null>(null);
   const base = `/api/scans/${scan.id}/systems/${s.id}`;
   const isMs = s.provider === 'm365' || s.provider === 'azure';
+  const hasNewSecret = s.needsSecret && Object.values(secret).some(Boolean);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -137,7 +138,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
     });
 
   const secretInput = (key: string, label: string, opts: { placeholder?: string; optional?: boolean; plain?: boolean } = {}) => (
-    <Field label={<>{label}{opts.optional && <span className="font-normal text-slate-400"> (optional)</span>}</>}>
+    <Field label={<>{label}{opts.optional && <span className="font-normal text-slate-500"> (optional)</span>}</>}>
       <Input
         type={opts.plain ? 'text' : 'password'}
         autoComplete="off"
@@ -152,7 +153,11 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
   let guide: ReactNode = null;
   let form: ReactNode = null;
   if (mode === 'demo') {
-    form = <Alert tone="warn">Demo system: results are simulated and no connection is made.</Alert>;
+    form = (
+      <Alert tone="info" title="Simulated system">
+        Results are generated for the demo. No connection is made and there is nothing to set up.
+      </Alert>
+    );
   } else if (s.provider === 'aws' && mode === 'assume_role') {
     guide = <AwsRoleGuide principal={platform.data?.awsPrincipal ?? null} externalId={s.config.externalId} />;
     form = (
@@ -254,7 +259,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
           <div className="border-b border-slate-100 p-6 lg:col-span-3 lg:border-b-0 lg:border-r">
             <button type="button" aria-expanded={showGuide} className="mb-4 flex w-full items-center gap-2 text-sm font-semibold text-slate-800" onClick={() => setShowGuide(!showGuide)}>
               <BookOpen className="size-4 text-brand-600" /> How to get access
-              <ChevronDown className={clsx('ml-auto size-4 text-slate-400 transition', showGuide && 'rotate-180')} />
+              <ChevronDown className={clsx('ml-auto size-4 text-slate-500 transition', showGuide && 'rotate-180')} aria-hidden />
             </button>
             {showGuide ? guide : <p className="text-xs text-slate-500">Expand for step-by-step instructions you can share with the tenant or account administrator.</p>}
           </div>
@@ -281,7 +286,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
                 }}
                 success="Stored secret deleted."
                 confirm={{
-                  title: 'Delete stored secret',
+                  title: 'Delete stored secret?',
                   body: <>The stored secret for <strong>{s.label}</strong> is deleted now. You need to enter it again before the connection can be tested or the scan can run.</>,
                   confirmLabel: 'Delete secret',
                   danger: true,
@@ -289,15 +294,22 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
               />
             </div>
           )}
-          {s.connection && (
-            <Alert tone={s.connection.ok ? 'success' : 'error'} title={s.connection.ok ? 'Connection verified' : 'Connection failed'}>
+          {mode !== 'demo' && s.connection && (
+            <Alert live tone={s.connection.ok ? 'success' : 'error'} title={s.connection.ok ? 'Connection verified' : 'Connection failed'}>
               {s.connection.message}
-              <div className="mt-1 text-[11px] opacity-70">Tested {fmtDateTime(s.connection.checkedAt)}</div>
+              <div className="mt-1 text-[11px]">Tested {fmtDateTime(s.connection.checkedAt)}</div>
             </Alert>
           )}
-          <Button className="w-full" onClick={saveAndTest} loading={busy} icon={mode === 'demo' ? <ShieldCheck className="size-4" /> : <KeyRound className="size-4" />}>
-            {s.needsSecret && Object.values(secret).some(Boolean) ? 'Save securely and test' : 'Test connection'}
-          </Button>
+          {mode !== 'demo' &&
+            (hasNewSecret ? (
+              <Button className="w-full" onClick={saveAndTest} loading={busy} icon={<KeyRound className="size-4" />}>
+                Save securely and test
+              </Button>
+            ) : (
+              <Button variant="secondary" className="w-full" onClick={saveAndTest} loading={busy} icon={<ShieldCheck className="size-4" />}>
+                Test connection
+              </Button>
+            ))}
         </div>
       </div>
     </Card>

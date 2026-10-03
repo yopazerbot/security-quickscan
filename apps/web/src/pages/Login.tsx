@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -6,9 +7,25 @@ import { Alert, Button, Field, Input } from '../components/ui';
 import { get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { SOURCE_URL } from '../lib/constants';
+import { useDocumentTitle } from '../lib/use-document-title';
+
+/** Set by the API client when a signed-in session ends; read (and cleared) once by this page. */
+const EXPIRED_FLAG = 'qs_expired';
+const RETURN_TO = 'qs_return_to';
+
+function readExpiredFlag() {
+  try {
+    return sessionStorage.getItem(EXPIRED_FLAG) === '1';
+  } catch {
+    return false;
+  }
+}
 
 const ERRORS: Record<string, string> = {
-  not_invited: 'Your account has not been invited to this workspace. Ask an administrator to add you.',
+  not_invited: `Your account has not been invited to ${PRODUCT_NAME}. Ask an administrator to add you.`,
+  account_disabled: 'Your account is deactivated. Ask an administrator.',
+  guest_not_supported: 'Guest (B2B) accounts cannot sign in. Use an account from this tenant.',
+  rate_limited: 'Too many sign-in attempts. Wait a minute and try again.',
   wrong_tenant: 'You signed in with an account from a different Microsoft tenant.',
   mfa_required: 'Multi-factor authentication is required. Sign in again using MFA.',
   state_mismatch: 'The sign-in session expired or was started in another tab. Please try again.',
@@ -59,6 +76,20 @@ export function Login() {
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
   const [pinBusy, setPinBusy] = useState(false);
+  // Read once per visit: the flag says a session really ended (not a fresh visit or a shared deep link).
+  const [sessionExpired] = useState(readExpiredFlag);
+  useDocumentTitle('Sign in');
+  const error = params.get('error');
+
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(EXPIRED_FLAG);
+      // A failed attempt or a visit without a return target must not send the next sign-in somewhere stale.
+      if (error || !from) sessionStorage.removeItem(RETURN_TO);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [error, from]);
 
   // Local installation: there is no login, fetching the session signs in automatically.
   useEffect(() => {
@@ -67,12 +98,11 @@ export function Login() {
 
   // After any successful sign-in (break glass, demo PIN) `me` is set and we return to the page that sent us here.
   if (me) return <Navigate to={from ?? '/'} replace />;
-  const error = params.get('error');
   const detail = params.get('code')?.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60);
   const hint = detail ? CODE_HINTS[detail] : undefined;
   const signedOut = Boolean(params.get('signedOut'));
   // Sent here by a protected page (not on a fresh visit to the start page, not after signing out).
-  const expired = Boolean(from) && from !== '/' && !signedOut && !error;
+  const redirected = Boolean(from) && from !== '/' && !signedOut && !error;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,7 +143,7 @@ export function Login() {
             <div className="flex size-10 items-center justify-center rounded-xl bg-brand-600 shadow-lg shadow-brand-600/40">
               <ShieldCheck className="size-6 text-white" aria-hidden />
             </div>
-            <span className="text-lg font-semibold text-white">Security QuickScan</span>
+            <span className="text-lg font-semibold text-white">{PRODUCT_NAME}</span>
           </div>
           <div className="max-w-md">
             <p className="text-4xl font-semibold leading-tight tracking-tight text-white">Cloud security posture, mapped to ISO 27001.</p>
@@ -132,15 +162,21 @@ export function Login() {
             <div className="flex size-9 items-center justify-center rounded-xl bg-brand-600 shadow-md shadow-brand-600/30">
               <ShieldCheck className="size-5 text-white" aria-hidden />
             </div>
-            <span className="text-base font-semibold text-slate-900">Security QuickScan</span>
+            <span className="text-base font-semibold text-slate-900">{PRODUCT_NAME}</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h1>
-          <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>
+          {cfg.data?.entra && <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>}
 
-          {expired && (
+          {sessionExpired && !signedOut && !error ? (
             <Alert tone="info" className="mt-6">
-              Your session has expired, please sign in again.
+              Your session has expired. Sign in again.
             </Alert>
+          ) : (
+            redirected && (
+              <Alert tone="info" className="mt-6">
+                Sign in to continue.
+              </Alert>
+            )
           )}
 
           {signedOut && !error && (
@@ -150,7 +186,7 @@ export function Login() {
           )}
 
           {error && (
-            <Alert tone="error" className="mt-6">
+            <Alert tone="error" className="mt-6" live>
               {ERRORS[error] ?? 'Sign-in failed.'}
               {detail && (
                 <span className="mt-1 block text-xs opacity-80">
@@ -167,7 +203,7 @@ export function Login() {
               onClick={() => {
                 // The SSO callback always lands on "/"; the layout picks this up and continues to the original page.
                 try {
-                  if (from && from !== '/') sessionStorage.setItem('qs_return_to', from);
+                  if (from && from !== '/') sessionStorage.setItem(RETURN_TO, from);
                 } catch {
                   /* storage unavailable */
                 }
@@ -237,10 +273,10 @@ export function Login() {
               )}
             </div>
           )}
-          <p className="mt-12 text-xs text-slate-400">
+          <p className="mt-12 text-xs text-slate-500">
             Developed by <span className="font-medium text-slate-600">Yoshi Parlevliet</span>
             <span className="mx-1.5">·</span>
-            <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="hover:text-slate-600 hover:underline">
+            <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="hover:text-slate-700 hover:underline">
               Open source (MIT)
             </a>
           </p>

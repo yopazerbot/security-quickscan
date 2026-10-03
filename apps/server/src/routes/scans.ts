@@ -547,8 +547,14 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     );
     const valid = items.filter((i) => CHECKS_BY_ID[i.checkId]);
     if (valid.length) {
+      const profile = scan.riskProfile as RiskProfile;
       await withDraftLock(ctx, scan.id, async (tx) => {
         for (const i of valid) {
+          // Only real overrides are stored, so a changed risk profile still moves the other checks.
+          if (i.included === defaultIncluded(i.checkId, profile) && !i.reason.trim()) {
+            await tx.delete(scanCriteria).where(and(eq(scanCriteria.scanId, scan.id), eq(scanCriteria.checkId, i.checkId)));
+            continue;
+          }
           await tx
             .insert(scanCriteria)
             .values({ scanId: scan.id, ...i })
@@ -670,7 +676,11 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
           await tx.insert(credentials).values({ systemId: ns.id, blob, hint: cred.hint, createdBy: req.user!.id, expiresAt });
         }
       }
-      const crit = await tx.select().from(scanCriteria).where(eq(scanCriteria.scanId, scan.id));
+      // Copy only the overrides; everything else follows the organisation's current risk profile.
+      const prevProfile = scan.riskProfile as RiskProfile;
+      const crit = (await tx.select().from(scanCriteria).where(eq(scanCriteria.scanId, scan.id))).filter(
+        (x) => x.included !== defaultIncluded(x.checkId, prevProfile) || x.reason.trim(),
+      );
       if (crit.length) await tx.insert(scanCriteria).values(crit.map((x) => ({ ...x, scanId: n.id })));
       return n.id;
     });

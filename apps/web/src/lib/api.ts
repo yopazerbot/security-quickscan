@@ -6,8 +6,30 @@ export function setCsrfToken(t: string) {
   csrfToken = t;
 }
 
-/** When this tab last talked to the server (ms since epoch). Used by the session expiry warning. */
-export const lastServerContact = () => lastRequestAt;
+/** Shared between tabs: requests from any tab of this app keep the same session alive. */
+const CONTACT_KEY = 'qs_last_contact';
+let sharedWrittenAt = 0;
+function noteContact() {
+  lastRequestAt = Date.now();
+  if (lastRequestAt - sharedWrittenAt < 10_000) return;
+  sharedWrittenAt = lastRequestAt;
+  try {
+    localStorage.setItem(CONTACT_KEY, String(lastRequestAt));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** When this browser (any tab) last talked to the server (ms since epoch). Used by the session expiry warning. */
+export function lastServerContact() {
+  let shared = 0;
+  try {
+    shared = Number(localStorage.getItem(CONTACT_KEY)) || 0;
+  } catch {
+    /* storage unavailable */
+  }
+  return Math.max(lastRequestAt, shared);
+}
 
 /** sessionStorage flag read by the login page: set when a signed-in session ended (not on a fresh visit). */
 export const EXPIRED_FLAG = 'qs_expired';
@@ -20,6 +42,8 @@ export class ApiError extends Error {
     message: string,
     /** Per-field messages from a validation error ({ "contactEmail": "Enter a valid email address." }). */
     public fields?: Record<string, string>,
+    /** The full JSON error body, for answers that carry more than a message (e.g. ownedOrganisations on a 409). */
+    public data?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -40,7 +64,7 @@ export async function api<T = any>(path: string, opts: { method?: Method; body?:
   const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
-  lastRequestAt = Date.now();
+  noteContact();
   const res = await fetch(path, {
     method,
     headers,
@@ -69,7 +93,14 @@ export async function api<T = any>(path: string, opts: { method?: Method; body?:
       throw new ApiError(401, SESSION_EXPIRED_MESSAGE);
     }
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.fields && typeof data.fields === 'object' ? data.fields : undefined);
+  if (!res.ok && method !== 'GET' && (res.status === 403 || res.status === 404)) {
+    // Access may have been removed while the page was open (share revoked, organisation deleted): pages listen
+    // for this to reload their data, which then shows a clear "no access" state.
+    window.dispatchEvent(new CustomEvent('qs:access-denied', { detail: { status: res.status, path } }));
+    if (res.status === 404 && (!data?.error || /^not found\.?$/i.test(data.error)))
+      throw new ApiError(404, 'You no longer have access to this item, or it was deleted.');
+  }
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.fields && typeof data.fields === 'object' ? data.fields : undefined, data && typeof data === 'object' ? data : undefined);
   return data as T;
 }
 

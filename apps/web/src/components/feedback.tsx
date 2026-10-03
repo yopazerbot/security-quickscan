@@ -80,7 +80,9 @@ function ToastItem({ toast: t, onDismiss }: { toast: Toast; onDismiss(): void })
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const next = useRef(1);
-  const push = useCallback((tone: Toast['tone'], text: string, action?: ToastAction) => {
+  const push = useCallback((tone: Toast['tone'], raw: string, action?: ToastAction) => {
+    // Toasts are full sentences; server messages sometimes come without the final full stop.
+    const text = /[.!?]$/.test(raw.trim()) ? raw.trim() : `${raw.trim()}.`;
     setToasts((all) => {
       // The same message twice (e.g. a global handler and the caller both report it): keep the first.
       if (all.some((x) => x.tone === tone && x.text === text)) return all;

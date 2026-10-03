@@ -165,7 +165,7 @@ export function RiskProfilePanel({ context }: { context: CustomerContext }) {
         <div className="h-2 rounded-full bg-slate-100">
           <div className={clsx('h-2 rounded-full transition-all', s.bar)} style={{ width: `${Math.max(pct, 4)}%` }} />
         </div>
-        <div className="mt-1 flex justify-between text-[10px] font-medium uppercase text-slate-400">
+        <div className="mt-1 flex justify-between text-[10px] font-medium uppercase text-slate-500">
           <span>Low</span>
           <span>Medium</span>
           <span>High</span>

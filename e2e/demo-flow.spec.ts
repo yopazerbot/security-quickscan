@@ -14,10 +14,10 @@ test('admin sees the seeded demo organisation with history and reports', async (
   await expect(page.getByRole('heading', { name: 'Triaged findings' })).toBeVisible();
   // Admins manage access to every organisation, including ones they do not own.
   await expect(page.getByRole('heading', { name: 'Access', exact: true })).toBeVisible();
-  await expect(page.getByLabel('Share by e-mail address')).toBeVisible();
+  await expect(page.getByLabel('Share by email address')).toBeVisible();
 
   await page.getByText('Follow-up quick scan').click();
-  await expect(page.getByRole('heading', { name: 'Security quick scan report' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cloud Security Quick Scan Report' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'ISO/IEC 27001:2022 Annex A' })).toBeVisible();
   await expect(page.getByText(/Since the previous scan/)).toBeVisible();
   await expect(page.getByRole('heading', { name: /Top risks/ })).toBeVisible();
@@ -33,7 +33,7 @@ test('run the prepared draft scan end to end and download the exports', async ({
   await expect(page).toHaveURL(/\/progress/);
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
   await page.getByRole('link', { name: 'View report' }).click();
-  await expect(page.getByRole('heading', { name: 'Security quick scan report' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cloud Security Quick Scan Report' })).toBeVisible();
 
   for (const label of ['PDF report', 'Findings CSV', 'ISO controls CSV']) {
     const dl = page.waitForEvent('download');
@@ -48,10 +48,13 @@ test('run the prepared draft scan end to end and download the exports', async ({
   // Triage a finding from the report.
   const finding = page.getByTestId('finding').first();
   await finding.getByRole('button').first().click();
-  await finding.getByRole('combobox').selectOption('accepted');
+  // Triage applies to this check on this one system, for scans that finish from now on.
+  await finding.getByLabel(/Triage status for/).selectOption('accepted');
   await finding.getByPlaceholder('Note (shown in the report)').fill('Accepted in e2e test');
   await finding.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByTestId('finding').getByText('Risk accepted').first()).toBeVisible();
+  await expect(page.getByText(/Triage saved for/)).toBeVisible();
+  // Finished reports are frozen: the new decision shows as the current decision, not in this report's score.
+  await expect(finding.getByText(/Current decision:\s*Risk accepted/)).toBeVisible();
 });
 
 test('new organisation through the full wizard with demo systems', async ({ page }) => {
@@ -64,7 +67,9 @@ test('new organisation through the full wizard with demo systems', async ({ page
   await expect(page.getByText('Confirm the organisation context')).toHaveCount(0);
   for (const p of ['Microsoft 365 / Entra ID', 'GitHub']) {
     await page.locator('button', { hasText: p }).first().click();
-    await page.getByRole('button', { name: /Demo \(simulated\)/ }).click();
+    // The access methods are radio buttons; click the visible label like a user would.
+    await page.getByRole('dialog').getByText('Demo (simulated)', { exact: true }).click();
+    await expect(page.getByRole('radio', { name: /Demo \(simulated\)/ })).toBeChecked();
     // GitHub demo systems need no organisation (regression test).
     await page.getByRole('button', { name: 'Add system' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();

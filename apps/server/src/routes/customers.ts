@@ -49,9 +49,15 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       : [];
     const ownerIds = [...new Set(rows.map((r) => r.ownerId).filter((x): x is string => Boolean(x)))];
     const owners = ownerIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ownerIds)) : [];
+    const myShares = await db
+      .select({ customerId: customerAssignments.customerId, permission: customerAssignments.permission })
+      .from(customerAssignments)
+      .where(eq(customerAssignments.userId, u.id));
     return rows.map((c) => ({
       id: c.id,
       owned: c.ownerId === u.id,
+      // Your own share on this organisation (null for owners and admins without a share); viewers are always view.
+      permission: u.role === 'viewer' && myShares.some((m) => m.customerId === c.id) ? 'view' : (myShares.find((m) => m.customerId === c.id)?.permission ?? null),
       ownerName: owners.find((o) => o.id === c.ownerId)?.name ?? null,
       name: c.name,
       contactName: c.contactName,

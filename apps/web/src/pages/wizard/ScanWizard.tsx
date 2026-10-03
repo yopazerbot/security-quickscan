@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Check, KeyRound, ListChecks, Rocket, Server, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { AsyncButton, useAction } from '../../components/feedback';
 import { Button, ErrorState, PageHeader, PageLoader } from '../../components/ui';
-import { del, get, patch } from '../../lib/api';
+import { ApiError, del, get, patch } from '../../lib/api';
 import { accessCan, type CustomerAccess } from '../../lib/auth';
+import { useDocumentTitle } from '../../lib/use-document-title';
 import { StepCredentials } from './StepCredentials';
 import { StepCriteria } from './StepCriteria';
 import { StepLaunch } from './StepLaunch';
@@ -75,17 +76,20 @@ const STEP_OFFSET = 1;
 const reached = (scan: WizardScan) => Math.max(0, scan.wizardStep - STEP_OFFSET);
 
 const STEPS = [
-  { label: 'Scope', desc: 'Systems', icon: Server },
-  { label: 'Access', desc: 'Credentials', icon: KeyRound },
-  { label: 'Criteria', desc: 'What to evaluate', icon: ListChecks },
-  { label: 'Review', desc: 'Check and start', icon: Rocket },
+  { id: 'scope', label: 'Scope', desc: 'Systems', icon: Server },
+  { id: 'access', label: 'Access', desc: 'Credentials', icon: KeyRound },
+  { id: 'criteria', label: 'Criteria', desc: 'What to evaluate', icon: ListChecks },
+  { id: 'review', label: 'Review', desc: 'Check and start', icon: Rocket },
 ];
+
+/** Scroll behaviour that respects the user's reduced-motion setting. */
+export const scrollBehavior = (): ScrollBehavior => (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 export function WizardFooter({ onBack, onNext, nextLabel = 'Continue', disabled, loading, extra }: { onBack?: () => void; onNext(): void; nextLabel?: string; disabled?: boolean; loading?: boolean; extra?: ReactNode }) {
   return (
-    <div className="sticky bottom-0 z-10 -mx-8 mt-8 flex items-center justify-between gap-4 border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-4px_12px_-8px_rgba(15,23,42,0.15)]">
+    <div className="sticky bottom-0 z-10 -mx-4 mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-4 shadow-[0_-4px_12px_-8px_rgba(15,23,42,0.15)] sm:-mx-8 sm:gap-4 sm:px-8">
       <div>{onBack && <Button variant="secondary" onClick={onBack}>Back</Button>}</div>
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
         {extra}
         <Button onClick={onNext} disabled={disabled} loading={loading} size="lg">
           {nextLabel}
@@ -101,18 +105,45 @@ export function ScanWizard() {
   const qc = useQueryClient();
   const run = useAction();
   const q = useQuery({ queryKey: ['scan', scanId], queryFn: () => get<WizardScan>(`/api/scans/${scanId}`) });
+  const [params, setParams] = useSearchParams();
   const [step, setStep] = useState<number | null>(null);
   const [navigating, setNavigating] = useState(false);
   const saveRef = useRef<(() => Promise<unknown>) | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeading = useRef(false);
+  useDocumentTitle(q.data ? `New quick scan: ${q.data.customer.name}` : 'New quick scan');
 
   useEffect(() => {
     if (!q.data || step !== null) return;
-    let s = Math.min(reached(q.data), STEPS.length - 1);
+    // ?step=criteria (e.g. returning from the organisation form) opens that step when it is reachable.
+    const asked = STEPS.findIndex((x) => x.id === params.get('step'));
+    let s = asked >= 0 && asked <= reached(q.data) ? asked : Math.min(reached(q.data), STEPS.length - 1);
     while (s > 0 && lockReason(q.data, s)) s--;
     setStep(s);
-  }, [q.data, step]);
+    if (params.has('step')) {
+      const p = new URLSearchParams(params);
+      p.delete('step');
+      setParams(p, { replace: true });
+    }
+  }, [q.data, step, params, setParams]);
 
-  if (q.isError && !q.data) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  // A write was refused with 403 or 404: access may have been removed, so reload the scan (which then shows why).
+  const refetchScan = q.refetch;
+  useEffect(() => {
+    const onDenied = () => void refetchScan();
+    window.addEventListener('qs:access-denied', onDenied);
+    return () => window.removeEventListener('qs:access-denied', onDenied);
+  }, [refetchScan]);
+
+  // After a step change, move focus to the new step's heading: the button that was pressed is gone.
+  useEffect(() => {
+    if (step === null || !focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  const lostAccess = q.error instanceof ApiError && (q.error.status === 403 || q.error.status === 404);
+  if (q.isError && (!q.data || lostAccess)) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   if (q.isLoading || !q.data || step === null) return <PageLoader />;
   const scan = q.data;
   if (scan.status !== 'draft') return <Navigate to={`/scans/${scan.id}/${scan.status === 'completed' || scan.status === 'cancelled' ? 'report' : 'progress'}`} replace />;
@@ -128,8 +159,9 @@ export function ScanWizard() {
       setNavigating(false);
       if (!ok) return;
     }
+    focusHeading.current = true;
     setStep(n);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
     if (n > reached(scan)) void run(async () => {
       await patch(`/api/scans/${scan.id}`, { wizardStep: n + STEP_OFFSET });
       await q.refetch();
@@ -164,7 +196,7 @@ export function ScanWizard() {
             onClick={discard}
             success="Draft discarded."
             confirm={{
-              title: 'Discard draft',
+              title: 'Discard draft?',
               body: <>The draft scan <strong>{scan.name}</strong> is deleted, together with its systems and any stored credentials. This cannot be undone.</>,
               confirmLabel: 'Discard',
               danger: true,
@@ -213,7 +245,13 @@ export function ScanWizard() {
           })}
         </ol>
       </nav>
-      <div key={step} className="animate-fade-in">
+      <div key={step} className="motion-safe:animate-fade-in">
+        <h2 ref={headingRef} tabIndex={-1} className="mb-4 text-lg font-semibold text-slate-900 focus:outline-none">
+          <span className="text-slate-500">
+            Step {step + 1} of {STEPS.length}:
+          </span>{' '}
+          {STEPS[step].label}
+        </h2>
         {step === 0 && <StepScope {...props} />}
         {step === 1 && <StepCredentials {...props} />}
         {step === 2 && <StepCriteria {...props} />}

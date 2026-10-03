@@ -1,4 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PRODUCT_NAME } from '@qs/shared';
+import { ShieldCheck, Terminal } from 'lucide-react';
 import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router';
@@ -26,11 +28,52 @@ const qc = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: (n, e) => n < 1 && !(e instanceof ApiError && [401, 403, 404].includes(e.status)) } },
 });
 
+/**
+ * Local installation in a container: a session starts only from the one-time link the container prints at
+ * startup. There is no sign-in page to show, so explain where to find the link.
+ */
+function LocalLinkRequired() {
+  return (
+    <main className="flex min-h-full items-center justify-center bg-slate-50 px-4 py-12">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-8 shadow-sm ring-1 ring-slate-200">
+        <div className="mb-5 flex items-center gap-2.5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-brand-600">
+            <ShieldCheck className="size-5 text-white" aria-hidden />
+          </div>
+          <span className="text-base font-semibold text-slate-900">{PRODUCT_NAME}</span>
+        </div>
+        <h1 className="text-xl font-semibold text-slate-900">Open the link from the container</h1>
+        <p className="mt-2 text-sm text-slate-600">Open the link printed by the container (docker compose logs) to start a session.</p>
+        <p className="mt-2 text-sm text-slate-600">
+          This local installation has no sign-in page. When it starts, the container prints a one-time link that contains an access token. Opening that
+          link in this browser starts your session.
+        </p>
+        <div className="mt-5 rounded-lg bg-slate-900 px-4 py-3 font-mono text-xs text-slate-100">
+          <div className="mb-1 flex items-center gap-1.5 text-slate-400">
+            <Terminal className="size-3.5" aria-hidden /> Find the link
+          </div>
+          docker compose logs | grep local_token
+        </div>
+        <p className="mt-4 text-xs text-slate-500">The link is valid until the container restarts. After a restart, the container prints a new one.</p>
+      </div>
+    </main>
+  );
+}
+
+/** Shows the local-link explanation instead of the page when a local container session needs the startup link. */
+function LocalGate({ children }: { children: ReactNode }) {
+  const { me, loading, localLinkRequired } = useAuth();
+  if (!loading && !me && localLinkRequired) return <LocalLinkRequired />;
+  return <>{children}</>;
+}
+
 function Protected({ children, admin }: { children: ReactNode; admin?: boolean }) {
-  const { me, loading } = useAuth();
+  const { me, loading, localLinkRequired } = useAuth();
   const loc = useLocation();
   if (loading) return <PageLoader />;
-  if (!me) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  if (!me && localLinkRequired) return <LocalLinkRequired />;
+  // The query string is kept: the admin-consent callback carries its result there.
+  if (!me) return <Navigate to="/login" replace state={{ from: loc.pathname + loc.search }} />;
   if (admin && me.user.role !== 'admin') return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -48,7 +91,14 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/login" element={<Login />} />
+            <Route
+              path="/login"
+              element={
+                <LocalGate>
+                  <Login />
+                </LocalGate>
+              }
+            />
             <Route
               element={
                 <Protected>

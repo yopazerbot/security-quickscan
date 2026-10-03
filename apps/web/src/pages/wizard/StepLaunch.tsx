@@ -10,11 +10,13 @@ import { get, post } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
 import { WizardFooter, systemReady, type StepProps, type WizardSystem } from './ScanWizard';
 
-const RETENTION_LABEL: Record<string, string> = {
-  purge_on_completion: 'Deleted when the scan completes',
-  days: 'Kept for a limited number of days',
-  manual: 'Kept until manually deleted',
-};
+/** What happens to stored secrets, in exact terms. */
+function retentionLabel(scan: StepProps['scan']): string {
+  if (scan.retentionMode === 'purge_on_completion') return 'Deleted automatically when the scan finishes';
+  if (scan.retentionMode === 'days')
+    return scan.retentionDays ? `Kept for ${scan.retentionDays} ${scan.retentionDays === 1 ? 'day' : 'days'}, then deleted automatically` : 'Kept for a set number of days, then deleted automatically';
+  return 'Kept until someone deletes them';
+}
 
 function SystemStatus({ s }: { s: WizardSystem }) {
   if (s.config.authMode === 'demo') return <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700"><FlaskConical className="size-3.5" aria-hidden /> Simulated</span>;
@@ -68,7 +70,7 @@ export function StepLaunch({ scan, back, navigating }: StepProps) {
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-slate-500">Secrets</dt>
-              <dd className="text-right font-medium">{RETENTION_LABEL[scan.retentionMode]}</dd>
+              <dd className="text-right font-medium">{retentionLabel(scan)}</dd>
             </div>
           </dl>
         </Card>

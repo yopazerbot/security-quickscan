@@ -103,7 +103,10 @@ export function Field({
   required,
   children,
   className,
+  id: controlId,
 }: {
+  /** Id for the control; otherwise one is generated. Set it here, not on the control, so the label stays linked. */
+  id?: string;
   label: ReactNode;
   hint?: ReactNode;
   error?: string | null;
@@ -112,7 +115,7 @@ export function Field({
   className?: string;
 }) {
   const base = useId();
-  const id = `${base}-control`;
+  const id = controlId ?? `${base}-control`;
   const hintId = `${base}-hint`;
   const errorId = `${base}-error`;
   const describedBy = clsx(hint && !error && hintId, error && errorId) || undefined;
