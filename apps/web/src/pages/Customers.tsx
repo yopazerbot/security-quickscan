@@ -6,8 +6,9 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { Badge, Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, Input, LinkButton, PageHeader, PageLoader } from '../components/ui';
 import { get } from '../lib/api';
-import { useCan } from '../lib/auth';
+import { useAuth, useCan } from '../lib/auth';
 import { fmtDate } from '../lib/format';
+import { useDocumentTitle } from '../lib/use-document-title';
 
 const SCAN_STATUS: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -27,8 +28,15 @@ export function ScanStatusBadge({ status }: { status: string }) {
   );
 }
 
+/** "Shared with you", with the access level when the list provides it. */
+function sharedLabel(access: unknown) {
+  return access === 'view' ? 'Shared with you, can view' : access === 'edit' ? 'Shared with you, can edit' : 'Shared with you';
+}
+
 export function Customers() {
   const can = useCan();
+  const { me } = useAuth();
+  useDocumentTitle('Organisations');
   const [q, setQ] = useState('');
   const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: ['customers'], queryFn: () => get<any[]>('/api/customers') });
   if (isError) return <ErrorState error={error} onRetry={() => refetch()} />;
@@ -63,8 +71,8 @@ export function Customers() {
             }
           >
             {can.write
-              ? 'Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan. Only you can see it until you share it.'
-              : 'Organisations appear here once their owner shares them with you.'}
+              ? 'Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan. Only you and admins can see it until you share it.'
+              : 'Organisations appear here once someone shares them with you.'}
           </EmptyState>
         </Card>
       ) : (
@@ -87,7 +95,7 @@ export function Customers() {
                 type="button"
                 aria-label="Clear search"
                 onClick={() => setQ('')}
-                className="absolute right-2 top-1.5 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                className="absolute right-2 top-1.5 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <X className="size-4" />
               </button>
@@ -120,12 +128,23 @@ export function Customers() {
                       <div className="mt-0.5 truncate text-sm text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
                       {!c.owned &&
                         (can.admin ? (
-                          c.ownerName && <div className="mt-1.5 truncate text-xs text-slate-500">Owner: {c.ownerName}</div>
+                          c.ownerName ? (
+                            <div className="mt-1.5 truncate text-xs text-slate-500">Owner: {c.ownerName}</div>
+                          ) : (
+                            !c.isDemo && (
+                              <div className="mt-1.5">
+                                <Badge className="bg-amber-100 text-amber-800 ring-1 ring-amber-200">No owner</Badge>
+                              </div>
+                            )
+                          )
                         ) : (
-                          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
-                            <Badge className="bg-brand-50 text-brand-700 ring-1 ring-brand-100">Shared with you</Badge>
-                            {c.ownerName && <span className="truncate">by {c.ownerName}</span>}
-                          </div>
+                          // The demo visitor reaches demo organisations through a shared account: not "shared with you".
+                          !(me?.user.isDemo && c.isDemo) && (
+                            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                              <Badge className="bg-brand-50 text-brand-700 ring-1 ring-brand-100">{sharedLabel(c.myAccess ?? c.permission)}</Badge>
+                              {c.ownerName && <span className="truncate">Owner: {c.ownerName}</span>}
+                            </div>
+                          )
                         ))}
                     </div>
                     <GradeBadge grade={c.latestScan?.grade} />

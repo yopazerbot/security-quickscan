@@ -1,7 +1,7 @@
 import type { ResultStatus, Severity } from '@qs/shared';
 import clsx from 'clsx';
 import { AlertTriangle, Check, Copy, Loader2, RotateCw, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { createContext, useContext, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '../lib/api';
 import { GRADE_HEX, SEVERITY_STYLE, STATUS_STYLE } from '../lib/format';
@@ -82,27 +82,92 @@ export function Card({ className, children, title, actions, subtitle }: { classN
   );
 }
 
-export function Field({ label, hint, error, children, className }: { label: ReactNode; hint?: ReactNode; error?: string; children: ReactNode; className?: string }) {
+/** Wiring from a <Field> to the Input, Textarea or Select inside it (id, description and validity). */
+interface FieldWiring {
+  id: string;
+  describedBy?: string;
+  invalid: boolean;
+  required: boolean;
+}
+const FieldCtx = createContext<FieldWiring | null>(null);
+
+/**
+ * A labelled form control. The label points at the control (htmlFor), the hint and error are linked with
+ * aria-describedby, and the control gets aria-invalid while `error` is set. Works with the Input, Textarea and
+ * Select below as direct or nested children; other controls can read the ids with `useField()`.
+ */
+export function Field({
+  label,
+  hint,
+  error,
+  required,
+  children,
+  className,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: string | null;
+  required?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const base = useId();
+  const id = `${base}-control`;
+  const hintId = `${base}-hint`;
+  const errorId = `${base}-error`;
+  const describedBy = clsx(hint && !error && hintId, error && errorId) || undefined;
   return (
-    <label className={clsx('block', className)}>
-      <span className="mb-1.5 block text-sm font-medium text-slate-700">{label}</span>
-      {children}
-      {hint && !error && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
-      {error && <span className="mt-1 block text-xs text-red-600">{error}</span>}
-    </label>
+    <div className={clsx('block', className)}>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-slate-700">
+        {label}
+        {required && (
+          <span className="text-red-600" aria-hidden>
+            {' '}
+            *
+          </span>
+        )}
+      </label>
+      <FieldCtx.Provider value={{ id, describedBy, invalid: Boolean(error), required: Boolean(required) }}>{children}</FieldCtx.Provider>
+      {hint && !error && (
+        <p id={hintId} className="mt-1 block text-xs text-slate-500">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={errorId} className="mt-1 block text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
+/** The ids of the surrounding <Field>, for custom controls. */
+export const useField = () => useContext(FieldCtx);
+
+/** Applies the surrounding Field's wiring to a control; explicit props on the control win. */
+function useFieldProps<T extends { id?: string; 'aria-describedby'?: string; 'aria-invalid'?: unknown; 'aria-required'?: unknown }>(p: T): T {
+  const f = useContext(FieldCtx);
+  if (!f) return p;
+  return {
+    ...p,
+    id: p.id ?? f.id,
+    'aria-describedby': clsx(p['aria-describedby'], f.describedBy) || undefined,
+    'aria-invalid': p['aria-invalid'] ?? (f.invalid || undefined),
+    'aria-required': p['aria-required'] ?? (f.required || undefined),
+  };
+}
+
 const inputCls =
-  'block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500';
+  'block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 placeholder:text-slate-500 focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500 aria-invalid:ring-red-500';
 
 /** Lets a caller's width class (w-48, max-w-*) replace the default full width. */
 const withWidth = (cls?: string) => clsx(/(^|\s)w-/.test(cls ?? '') ? inputCls.replace('w-full ', '') : inputCls, cls);
 
-export const Input = ({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) => <input {...p} className={withWidth(className)} />;
-export const Textarea = ({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...p} className={clsx(withWidth(className), 'min-h-20')} />;
+export const Input = ({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) => <input {...useFieldProps(p)} className={withWidth(className)} />;
+export const Textarea = ({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...useFieldProps(p)} className={clsx(withWidth(className), 'min-h-20')} />;
 export const Select = ({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) => (
-  <select {...p} className={clsx(withWidth(className), 'pr-8')}>
+  <select {...useFieldProps(p)} className={clsx(withWidth(className), 'pr-8')}>
     {children}
   </select>
 );
@@ -209,9 +274,26 @@ export function EmptyState({ icon, title, children, action }: { icon: ReactNode;
   );
 }
 
-export function Alert({ tone = 'info', title, children, className }: { tone?: 'info' | 'warn' | 'error' | 'success'; title?: ReactNode; children?: ReactNode; className?: string }) {
+/**
+ * A coloured message box. With `live`, screen readers announce it when it appears or changes:
+ * errors as an alert, other tones politely (role=status).
+ */
+export function Alert({
+  tone = 'info',
+  title,
+  children,
+  className,
+  live,
+}: {
+  tone?: 'info' | 'warn' | 'error' | 'success';
+  title?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  live?: boolean;
+}) {
   return (
     <div
+      role={live ? (tone === 'error' ? 'alert' : 'status') : undefined}
       className={clsx(
         'rounded-xl px-4 py-3 text-sm ring-1',
         tone === 'info' && 'bg-brand-50 text-brand-900 ring-brand-100',
@@ -228,8 +310,8 @@ export function Alert({ tone = 'info', title, children, className }: { tone?: 'i
 }
 
 /**
- * Accessible modal built on the native <dialog>: focus is trapped and restored by the browser,
- * Escape closes it, and it cannot be dismissed while `busy` (e.g. during a save).
+ * Accessible modal built on the native <dialog>: focus is trapped while open and returns to the element that
+ * had it before opening, Escape closes it, and it cannot be dismissed while `busy` (e.g. during a save).
  */
 export function Modal({
   open,
@@ -250,11 +332,17 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  useEffect(() => {
+  // Layout effect: the cleanup runs synchronously when `open` turns false (or the modal unmounts), so the dialog is
+  // always closed properly and focus goes back to the opener instead of falling to <body>.
+  useLayoutEffect(() => {
+    if (!open) return;
     const d = ref.current;
-    if (!d) return;
-    if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    if (d && !d.open) d.showModal();
+    return () => {
+      if (d?.open) d.close();
+      if (opener?.isConnected && !opener.closest('dialog:not([open])')) opener.focus({ preventScroll: true });
+    };
   }, [open]);
   if (!open) return null;
   return (
@@ -291,6 +379,7 @@ export function Modal({
 /** Shown when a query fails: the message plus a retry button (instead of an endless spinner). */
 export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
   const status = error instanceof ApiError ? error.status : 0;
+  const noAccess = status === 404 || status === 403;
   const message =
     status === 404 ? 'This item does not exist or you do not have access to it.' : status === 403 ? 'You do not have permission to view this.' : error instanceof Error ? error.message : 'Something went wrong.';
   return (
@@ -300,10 +389,15 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
       </div>
       <p className="font-semibold text-slate-900">Could not load this page</p>
       <p className="mt-1 max-w-md text-sm text-slate-600">{message}</p>
-      {onRetry && status !== 404 && status !== 403 && (
+      {onRetry && !noAccess && (
         <Button variant="secondary" className="mt-5" icon={<RotateCw className="size-4" />} onClick={onRetry}>
           Try again
         </Button>
+      )}
+      {noAccess && (
+        <LinkButton to="/organisations" variant="secondary" className="mt-5">
+          Back to organisations
+        </LinkButton>
       )}
     </div>
   );
@@ -315,14 +409,21 @@ export function CopyButton({ value, label }: { value: string; label?: string }) 
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(value);
-        setDone(true);
-        setTimeout(() => setDone(false), 1500);
+        navigator.clipboard.writeText(value).then(
+          () => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1500);
+          },
+          () => setDone(false),
+        );
       }}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
     >
-      {done ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+      {done ? <Check className="size-3.5 text-emerald-600" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
       {label ?? (done ? 'Copied' : 'Copy')}
+      <span role="status" className="sr-only">
+        {done ? 'Copied' : ''}
+      </span>
     </button>
   );
 }
@@ -332,7 +433,8 @@ export function CodeBlock({ children, copy = true }: { children: string; copy?: 
     <div className="group relative">
       <pre className="overflow-x-auto rounded-lg bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-100">{children}</pre>
       {copy && (
-        <div className="absolute right-2 top-2 rounded-md bg-white/90 opacity-0 transition group-hover:opacity-100">
+        // Visible on hover, while the button has keyboard focus, and always on touch screens (no hover there).
+        <div className="absolute right-2 top-2 rounded-md bg-white/90 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <CopyButton value={children} />
         </div>
       )}

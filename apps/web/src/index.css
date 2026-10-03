@@ -45,5 +45,11 @@ body { @apply bg-slate-50 text-slate-800 antialiased; font-feature-settings: 'cv
   body { background: white; }
   main { margin-left: 0 !important; }
   section, .print-avoid-break { break-inside: avoid; }
+  /* Browsers drop backgrounds when printing by default. Keep them: grade badges, severity and status badges,
+     heatmap cells, legend swatches and the severity stripe carry meaning through colour. */
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 .print-only { display: none; }

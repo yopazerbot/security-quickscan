@@ -3,11 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { RotateCcw, Search, SearchX } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { RISK_STYLE } from '../../components/ContextForm';
 import { ProviderIcon } from '../../components/ProviderIcon';
-import { AsyncButton } from '../../components/feedback';
-import { Button, Card, EmptyState, ErrorState, Input, PageLoader, SeverityBadge, Toggle } from '../../components/ui';
+import { AsyncButton, useAction } from '../../components/feedback';
+import { Alert, Button, Card, EmptyState, ErrorState, Input, PageLoader, SeverityBadge, Toggle } from '../../components/ui';
 import { get, put } from '../../lib/api';
 import { WizardFooter, useStepSave, type StepProps } from './ScanWizard';
 
@@ -18,8 +18,36 @@ interface Crit {
   defaultIncluded: boolean;
 }
 
+/** A row the scan has to store: it differs from the risk-profile default (or carries an exclusion reason). */
+const isOverride = (i: Crit) => i.included !== i.defaultIncluded || (!i.included && i.reason.trim() !== '');
+
+/**
+ * The default-included checks seen the last time this browser loaded or saved the criteria of a scan. Lets the
+ * step notice that the organisation's risk profile (and so the defaults) changed in the meantime.
+ */
+const defaultsKey = (scanId: string) => `qs_criteria_defaults:${scanId}`;
+function readDefaults(scanId: string): string[] | null {
+  try {
+    const raw = localStorage.getItem(defaultsKey(scanId));
+    return raw ? (JSON.parse(raw) as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+function writeDefaults(scanId: string, rows: Crit[]) {
+  try {
+    localStorage.setItem(defaultsKey(scanId), JSON.stringify(rows.filter((r) => r.defaultIncluded).map((r) => r.checkId)));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProps) {
   const qc = useQueryClient();
+  const nav = useNavigate();
+  const run = useAction();
+  /** Rows still set to the previous profile's default after the risk profile changed. */
+  const [stale, setStale] = useState<string[]>([]);
   const q = useQuery({ queryKey: ['criteria', scan.id], queryFn: () => get<Crit[]>(`/api/scans/${scan.id}/criteria`) });
   const [items, setItems] = useState<Crit[]>([]);
   const [search, setSearch] = useState('');
@@ -27,8 +55,27 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
   const [view, setView] = useState<'provider' | 'iso'>('provider');
 
   useEffect(() => {
-    if (q.data) setItems(q.data);
-  }, [q.data]);
+    if (!q.data) return;
+    setItems(q.data);
+    const before = readDefaults(scan.id);
+    if (!before) {
+      writeDefaults(scan.id, q.data);
+      return;
+    }
+    const was = new Set(before);
+    // A check whose default flipped, and which is still stored at the old default, was pinned by an earlier save.
+    setStale(q.data.filter((r) => was.has(r.checkId) !== r.defaultIncluded && r.included === was.has(r.checkId)).map((r) => r.checkId));
+  }, [q.data, scan.id]);
+
+  const applyNewDefaults = () => {
+    const ids = new Set(stale);
+    setItems((xs) => xs.map((x) => (ids.has(x.checkId) ? { ...x, included: x.defaultIncluded, reason: '' } : x)));
+    setStale([]);
+  };
+  const keepSettings = () => {
+    if (q.data) writeDefaults(scan.id, q.data);
+    setStale([]);
+  };
 
   const providers = useMemo(() => [...new Set(items.map((i) => CHECKS_BY_ID[i.checkId].provider))], [items]);
   const filtered = items.filter((i) => {
@@ -53,11 +100,30 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
   }, [filtered, view]);
 
   // Saved by the wizard before it leaves this step; errors become a toast and keep the user here.
-  useStepSave(saveRef, async () => {
-    if (!q.data || JSON.stringify(items) === JSON.stringify(q.data)) return;
-    await put(`/api/scans/${scan.id}/criteria`, { items: items.map(({ checkId, included, reason }) => ({ checkId, included, reason })) });
-    qc.setQueryData(['criteria', scan.id], items);
-  });
+  // Only overrides are sent (plus rows changed back to their default, so an earlier override is replaced):
+  // checks left at their default keep following the organisation's risk profile.
+  const save = async () => {
+    if (!q.data) return;
+    const loaded = new Map(q.data.map((r) => [r.checkId, r]));
+    const changed = items.filter((i) => {
+      const o = loaded.get(i.checkId);
+      return !o || o.included !== i.included || o.reason !== i.reason;
+    });
+    if (changed.length) {
+      const changedIds = new Set(changed.map((i) => i.checkId));
+      const send = items.filter((i) => changedIds.has(i.checkId) || isOverride(i));
+      await put(`/api/scans/${scan.id}/criteria`, { items: send.map(({ checkId, included, reason }) => ({ checkId, included, reason: included ? '' : reason })) });
+      qc.setQueryData(['criteria', scan.id], items);
+    }
+    writeDefaults(scan.id, items);
+  };
+  useStepSave(saveRef, save);
+
+  /** Saves the toggles first, then opens the organisation form, which returns to this step after saving. */
+  const editOrganisation = async () => {
+    const ok = await run(save);
+    if (ok) nav(`/organisations/${scan.customer.id}/edit?returnTo=${encodeURIComponent(`/scans/${scan.id}/wizard?step=criteria`)}`);
+  };
 
   if (q.isError && !q.data) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   if (q.isLoading) return <PageLoader />;
@@ -70,7 +136,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Criteria in scope</div>
           <div className="mt-2 text-3xl font-semibold text-slate-900">
             {included.length}
-            <span className="text-lg font-normal text-slate-400"> / {items.length}</span>
+            <span className="text-lg font-normal text-slate-500"> / {items.length}</span>
           </div>
         </div>
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
@@ -82,11 +148,39 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           <div className="mt-2">
             <span className={clsx('rounded-lg px-2.5 py-1 text-sm font-semibold ring-1', risk.cls)}>{risk.label}</span>
           </div>
-          <Link to={`/organisations/${scan.customer.id}/edit`} className="mt-3 inline-block text-xs font-medium text-brand-700 hover:underline">
-            From the organisation context. Edit organisation
-          </Link>
+          <p className="mt-3 text-xs text-slate-500">
+            From the organisation context.{' '}
+            <Link
+              to={`/organisations/${scan.customer.id}/edit?returnTo=${encodeURIComponent(`/scans/${scan.id}/wizard?step=criteria`)}`}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                void editOrganisation();
+              }}
+              className="font-medium text-brand-700 hover:underline"
+            >
+              Edit organisation
+            </Link>
+          </p>
         </div>
       </div>
+
+      {stale.length > 0 && (
+        <Alert tone="info" live className="mb-6" title="The risk profile changed">
+          <p>
+            {stale.length === 1 ? 'One check is' : `${stale.length} checks are`} still set to the default of the previous risk profile. Apply the new defaults to
+            follow the current profile; checks you changed yourself stay as they are.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={applyNewDefaults}>
+              Apply new defaults
+            </Button>
+            <Button size="sm" variant="secondary" onClick={keepSettings}>
+              Keep current settings
+            </Button>
+          </div>
+        </Alert>
+      )}
 
       <Card
         title="Evaluation criteria"
@@ -98,7 +192,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
             icon={<RotateCcw className="size-3.5" />}
             onClick={() => setItems((xs) => xs.map((x) => ({ ...x, included: x.defaultIncluded, reason: '' })))}
             confirm={{
-              title: 'Reset to defaults',
+              title: 'Reset to defaults?',
               body: 'Every check goes back to the default for this risk profile and all exclusion reasons are cleared. The change is saved when you continue.',
               confirmLabel: 'Reset',
             }}
@@ -109,12 +203,12 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
       >
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative w-64">
-            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" aria-hidden />
+            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-500" aria-hidden />
             <Input type="search" aria-label="Search criteria" placeholder="Search title or control (e.g. 8.5)" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <div role="group" aria-label="Filter by platform" className="flex rounded-lg bg-slate-100 p-0.5 text-sm">
             {(['all', ...providers] as const).map((p) => (
-              <button key={p} type="button" aria-pressed={tab === p} onClick={() => setTab(p)} className={clsx('flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium', tab === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
+              <button key={p} type="button" aria-pressed={tab === p} onClick={() => setTab(p)} className={clsx('flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium', tab === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600')}>
                 {p !== 'all' && <ProviderIcon provider={p} className="size-3.5" />}
                 {p === 'all' ? 'All' : PROVIDER_SHORT[p]}
               </button>
@@ -122,7 +216,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           </div>
           <div role="group" aria-label="Group by" className="ml-auto flex rounded-lg bg-slate-100 p-0.5 text-sm">
             {(['provider', 'iso'] as const).map((v) => (
-              <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={clsx('rounded-md px-3 py-1.5 font-medium', view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}>
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={clsx('rounded-md px-3 py-1.5 font-medium', view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600')}>
                 {v === 'provider' ? 'By platform' : 'By ISO control'}
               </button>
             ))}
@@ -145,7 +239,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           )}
           {groups.map((g) => (
             <div key={g.key}>
-              <div className="flex items-center gap-2 border-y border-slate-100 bg-slate-50 px-6 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="flex items-center gap-2 border-y border-slate-100 bg-slate-50 px-6 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {view === 'provider' ? (
                   <>
                     <ProviderIcon provider={g.key as Provider} className="size-4" />
@@ -186,7 +280,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
                               </span>
                             ))}
                           </div>
-                          <span className="text-[11px] text-slate-400">{DOMAIN_LABELS[m.domain]}</span>
+                          <span className="text-[11px] text-slate-500">{DOMAIN_LABELS[m.domain]}</span>
                         </div>
                       </div>
                     </li>

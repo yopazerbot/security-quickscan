@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, ISO_BY_ID, PROVIDER_LABELS } from '@qs/shared';
+import { CHECKS_BY_ID, ISO_BY_ID, partialLabel, PROVIDER_LABELS } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowLeft, ArrowRight, CircleStop, FileText, Loader2, PartyPopper, RefreshCw, XCircle } from 'lucide-react';
@@ -7,9 +7,10 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { AsyncButton } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { Alert, Button, Card, ErrorState, LinkButton, PageHeader, PageLoader, StatusBadge } from '../components/ui';
-import { get, post } from '../lib/api';
+import { ApiError, get, post } from '../lib/api';
 import { accessCan } from '../lib/auth';
-import { fmtDuration, GRADE_HEX, STATUS_STYLE } from '../lib/format';
+import { fmtDuration, GRADE_HEX, NOT_ASSESSED_HEX, STATUS_STYLE } from '../lib/format';
+import { useDocumentTitle } from '../lib/use-document-title';
 import type { WizardScan } from './wizard/ScanWizard';
 
 interface Snapshot {
@@ -18,24 +19,49 @@ interface Snapshot {
   startedAt: string | null;
   finishedAt: string | null;
   results: { systemId: string; checkId: string; status: keyof typeof STATUS_STYLE; summary: string; finishedAt: string | null }[];
-  live: { score: number; grade: string; counts: Record<string, number>; severityCounts: Record<string, number> };
+  live: {
+    /** Null when too few checks could be assessed to grade. */
+    score: number | null;
+    grade: string | null;
+    counts: Record<string, number>;
+    severityCounts: Record<string, number>;
+    coverage?: { assessed: number; inScope: number };
+    partial?: boolean;
+  };
 }
 
 const TERMINAL = ['completed', 'failed', 'cancelled'];
 
+/** Errors that will not go away by retrying: stop streaming and polling. */
+const isFatal = (e: unknown) => e instanceof ApiError && [401, 403, 404].includes(e.status);
+
 function useScanStream(scanId: string) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   useEffect(() => {
     let es: EventSource | null = null;
     let poll: ReturnType<typeof setInterval> | null = null;
     let stopped = false;
+    const stop = () => {
+      stopped = true;
+      es?.close();
+      if (poll) clearInterval(poll);
+      poll = null;
+    };
     const startPolling = () => {
-      if (poll) return;
+      if (poll || stopped) return;
       poll = setInterval(async () => {
-        const s = await get<Snapshot>(`/api/scans/${scanId}/progress`).catch(() => null);
-        if (s && !stopped) {
+        try {
+          const s = await get<Snapshot>(`/api/scans/${scanId}/progress`);
+          if (stopped) return;
           setSnap(s);
           if (TERMINAL.includes(s.status) && poll) clearInterval(poll);
+        } catch (e) {
+          // Signed out, access withdrawn or scan deleted: stop asking and show why.
+          if (isFatal(e) && !stopped) {
+            stop();
+            setError(e as Error);
+          }
         }
       }, 2500);
     };
@@ -45,17 +71,26 @@ function useScanStream(scanId: string) {
       setSnap(s);
       if (TERMINAL.includes(s.status)) es?.close();
     });
+    es.addEventListener('access_revoked', (e) => {
+      let reason = 'access';
+      try {
+        reason = JSON.parse((e as MessageEvent).data)?.reason ?? 'access';
+      } catch {
+        // Keep the default reason.
+      }
+      stop();
+      if (reason === 'session') {
+        setError(new ApiError(401, 'Your session has ended. Sign in again to follow this scan.'));
+        window.dispatchEvent(new Event('qs:unauthorized'));
+      } else setError(new ApiError(403, 'You no longer have access to this organisation.'));
+    });
     es.onerror = () => {
       es?.close();
       if (!stopped) startPolling();
     };
-    return () => {
-      stopped = true;
-      es?.close();
-      if (poll) clearInterval(poll);
-    };
+    return stop;
   }, [scanId]);
-  return snap;
+  return { snap, error };
 }
 
 function Ring({ pct, size = 168, stroke = 14, color, children }: { pct: number; size?: number; stroke?: number; color: string; children: React.ReactNode }) {
@@ -106,8 +141,8 @@ export function ScanProgress() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const scan = useQuery({ queryKey: ['scan', scanId], queryFn: () => get<WizardScan>(`/api/scans/${scanId}`) });
-  const snap = useScanStream(scanId!);
-  const active = Boolean(snap && !TERMINAL.includes(snap.status));
+  const { snap, error: streamError } = useScanStream(scanId!);
+  const active = Boolean(snap && !TERMINAL.includes(snap.status) && !streamError);
   const now = useNow(active);
 
   useEffect(() => {
@@ -123,7 +158,21 @@ export function ScanProgress() {
     return m;
   }, [snap]);
 
-  if (scan.error) return <ErrorState error={scan.error} onRetry={() => void scan.refetch()} />;
+  const pageTitle = !snap
+    ? 'Scan progress'
+    : snap.status === 'completed'
+      ? 'Scan finished'
+      : snap.status === 'cancelled'
+        ? 'Scan cancelled'
+        : snap.status === 'failed'
+          ? 'Scan failed'
+          : snap.status === 'queued'
+            ? 'Scan queued'
+            : 'Scanning...';
+  useDocumentTitle(pageTitle);
+
+  if (streamError) return <ErrorState error={streamError} />;
+  if (scan.error) return <ErrorState error={scan.error} onRetry={isFatal(scan.error) ? undefined : () => void scan.refetch()} />;
   if (!scan.data || !snap) return <PageLoader />;
   const total = snap.results.length;
   const done = snap.results.filter((r) => !['pending', 'running'].includes(r.status)).length;
@@ -137,6 +186,8 @@ export function ScanProgress() {
   const sysLabel = new Map(scan.data.systems.map((s) => [s.id, s]));
   const finished = snap.status === 'completed' || snap.status === 'cancelled';
   const failed = snap.status === 'failed';
+  // A report needs at least one finished check; a scan cancelled before anything ran has nothing to show.
+  const hasResults = done > 0;
   const customerUrl = `/organisations/${scan.data.customer.id}`;
   const can = accessCan(scan.data.customer.myAccess);
   const rescan = async () => {
@@ -144,8 +195,22 @@ export function ScanProgress() {
     void qc.invalidateQueries({ queryKey: ['scans'] });
     nav(`/scans/${r.id}/wizard`);
   };
-  const title =
-    snap.status === 'completed' ? 'Scan finished' : snap.status === 'cancelled' ? 'Scan cancelled' : failed ? 'Scan failed' : snap.status === 'queued' ? 'Scan queued' : 'Scanning...';
+  const title = pageTitle;
+  const statusText =
+    snap.status === 'queued'
+      ? 'Waiting for a scan worker...'
+      : active
+        ? 'Running read-only checks in parallel'
+        : snap.status === 'completed'
+          ? 'All checks have completed'
+          : snap.status === 'cancelled'
+            ? hasResults
+              ? 'The scan was cancelled; results are partial'
+              : 'The scan was cancelled before any check finished'
+            : 'The scan stopped because of an error';
+  const graded = done > 0 && snap.live.grade !== null && snap.live.score !== null;
+  const liveHex = graded ? GRADE_HEX[snap.live.grade!] : NOT_ASSESSED_HEX;
+  const partial = graded && snap.live.coverage ? partialLabel({ partial: Boolean(snap.live.partial), coverage: snap.live.coverage }) : null;
 
   return (
     <>
@@ -176,7 +241,7 @@ export function ScanProgress() {
                   Cancel scan
                 </AsyncButton>
               ))}
-            {finished && (
+            {finished && hasResults && (
               <LinkButton to={`/scans/${scanId}/report`} size="lg" icon={<ArrowRight className="size-4" />}>
                 View report
               </LinkButton>
@@ -185,12 +250,37 @@ export function ScanProgress() {
         }
       />
 
+      {/* Screen readers hear each state change (queued, running, finished, failed, cancelled) once. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {title}. {statusText}.
+      </div>
+
+      {snap.status === 'cancelled' && !hasResults && (
+        <Alert tone="warn" className="mb-6" title="No results to report">
+          <p>The scan was cancelled before any check finished, so there is no report.{can.edit ? ' Start a new scan with the same scope when you are ready.' : ' Ask the owner to rescan.'}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {can.edit && (
+              <AsyncButton icon={<RefreshCw className="size-4" />} onClick={rescan}>
+                Start a rescan
+              </AsyncButton>
+            )}
+            <LinkButton to={customerUrl} variant="ghost" icon={<ArrowLeft className="size-4" />}>
+              Back to organisation
+            </LinkButton>
+          </div>
+        </Alert>
+      )}
+
       {failed && (
         <Alert tone="error" className="mb-6" title={<span className="flex items-center gap-2"><XCircle className="size-4" aria-hidden /> The scan failed before all checks could run</span>}>
           <p>
-            {done > 0
-              ? `${done} of ${total} checks completed before the failure. You can review their results as a partial report, or start a new scan with the same scope.`
-              : 'No checks completed. Start a new scan with the same scope, or go back to the organisation to review the connected systems.'}
+            {can.edit
+              ? done > 0
+                ? `${done} of ${total} checks completed before the failure. You can review their results as a partial report, or start a new scan with the same scope.`
+                : 'No checks completed. Start a new scan with the same scope, or go back to the organisation to review the connected systems.'
+              : done > 0
+                ? `${done} of ${total} checks completed before the failure. You can review their results as a partial report. Ask the owner to rescan.`
+                : 'No checks completed. Ask the owner to rescan.'}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {done > 0 && (
@@ -222,21 +312,13 @@ export function ScanProgress() {
             <div className="flex-1 space-y-5">
               <div className="flex items-center gap-2 text-sm text-slate-600">
                 {active ? (
-                  <Loader2 className="size-4 animate-spin text-brand-600" />
+                  <Loader2 className="size-4 animate-spin text-brand-600" aria-hidden />
                 ) : snap.status === 'completed' ? (
-                  <PartyPopper className="size-4 text-emerald-600" />
+                  <PartyPopper className="size-4 text-emerald-600" aria-hidden />
                 ) : failed ? (
-                  <XCircle className="size-4 text-red-600" />
+                  <XCircle className="size-4 text-red-600" aria-hidden />
                 ) : null}
-                {snap.status === 'queued'
-                  ? 'Waiting for a scan worker...'
-                  : active
-                    ? 'Running read-only checks in parallel'
-                    : snap.status === 'completed'
-                      ? 'All checks have completed'
-                      : snap.status === 'cancelled'
-                        ? 'The scan was cancelled; results are partial'
-                        : 'The scan stopped because of an error'}
+                {statusText}
               </div>
               <div className="grid grid-cols-5 gap-2">
                 {(['pass', 'warn', 'fail', 'na', 'error'] as const).map((k) => (
@@ -263,12 +345,14 @@ export function ScanProgress() {
         <Card>
           <div className="flex flex-col items-center p-8 text-center">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{finished ? 'Final score' : 'Live score'}</div>
-            <Ring pct={done ? snap.live.score : 0} size={140} stroke={12} color={done ? GRADE_HEX[snap.live.grade] : '#cbd5e1'}>
-              <div className="text-4xl font-bold" style={{ color: done ? GRADE_HEX[snap.live.grade] : '#94a3b8' }}>
-                {done ? snap.live.grade : '-'}
+            <Ring pct={graded ? snap.live.score! : 0} size={140} stroke={12} color={graded ? liveHex : '#cbd5e1'}>
+              <div className={clsx('font-bold', graded ? 'text-4xl' : 'text-4xl text-slate-600')} style={graded ? { color: liveHex } : undefined}>
+                {graded ? snap.live.grade : '-'}
               </div>
-              <div className="text-xs text-slate-500">{done ? `${snap.live.score}/100` : 'waiting'}</div>
+              <div className="px-4 text-xs text-slate-600">{graded ? `${snap.live.score}/100` : done ? 'Not assessed' : 'Waiting'}</div>
             </Ring>
+            {partial && <div className="mt-3 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200">{partial}</div>}
+            {done > 0 && !graded && <p className="mt-3 text-xs text-slate-600">Too few checks could be assessed so far to give a grade.</p>}
             <div className="mt-4 flex gap-3 text-xs">
               {(['critical', 'high', 'medium'] as const).map((s) => (
                 <span key={s} className="capitalize text-slate-500">
@@ -306,7 +390,7 @@ export function ScanProgress() {
                       {d}/{rows.length}
                     </span>
                   </div>
-                  <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-hidden>
                     <div className="h-full rounded-full bg-brand-600 transition-all duration-500" style={{ width: `${(d / rows.length) * 100}%` }} />
                   </div>
                   <div className="flex flex-wrap gap-1.5">
