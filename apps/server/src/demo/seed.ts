@@ -1,9 +1,10 @@
 import { demoOutcomeSync, DEMO_COMPANY, IMPLEMENTED_CHECKS } from '@qs/checks';
 import { CHECKS, CHECKS_BY_ID, computeRiskProfile, riskRank, type CustomerContext, type Provider } from '@qs/shared';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { audit } from '../audit.js';
 import type { AppCtx } from '../context.js';
 import { randomToken } from '../crypto/envelope.js';
+import { DEMO_EMAIL } from './login.js';
 import { checkResults, customerAssignments, customers, findingTriage, scanCriteria, scans, scanSystems, users } from '../db/schema.js';
 import { storeScanScore } from '../scoring.js';
 
@@ -185,7 +186,7 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
 
   if (!completed) return false;
   // Give an existing demo visitor account access to the new demo customer.
-  const visitor = await ctx.db.select({ id: users.id }).from(users).where(eq(users.isDemo, true)).limit(1);
+  const visitor = await ctx.db.select({ id: users.id }).from(users).where(and(eq(users.isDemo, true), eq(users.email, DEMO_EMAIL))).limit(1);
   if (visitor.length) await ctx.db.insert(customerAssignments).values({ userId: visitor[0].id, customerId: completed.customerId, permission: 'edit' }).onConflictDoNothing();
   for (const id of completed.scanIds) await storeScanScore(ctx, id);
   await audit(ctx, null, 'demo.seed', { type: 'customer', id: completed.customerId }, { name: DEMO_COMPANY.name }, { id: '', email: 'system' });

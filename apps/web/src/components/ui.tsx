@@ -164,9 +164,15 @@ export function StatusBadge({ status }: { status: ResultStatus | 'pending' | 'ru
 
 export function GradeBadge({ grade, score, size = 'md' }: { grade?: string | null; score?: number | null; size?: 'sm' | 'md' | 'lg' }) {
   const dim = size === 'lg' ? 'size-24 text-5xl' : size === 'md' ? 'size-10 text-lg' : 'size-7 text-sm';
+  // No grade: the scan is not finished, or too few checks could be assessed to grade it. Same footprint as a grade.
   if (!grade)
     return (
-      <span role="img" aria-label="Not graded" title="Not graded" className={clsx('inline-flex shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 font-bold text-slate-400', dim)}>
+      <span
+        role="img"
+        aria-label="Not assessed"
+        title="Not assessed"
+        className={clsx('inline-flex shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-slate-400 font-bold text-slate-600', dim)}
+      >
         <span aria-hidden>-</span>
       </span>
     );

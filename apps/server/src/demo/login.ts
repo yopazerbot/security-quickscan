@@ -1,5 +1,5 @@
 import { hash, verify } from '@node-rs/argon2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
@@ -10,7 +10,7 @@ import { customerAssignments, customers, sessions, settings, users } from '../db
 import { parse } from '../routes/helpers.js';
 
 const KEY = 'demo_login';
-const DEMO_EMAIL = 'demo-visitor@local';
+export const DEMO_EMAIL = 'demo-visitor@local';
 const DEMO_GLOBAL_MAX = 300;
 
 interface DemoLoginSetting {
@@ -34,7 +34,7 @@ export async function demoLoginAvailable(ctx: AppCtx) {
 
 /** The shared demo visitor account, assigned to every demo organisation and nothing else. */
 export async function ensureDemoUser(ctx: AppCtx): Promise<string> {
-  let u = (await ctx.db.select().from(users).where(eq(users.isDemo, true)).limit(1))[0];
+  let u = (await ctx.db.select().from(users).where(and(eq(users.isDemo, true), eq(users.email, DEMO_EMAIL))).limit(1))[0];
   if (!u) {
     [u] = await ctx.db
       .insert(users)
@@ -52,7 +52,7 @@ export async function ensureDemoUser(ctx: AppCtx): Promise<string> {
 }
 
 async function revokeDemoSessions(ctx: AppCtx) {
-  const u = (await ctx.db.select({ id: users.id }).from(users).where(eq(users.isDemo, true)).limit(1))[0];
+  const u = (await ctx.db.select({ id: users.id }).from(users).where(and(eq(users.isDemo, true), eq(users.email, DEMO_EMAIL))).limit(1))[0];
   if (u) await ctx.db.delete(sessions).where(eq(sessions.userId, u.id));
 }
 

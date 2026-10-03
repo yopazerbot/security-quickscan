@@ -17,12 +17,43 @@ import { credentials, scans, scanSystems } from './db/schema.js';
 
 async function readSecret(prompt: string): Promise<string> {
   process.stderr.write(prompt);
+  if (process.stdin.isTTY) return readHidden();
   const rl = createInterface({ input: process.stdin, terminal: false });
   for await (const line of rl) {
     rl.close();
     return line;
   }
   return '';
+}
+
+/** Reads one line from an interactive terminal without echoing it (the break-glass password). */
+function readHidden(): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    let value = '';
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const done = (v: string) => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stderr.write('\n');
+      resolve(v);
+    };
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n') return done(value);
+        if (ch === '\u0003') {
+          process.stderr.write('\n');
+          process.exit(130);
+        }
+        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
 }
 
 function decryptsWith(env: Envelope, blob: Buffer, aad: string) {

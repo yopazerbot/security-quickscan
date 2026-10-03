@@ -23,7 +23,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
   - an interactive web report: grade and trend, Annex A heatmap, domain radar, top risks, quick wins, filterable findings with evidence and remediation;
   - a branded [PDF report](docs/sample-report.pdf);
   - CSV exports of findings and of the Annex A control assessment.
-- **Triage that sticks.** Mark findings as risk accepted or false positive with a note; this carries over to later scans of the same organisation and is reflected in the score.
+- **Triage that sticks.** Mark a finding on a specific system as risk accepted or false positive with a note; the decision carries over to later scans of that system and is reflected in their score. Finished reports never change afterwards.
 - **Private by default** (hosted mode): each user sees only the organisations they own; the owner shares an organisation with specific colleagues as view or edit, on a need-to-know basis. Admin, analyst and viewer roles and an append-only audit log.
 - **Demo mode** with a realistic fictional organisation, for trying the tool or giving others a tour, plus an optional PIN login for demo visitors.
 
@@ -48,7 +48,13 @@ cd security-quickscan
 docker compose up -d --build
 ```
 
-Open **http://localhost:8080**. You are signed in automatically, with no account or configuration needed.
+Then open the one-time sign-in link the container prints:
+
+```bash
+docker compose logs app | grep -A1 "Open this link"
+```
+
+The link looks like `http://localhost:8080/?local_token=...`. Opening it once signs your browser in (like Jupyter); after that, plain `http://localhost:8080` works. No account or configuration is needed, and the link changes every time the container restarts.
 
 To explore with the fictional demo organisation and simulated systems:
 
@@ -71,7 +77,8 @@ Once the image is published to the GitHub Container Registry you can skip `--bui
 
 `docker-compose.yml` runs the app with `LOCAL_MODE=true`:
 
-- The port is published on **127.0.0.1 only**, so other machines on your network cannot reach it.
+- The port is published on **127.0.0.1 only**, so other machines on your network cannot reach it. If you change that, keep it on 127.0.0.1: the app warns at startup when local mode listens on all interfaces.
+- Inside the container, a session can only be started with the one-time link printed at startup, so even a wrongly published port does not hand out access.
 - The app answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]` (this also blocks DNS-rebinding attacks), and it refuses to start in local mode with a non-localhost `APP_URL`.
 - CSRF protection and same-origin checks stay active.
 - The encryption key for stored credentials is generated on first start and kept in the `appdata` Docker volume (`/data/master.key`, readable only by the app). Back up that volume if you keep secrets between scans.
@@ -165,6 +172,7 @@ Migrations run automatically on start. Enable database backups.
 | `DATABASE_URL` | yes | Postgres connection string (on Railway: `${{Postgres.DATABASE_URL}}`) |
 | `APP_URL` | yes (hosted) | Public URL without trailing slash, e.g. `https://scan.example.com` |
 | `MASTER_KEY` | yes (hosted) | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts stored credentials. |
+| `MASTER_KEY_PREVIOUS` | no | Previous master key during a key rotation (see below) |
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | yes (hosted) | Sign-in app from step 1 |
 | `BOOTSTRAP_ADMIN_EMAIL` | first start | This account becomes administrator on its first sign-in |
 | `ENTRA_REQUIRE_MFA` | no | Reject tokens without an MFA claim |
@@ -174,8 +182,10 @@ Migrations run automatically on start. Enable database backups.
 | `LOCAL_MODE` | no | Single-user local installation without login (see above) |
 | `DEMO_MODE` | no | Fictional demo organisation and simulated systems |
 | `MODE` | no | `all` (default), or run `api` and `worker` as separate services |
-| `SESSION_IDLE_MINUTES`, `SESSION_MAX_HOURS` | no | Session timeouts (default 30 minutes idle, 8 hours absolute) |
-| `DATABASE_SSL`, `TRUST_PROXY`, `COOKIE_SECURE`, `PORT`, `LOG_LEVEL` | no | Infrastructure settings, see [.env.example](.env.example) |
+| `SESSION_IDLE_MINUTES`, `SESSION_MAX_HOURS` | no | Session timeouts (default 30 minutes idle, 8 hours absolute); users get a warning two minutes before expiry |
+| `AUDIT_RETENTION_MONTHS` | no | How long audit log entries are kept (default 24) |
+| `TRUST_PROXY` | no | Proxy hops in front of the app, used for client IPs in rate limits and the audit log. Defaults to `1` on Railway and `false` elsewhere; set it to match your reverse proxy |
+| `DATABASE_SSL`, `COOKIE_SECURE`, `PORT`, `LOG_LEVEL` | no | Infrastructure settings, see [.env.example](.env.example) |
 
 Generate break-glass values with the bundled CLI:
 
@@ -186,12 +196,16 @@ node apps/server/dist/cli.js gen-totp         # BREAKGLASS_TOTP_SECRET (add the 
 node apps/server/dist/cli.js gen-master-key   # MASTER_KEY
 ```
 
-Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTER_KEY` to the new one, then running `node apps/server/dist/cli.js rotate-master-key`.
+Rotate the master key without downtime:
+
+1. Set `MASTER_KEY_PREVIOUS` to the current key and `MASTER_KEY` to a new one, and deploy. The app now encrypts with the new key and can still read data encrypted with the old one, so connection tests and running scans keep working.
+2. While the app is running, run `node apps/server/dist/cli.js rotate-master-key` against the same database to re-encrypt stored credentials with the new key.
+3. Remove `MASTER_KEY_PREVIOUS` and deploy again.
 
 ## Security model
 
 - **Authentication (hosted):** Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after 30 minutes idle and 8 hours absolute, and rotate at login.
-- **Access control (need-to-know):** invite-only users with roles admin, analyst and viewer. Every organisation has an owner, who decides who else may view or edit it; other users get 404, not 403, so they cannot even tell it exists. Shares go to existing accounts by email (no user directory is exposed), viewer accounts always stay read-only, and admins can see and manage all organisations. Access is checked on every request and re-checked on live progress streams.
+- **Access control (need-to-know):** invite-only users with roles admin, analyst and viewer. Every organisation has an owner, who decides who else may view or edit it (when an admin deletes, deactivates or demotes an owner, they must pick a new owner in the same step); other users get 404, not 403, so they cannot even tell it exists. Shares go to existing accounts by email (no user directory is exposed), viewer accounts always stay read-only, and admins can see and manage all organisations. Access is checked on every request and re-checked on live progress streams.
 - **CSRF:** SameSite=Strict cookies, a per-session CSRF token header, and Origin / `Sec-Fetch-Site` checks on every state-changing request.
 - **Stored credentials:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
 - **Least privilege:** read-only permissions only. The preferred methods (AWS role with external ID, Microsoft admin consent) avoid exchanging secrets at all.
@@ -202,7 +216,8 @@ Rotate the master key by setting `MASTER_KEY_PREVIOUS` to the old key and `MASTE
   - HTTP calls to the Microsoft and GitHub APIs are restricted to allow-listed hosts with redirects disabled, and no user-supplied URLs are ever fetched;
   - secrets, cookies and OAuth codes redacted from logs;
   - CSV formula-injection protection and PNG/JPEG-only logo upload.
-- **Audit:** an append-only audit log of logins, break-glass and demo access, credential storage, use and purge, scans, exports and admin changes. A database trigger blocks updates and deletes.
+- **Microsoft tenant links:** a Microsoft tenant can be linked to only one organisation, and only after Microsoft confirms that the admin consent was granted through that organisation's consent link. Links survive deletion of the organisation until an admin releases them under Settings.
+- **Audit:** an append-only audit log of logins, break-glass and demo access, sharing and ownership changes, credential storage, use and purge, scans, report views and exports, and admin changes. A database trigger blocks updates and deletes; the only way to remove entries is the retention job (`AUDIT_RETENTION_MONTHS`).
 - **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit` and gitleaks, plus CodeQL code scanning.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
@@ -300,8 +315,14 @@ The end-to-end suite starts the app in demo mode and covers:
 ## Limitations
 
 - This is a point-in-time, automated configuration review. It is not a penetration test, and it does not cover on-premises systems, endpoints or organisational controls.
-- Results depend on the permissions and licences available to the scanning identity. Checks that cannot be evaluated are reported as not assessed, never silently passed.
+- Results depend on the permissions and licences available to the scanning identity. Checks that cannot see everything (denied resources, skipped regions or subscriptions, truncated lists) report a warning that says what was not evaluated, and checks that see nothing report an error; they never silently pass. A scan where fewer than half of the checks could be assessed gets no grade, and a scan with less than 90% coverage is marked Partial.
 - Repository-level GitHub checks look at the 200 most recently pushed repositories.
+
+## Upgrading
+
+- **From versions before need-to-know sharing:** the former "access to all organisations" option no longer exists. Users who relied on it only see organisations they own or that are shared with them. To find them, look in the audit log for `user.update` or `user.create` entries with `allCustomers: true`, then share the relevant organisations with them.
+- **Triage** decisions made before per-system triage keep applying to every system of the organisation. New decisions apply to one system.
+- Database migrations run automatically at startup.
 
 ## Contributing
 

@@ -138,7 +138,10 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     }
     if (config.LOCAL_REQUIRE_TOKEN) {
       // Like Jupyter: the first session needs this link; afterwards the browser keeps its session cookie.
-      app.log.warn(`Open Security QuickScan with this one-time link: ${config.APP_URL}/?local_token=${localAccessToken(ctx)}`);
+      const link = `${config.APP_URL}/?local_token=${localAccessToken(ctx)}`;
+      app.log.warn(`Open Security QuickScan with this one-time link: ${link}`);
+      // Plain line as well, so it is easy to copy from `docker compose logs`.
+      process.stderr.write(`\n  Security QuickScan is ready. Open this link to sign in:\n  ${link}\n\n`);
     }
   }
 

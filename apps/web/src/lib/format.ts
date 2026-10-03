@@ -1,4 +1,4 @@
-import { gradeFor, type ControlVerdict, type ResultStatus, type Severity } from '@qs/shared';
+import { GRADE_COLORS, gradeFor, type ControlVerdict, type ResultStatus, type Severity } from '@qs/shared';
 
 export const fmtDate = (d?: string | Date | null) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -25,9 +25,9 @@ export const STATUS_STYLE: Record<ResultStatus | 'pending' | 'running', { label:
   pass: { label: 'Pass', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
   fail: { label: 'Fail', cls: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500' },
   warn: { label: 'Warning', cls: 'bg-amber-50 text-amber-700 ring-amber-200', dot: 'bg-amber-500' },
-  na: { label: 'N/A', cls: 'bg-slate-50 text-slate-500 ring-slate-200', dot: 'bg-slate-300' },
+  na: { label: 'N/A', cls: 'bg-slate-50 text-slate-600 ring-slate-200', dot: 'bg-slate-300' },
   error: { label: 'Error', cls: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200', dot: 'bg-fuchsia-500' },
-  pending: { label: 'Queued', cls: 'bg-slate-50 text-slate-400 ring-slate-200', dot: 'bg-slate-200' },
+  pending: { label: 'Queued', cls: 'bg-slate-50 text-slate-600 ring-slate-200', dot: 'bg-slate-200' },
   running: { label: 'Running', cls: 'bg-brand-50 text-brand-700 ring-brand-200', dot: 'bg-brand-500' },
 };
 
@@ -39,7 +39,11 @@ export const VERDICT_STYLE: Record<ControlVerdict, { cls: string; hex: string }>
   not_assessed: { cls: 'bg-slate-200 text-slate-700', hex: '#cbd5e1' },
 };
 
-export const GRADE_HEX: Record<string, string> = { A: '#059669', B: '#65a30d', C: '#ca8a04', D: '#ea580c', E: '#dc2626', F: '#991b1b' };
+/** Grade colours come from shared so the web app and the PDF always match. */
+export const GRADE_HEX: Record<string, string> = GRADE_COLORS;
+
+/** Neutral colour for a missing score or grade ("Not assessed"). */
+export const NOT_ASSESSED_HEX = '#64748b';
 
 /** Score colours follow the grade bands, so a score and its grade always have the same colour. */
 export const scoreHex = (s: number | null | undefined) => (s === null || s === undefined ? '#cbd5e1' : GRADE_HEX[gradeFor(s)]);
