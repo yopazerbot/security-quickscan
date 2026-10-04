@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, computeScore, systemKey, type Provider, type RiskProfile, type ScoreInput, type ScoreSummary } from '@qs/shared';
+import { CHECKS_BY_ID, computeScore, systemKey, type Provider, type ScoreInput, type ScoreSummary } from '@qs/shared';
 import { eq } from 'drizzle-orm';
 import type { AppCtx } from './context.js';
 import { checkResults, findingTriage, scans, scanSystems } from './db/schema.js';
@@ -58,8 +58,7 @@ export async function scoreScanDetailed(ctx: AppCtx, scanId: string) {
       systemId: r.systemId,
     });
   }
-  const profile = scan.riskProfile as RiskProfile;
-  return { summary: computeScore(inputs, CHECKS_BY_ID, profile.domainWeights), triage: used };
+  return { summary: computeScore(inputs, CHECKS_BY_ID), triage: used };
 }
 
 export async function scoreScan(ctx: AppCtx, scanId: string): Promise<ScoreSummary> {

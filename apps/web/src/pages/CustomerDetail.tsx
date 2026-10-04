@@ -1,11 +1,10 @@
-import { ALL_SYSTEMS_KEY, CHECKS_BY_ID, INDUSTRIES, PROVIDER_LABELS, PROVIDER_SHORT, REGULATIONS, computeRiskProfile, type Provider, type Role } from '@qs/shared';
+import { ALL_SYSTEMS_KEY, CHECKS_BY_ID, PROVIDER_LABELS, PROVIDER_SHORT, type Provider, type Role } from '@qs/shared';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowRight, ArrowRightLeft, ChevronDown, Download, KeyRound, LogOut, Pencil, Play, Radar, Trash2, UserPlus, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CONTEXT_LABELS, RISK_STYLE } from '../components/ContextForm';
 import { AsyncButton, useAction, useToast } from '../components/feedback';
 import { DataTable } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
@@ -61,7 +60,6 @@ export function CustomerDetail() {
   const can = accessCan(c.myAccess);
   // Sharing needs real accounts: hidden in local mode (one admin) and in demo sessions.
   const sharing = !me?.features.local && !me?.user.isDemo;
-  const profile = computeRiskProfile(c.context);
   const trend = [...c.scans]
     .filter((s) => s.status === 'completed' && s.score !== null && s.score !== undefined)
     .reverse()
@@ -79,7 +77,6 @@ export function CustomerDetail() {
             {c.isDemo && <DemoBadge />}
           </span>
         }
-        subtitle={[INDUSTRIES.find(([id]) => id === c.context.industry)?.[1], c.country].filter(Boolean).join(' · ')}
         actions={
           <>
             <AnchorButton href={`/api/customers/${c.id}/export`} variant="ghost" icon={<Download className="size-4" aria-hidden />}>
@@ -123,7 +120,7 @@ export function CustomerDetail() {
                 action={can.edit && <Button onClick={() => newScan.mutate()}>Start the first scan</Button>}
               >
                 {can.edit
-                  ? 'A scan walks you through scope, access, criteria and a final review before you start it.'
+                  ? 'A scan walks you through scope, access and a final review. Every best-practice check for the systems in scope runs.'
                   : 'Scans and reports appear here once someone with edit access runs a scan for this organisation.'}
               </EmptyState>
             ) : (
@@ -136,34 +133,6 @@ export function CustomerDetail() {
           {triaged.length > 0 && <TriagedCard triaged={triaged} scans={finished} />}
         </div>
         <div className="space-y-6">
-          <Card title="Risk profile">
-            <div className="flex items-center gap-3">
-              <span className={clsx('rounded-lg px-2.5 py-1 text-sm font-semibold ring-1', RISK_STYLE[profile.level].cls)}>{RISK_STYLE[profile.level].label}</span>
-              <span className="text-xs text-slate-500">{profile.points} risk points</span>
-            </div>
-            <dl className="mt-4 space-y-2 text-sm">
-              <Row k="Employees" v={c.context.employees} />
-              <Row k="Data sensitivity" v={CONTEXT_LABELS.dataSensitivity[c.context.dataSensitivity as keyof typeof CONTEXT_LABELS.dataSensitivity]} />
-              <Row k="Internet exposure" v={CONTEXT_LABELS.internetExposure[c.context.internetExposure as keyof typeof CONTEXT_LABELS.internetExposure]} />
-              <Row k="Remote work" v={CONTEXT_LABELS.remoteWork[c.context.remoteWork as keyof typeof CONTEXT_LABELS.remoteWork]} />
-            </dl>
-            {c.context.regulations.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {c.context.regulations.map((r: string) => (
-                  <span key={r} className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
-                    {REGULATIONS.find(([id]) => id === r)?.[1] ?? r}
-                  </span>
-                ))}
-              </div>
-            )}
-          </Card>
-          <Card title="Contact">
-            <dl className="space-y-2 text-sm">
-              <Row k="Name" v={c.contactName || '-'} />
-              <Row k="Email" v={c.contactEmail || '-'} />
-            </dl>
-            {c.notes && <p className="mt-4 whitespace-pre-wrap text-sm text-slate-600">{c.notes}</p>}
-          </Card>
           {sharing && <AccessCard c={c} />}
           {can.manage && (
             <Card title="Delete organisation">
@@ -199,15 +168,6 @@ export function CustomerDetail() {
         </div>
       </div>
     </>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between gap-4">
-      <dt className="shrink-0 text-slate-500">{k}</dt>
-      <dd className="min-w-0 break-words text-right font-medium text-slate-800">{v}</dd>
-    </div>
   );
 }
 
@@ -318,7 +278,7 @@ function DiscardDraft({ s, customerId }: { s: ScanSummary; customerId: string })
 }
 
 /**
- * Risk acceptances and false positives, each with the system it applies to. Systems are resolved from the most
+ * Risk acceptances and findings marked not applicable, each with the system it applies to. Systems are resolved from the most
  * recent finished scans; a key that no loaded scan knows still shows its platform and id.
  */
 function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] }) {
@@ -331,7 +291,7 @@ function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] 
       if (!known.has(key)) known.set(key, { provider: sys.provider, label: sys.label, identity: systemIdentity(sys.provider, sys.connection?.details, sys.config) });
     }
   return (
-    <Card title="Triaged findings" subtitle="Risk acceptances and false positives apply to scans that finish from now on.">
+    <Card title="Triaged findings" subtitle="Risk acceptances and not applicable findings apply to scans that finish from now on.">
       <ul className="-my-2 divide-y divide-slate-100">
         {triaged.map((t: any) => {
           const key: string = t.systemKey ?? ALL_SYSTEMS_KEY;
@@ -342,7 +302,7 @@ function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-slate-800">{CHECKS_BY_ID[t.checkId]?.title ?? t.checkId}</span>
                 <span className={clsx('shrink-0 rounded-md px-2 py-0.5 text-xs font-medium', t.status === 'accepted' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600')}>
-                  {t.status === 'accepted' ? 'Risk accepted' : 'False positive'}
+                  {t.status === 'accepted' ? 'Risk accepted' : 'Not applicable / false positive'}
                 </span>
               </div>
               <div className="mt-1">
@@ -489,12 +449,7 @@ interface ScanSummary {
 interface CustomerData {
   id: string;
   name: string;
-  country: string | null;
   isDemo: boolean;
-  context: any;
-  contactName: string | null;
-  contactEmail: string | null;
-  notes: string | null;
   scans: ScanSummary[];
   triage: any[];
   myAccess: CustomerAccess;

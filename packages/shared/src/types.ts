@@ -55,9 +55,6 @@ export const SEVERITY_WEIGHT: Record<Severity, number> = {
 export const RESULT_STATUSES = ['pass', 'fail', 'warn', 'na', 'error'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
-export const RISK_LEVELS = ['low', 'medium', 'high', 'critical'] as const;
-export type RiskLevel = (typeof RISK_LEVELS)[number];
-
 export const ROLES = ['admin', 'consultant', 'viewer'] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -88,8 +85,6 @@ export interface CheckMeta {
   title: string;
   description: string;
   severity: Severity;
-  /** Lowest organisation risk level at which this check is included by default. */
-  minRisk: RiskLevel;
   effort: 'low' | 'medium' | 'high';
   remediation: string;
   references: string[];

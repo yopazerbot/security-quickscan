@@ -43,6 +43,13 @@
       "when": 1791055503667,
       "tag": "0005_review2_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791091513665,
+      "tag": "0006_auth_settings",
+      "breakpoints": true
     }
   ]
 }

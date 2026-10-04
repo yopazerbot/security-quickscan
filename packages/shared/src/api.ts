@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { customerContextSchema } from './risk.js';
 import { PROVIDERS, RETENTION_MODES, ROLES } from './types.js';
 
 const guid = z.string().regex(/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/, 'Must be a GUID');
@@ -8,13 +7,12 @@ const tenantRef = z
   .trim()
   .regex(/^([0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}|[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)$/, 'Tenant ID (GUID) or primary domain');
 
+/**
+ * An organisation is just a name: every scan runs all best-practice checks for its systems.
+ * Fields older clients still send (contact details, context questionnaire) are ignored.
+ */
 export const customerInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  contactName: z.string().trim().max(200).default(''),
-  contactEmail: z.union([z.literal(''), z.email().max(320)]).default(''),
-  country: z.string().trim().max(100).default(''),
-  notes: z.string().max(10000).default(''),
-  context: customerContextSchema,
 });
 export type CustomerInput = z.infer<typeof customerInputSchema>;
 

@@ -49,12 +49,16 @@ export const entraSettingsInput = z.object({
   /** Omitted or undefined = keep the current secret; empty string = clear it. */
   clientSecret: z.string().max(500).optional(),
   requireMfa: z.boolean(),
+  /** Required (true) when the change switches off the sign-in method of the current session. */
+  confirm: z.boolean().optional(),
 });
 export type EntraSettingsInput = z.infer<typeof entraSettingsInput>;
 
 export const passwordSettingsInput = z.object({
   enabled: z.boolean(),
   minLength: z.number().int().min(PASSWORD_MIN_LENGTH).max(64),
+  /** Required (true) when the change switches off the sign-in method of the current session. */
+  confirm: z.boolean().optional(),
 });
 export type PasswordSettingsInput = z.infer<typeof passwordSettingsInput>;
 
@@ -98,6 +102,10 @@ export interface TestResult {
 export const REAUTH_REQUIRED = 'reauth_required';
 /** Minutes a sign-in (or re-authentication) counts as recent for sensitive settings. */
 export const RECENT_AUTH_MINUTES = 15;
+/** Error code (409) when a change switches off the current session's sign-in method and needs { confirm: true }. */
+export const CONFIRM_REQUIRED = 'confirm_required';
+/** Error code (403) for every request of a password session that must change its temporary password first. */
+export const PASSWORD_CHANGE_REQUIRED = 'password_change_required';
 
 export const passwordLoginInput = z.object({
   email: z.string().trim().max(320),
@@ -117,3 +125,9 @@ export const setupInput = z.object({
 });
 
 export const resetPasswordInput = z.object({ temporaryPassword: z.string().max(PASSWORD_MAX_LENGTH) });
+
+/** Optional extra field of POST /api/users: a temporary password the user must change at the first sign-in. */
+export const createUserPasswordInput = z.object({ temporaryPassword: z.string().max(PASSWORD_MAX_LENGTH).optional() });
+
+/** POST /api/auth/reauth: confirm the current password of a password session. */
+export const reauthInput = z.object({ password: z.string().max(PASSWORD_MAX_LENGTH) });

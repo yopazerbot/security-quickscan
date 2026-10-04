@@ -91,7 +91,7 @@ function describe(r: AuditRow): string {
     case 'customer.owner_change':
       return `${d.fromEmail ? `Transferred ${org} from ${d.fromEmail}` : `Assigned ${org}`} to ${d.toEmail ?? r.targetEmail ?? 'a new owner'}${OWNER_REASON[d.reason] ?? ''}.`;
     case 'finding.triage': {
-      const status = d.status === 'accepted' ? 'risk accepted' : d.status === 'false_positive' ? 'a false positive' : 'open again';
+      const status = d.status === 'accepted' ? 'risk accepted' : d.status === 'false_positive' ? 'not applicable / false positive' : 'open again';
       return `Marked "${CHECKS_BY_ID[d.checkId]?.title ?? d.checkId ?? 'a finding'}" in ${org} as ${status}.`;
     }
     // Users

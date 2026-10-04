@@ -1,4 +1,3 @@
-import { INDUSTRIES } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Building2, Plus, Search, SearchX, X } from 'lucide-react';
@@ -77,7 +76,7 @@ export function Customers() {
     <>
       <PageHeader
         title="Organisations"
-        subtitle="Each organisation has its own context, risk profile and scan history."
+        subtitle="Each organisation has its own systems, scan history and triage decisions."
         actions={
           can.write && (
             <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
@@ -100,7 +99,7 @@ export function Customers() {
             }
           >
             {can.write
-              ? 'Capture the organisation context once; it drives the risk profile and evaluation criteria of every scan. Only you and admins can see it until you share it.'
+              ? 'All you need is a name. Every scan runs all best-practice checks for the systems you add. Only you and admins can see it until you share it.'
               : 'Organisations appear here once someone shares them with you.'}
           </EmptyState>
         </Card>
@@ -166,7 +165,6 @@ export function Customers() {
                         </Link>
                         {c.isDemo && <DemoBadge />}
                       </div>
-                      <div className="mt-0.5 truncate text-xs text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
                     </div>
                   ),
                 },

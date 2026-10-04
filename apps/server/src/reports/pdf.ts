@@ -2,13 +2,11 @@ import {
   DOMAIN_LABELS,
   EVIDENCE_LABELS,
   GRADE_COLORS,
-  INDUSTRIES,
   ISO_ASSESSABLE,
   ISO_BY_ID,
   PROVIDER_ICONS,
   PROVIDER_ICON_VIEWBOX,
   PROVIDER_LABELS,
-  REGULATIONS,
   PRODUCT_NAME,
   REPORT_TITLE,
   REPORT_TITLE_SHORT,
@@ -234,7 +232,6 @@ function summaryPage(doc: Doc, m: ReportModel) {
     doc,
     `${m.customer.name} was assessed with automated, read-only checks across ${m.systems.length} system(s). ` +
       executiveSummarySentences(s).join(' ') +
-      ` Based on the organisation context at the time of the scan the risk profile is ${m.riskProfile.level.toUpperCase()}, which determined the evaluation criteria and the weighting of the score.` +
       (m.scan.status === 'failed'
         ? ' Note: this scan did not complete, so the results are partial and the score may not reflect the full environment.'
         : m.scan.status === 'cancelled'
@@ -245,13 +242,13 @@ function summaryPage(doc: Doc, m: ReportModel) {
   // KPI tiles
   doc.moveDown(1);
   const y = doc.y;
-  // Failed + warnings + passed + accepted/triaged + not assessed = every check in the report.
+  // Failed + warnings + passed + accepted/not applicable + not assessed = every check in the report.
   const tiles: [string, string, string][] = [
     ['Score', s.score === null ? '-' : `${s.score}`, s.grade === null ? C.muted : (GRADE[s.grade] ?? C.ink)],
     ['Failed', `${s.counts.fail}`, C.fail],
     ['Warnings', `${s.counts.warn}`, C.warn],
     ['Passed', `${s.counts.pass}`, C.pass],
-    ['Accepted / triaged', `${s.counts.accepted + s.counts.false_positive}`, C.muted],
+    ['Accepted / not applicable', `${s.counts.accepted + s.counts.false_positive}`, C.muted],
     ['Not assessed', `${s.counts.na + s.counts.error}`, C.muted],
   ];
   const tw = (doc.page.width - 2 * M - (tiles.length - 1) * 8) / tiles.length;
@@ -296,13 +293,6 @@ function summaryPage(doc: Doc, m: ReportModel) {
         : `Previous scan on ${fmtDate(c.previousDate)} scored ${c.previousScore} (grade ${c.previousGrade ?? '-'}); now ${s.score} (grade ${s.grade}). `;
     para(doc, scores + `${c.resolved.length} issue(s) resolved, ${c.newFindings.length} new, ${c.persisting.length} persisting.`);
   }
-
-  h2(doc, 'Risk profile');
-  const ctx = m.customer.context;
-  para(doc, `Level: ${m.riskProfile.level.toUpperCase()}  |  Sector: ${INDUSTRIES.find(([id]) => id === ctx.industry)?.[1] ?? ctx.industry}  |  Employees: ${ctx.employees}`);
-  const regs = ctx.regulations.map((r) => REGULATIONS.find(([id]) => id === r)?.[1] ?? r);
-  if (regs.length) para(doc, `Regulatory context: ${regs.join(', ')}`);
-  if (m.riskProfile.drivers.length) para(doc, `Drivers: ${m.riskProfile.drivers.join('; ')}.`, { color: C.muted, size: 9 });
 }
 
 /** Per-system summary: icon, system, identity, grade (or Not assessed / Partial), failed and warnings. */
@@ -473,7 +463,7 @@ function findingDetail(doc: Doc, f: ReportItem, accent: string) {
   let x = M;
   x += pill(doc, x, yy, f.severity.toUpperCase(), SEV[f.severity]) + 5;
   x += pill(doc, x, yy, STATUS_LABEL[f.status], statusColor(f.status)) + 5;
-  if (f.triage && f.triage.status !== 'open') x += pill(doc, x, yy, f.triage.status === 'accepted' ? 'RISK ACCEPTED' : 'FALSE POSITIVE', C.na) + 5;
+  if (f.triage && f.triage.status !== 'open') x += pill(doc, x, yy, f.triage.status === 'accepted' ? 'RISK ACCEPTED' : 'NOT APPLICABLE', C.na) + 5;
   if (f.isNew) pill(doc, x, yy, 'NEW', accent);
   doc.y = yy + 20;
   doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(12).text(f.title, M, doc.y, { width: W });
@@ -533,7 +523,7 @@ function appendix(doc: Doc, m: ReportModel) {
   para(
     doc,
     `The assessment was performed between ${fmtDate(m.scan.startedAt)} and ${fmtDate(m.scan.finishedAt)} using read-only API access (Microsoft Graph, Azure Resource Manager, AWS APIs and the GitHub REST API). No changes were made to the environments. ` +
-      'Evaluation criteria were selected based on the organisation\'s risk profile and reviewed before the scan. Scores are weighted by severity and by the domain weights derived from the risk profile.',
+      'This is a best-practice and compliance baseline: every automated check for the platforms in scope was run. Scores are weighted by the severity of each check. Findings marked not applicable or false positive are left out of the score.',
   );
   h2(doc, 'Limitations');
   para(
@@ -558,7 +548,7 @@ function appendix(doc: Doc, m: ReportModel) {
     }
   }
   if (m.excluded.length) {
-    h2(doc, 'Criteria excluded from scope');
+    h2(doc, 'Checks excluded from scope');
     for (const e of m.excluded) para(doc, `${e.title}  (${PROVIDER_LABELS[e.provider]})${e.reason ? `: ${e.reason}` : ''}`, { size: 9 });
   }
   if (m.passed.length) {

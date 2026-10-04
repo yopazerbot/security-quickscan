@@ -1,4 +1,4 @@
-import { INDUSTRIES, type Provider } from '@qs/shared';
+import type { Provider } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ArrowRight, Building2, Plus, Radar } from 'lucide-react';
 import { Link } from 'react-router';
@@ -133,7 +133,6 @@ export function Dashboard() {
                           <span className="sr-only"> out of 100</span>
                         </span>
                       </div>
-                      <div className="truncate text-xs text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? ''}</div>
                       <div className="mt-1.5 h-1.5 rounded-full bg-slate-100" aria-hidden>
                         <div className="h-1.5 rounded-full" style={{ width: `${c.latestScan.score}%`, backgroundColor: scoreHex(c.latestScan.score) }} />
                       </div>

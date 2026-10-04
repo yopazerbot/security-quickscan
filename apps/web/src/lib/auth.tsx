@@ -2,17 +2,51 @@ import type { Role } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { useToast } from '../components/feedback';
-import { api, ApiError, EXPIRED_FLAG, post, setCsrfToken, SESSION_EXPIRED_MESSAGE } from './api';
+import { api, ApiError, EXPIRED_FLAG, get, post, setCsrfToken, SESSION_EXPIRED_MESSAGE } from './api';
 import { clearAllDrafts } from './drafts';
 
+export type AuthMethod = 'entra' | 'password' | 'breakglass' | 'local' | 'demo';
+
 export interface Me {
-  user: { id: string; email: string; name: string; role: Role; isBreakglass: boolean; isDemo: boolean };
+  user: { id: string; email: string; name: string; role: Role; isBreakglass: boolean; isDemo: boolean; hasPassword?: boolean };
   csrfToken: string;
-  authMethod: string;
+  authMethod: AuthMethod;
   sessionExpiresAt: string;
+  /** The user signed in with a temporary password and must choose a new one before anything else. */
+  mustChangePassword?: boolean;
+  /** Until when the sign-in counts as recent for sensitive settings (null: not recent). */
+  recentAuthUntil?: string | null;
   /** Minutes without requests after which the server ends the session. */
   idleMinutes?: number;
   features: { local: boolean; demo: boolean; scannerAws: boolean; scannerMs: boolean; scannerMsClientId: string | null };
+}
+
+/** Sign-in methods offered on the login page (public, no session needed). */
+export interface AuthConfig {
+  entra: boolean;
+  password: boolean;
+  breakglass: boolean;
+  demoLogin: boolean;
+  local: boolean;
+  setupRequired: boolean;
+}
+
+export const AUTH_CONFIG_KEY = ['auth-config'] as const;
+
+export function useAuthConfig() {
+  return useQuery({ queryKey: AUTH_CONFIG_KEY, queryFn: () => get<AuthConfig>('/api/auth/config') });
+}
+
+/**
+ * Temporary password typed on the login page, kept in memory only (never in storage) so the forced password change
+ * does not ask for it again. Cleared after the change.
+ */
+let signInPassword: string | null = null;
+export function rememberSignInPassword(pw: string | null) {
+  signInPassword = pw;
+}
+export function peekSignInPassword() {
+  return signInPassword;
 }
 
 /**
@@ -99,11 +133,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         },
       });
+    // Any request refused because a temporary password must be replaced: reload the session, the route guard then
+    // shows the change password page.
+    const onPasswordChange = () => void qc.invalidateQueries({ queryKey: ['me'] });
     window.addEventListener('qs:unauthorized', onUnauthorized);
     window.addEventListener('qs:reauth', onReauth);
+    window.addEventListener('qs:password-change-required', onPasswordChange);
     return () => {
       window.removeEventListener('qs:unauthorized', onUnauthorized);
       window.removeEventListener('qs:reauth', onReauth);
+      window.removeEventListener('qs:password-change-required', onPasswordChange);
     };
   }, [qc, toast]);
 

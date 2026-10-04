@@ -1,12 +1,11 @@
-import { PROVIDER_LABELS } from '@qs/shared';
-import { useQuery } from '@tanstack/react-query';
+import { CHECKS, PROVIDER_LABELS, type Provider } from '@qs/shared';
 import { CircleDashed, FlaskConical, Rocket, ShieldCheck, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ProviderIcon } from '../../components/ProviderIcon';
 import { useAction } from '../../components/feedback';
 import { Alert, Card } from '../../components/ui';
-import { get, post } from '../../lib/api';
+import { post } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
 import { WizardFooter, systemReady, type StepProps, type WizardSystem } from './ScanWizard';
 
@@ -17,6 +16,10 @@ function retentionLabel(scan: StepProps['scan']): string {
     return scan.retentionDays ? `Kept for ${scan.retentionDays} ${scan.retentionDays === 1 ? 'day' : 'days'}, then deleted automatically` : 'Kept for a set number of days, then deleted automatically';
   return 'Kept until someone deletes them';
 }
+
+/** Every check for a platform runs: there is no selection of criteria. */
+const checksPerProvider = (p: Provider) => CHECKS.filter((c) => c.provider === p).length;
+const plural = (n: number) => `${n} ${n === 1 ? 'check' : 'checks'}`;
 
 function SystemStatus({ s }: { s: WizardSystem }) {
   if (s.config.authMode === 'demo') return <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700"><FlaskConical className="size-3.5" aria-hidden /> Simulated</span>;
@@ -31,9 +34,8 @@ function SystemStatus({ s }: { s: WizardSystem }) {
 export function StepLaunch({ scan, back, navigating }: StepProps) {
   const nav = useNavigate();
   const run = useAction();
-  const crit = useQuery({ queryKey: ['criteria', scan.id], queryFn: () => get<any[]>(`/api/scans/${scan.id}/criteria`) });
   const [busy, setBusy] = useState(false);
-  const included = (crit.data ?? []).filter((c) => c.included).length;
+  const total = scan.systems.reduce((n, s) => n + checksPerProvider(s.provider), 0);
   const unreadySystems = scan.systems.filter((s) => !systemReady(s));
 
   const start = async () => {
@@ -46,14 +48,16 @@ export function StepLaunch({ scan, back, navigating }: StepProps) {
   return (
     <>
       <div className="grid gap-6 lg:grid-cols-5">
-        <Card className="lg:col-span-3" title="Summary" subtitle="Check the scope before you start the scan.">
+        <Card className="lg:col-span-3" title="Summary" subtitle="Every best-practice check for these systems runs. Mark findings that do not apply afterwards in the report.">
           <ul className="space-y-3">
             {scan.systems.map((s) => (
               <li key={s.id} className="flex items-center gap-3">
                 <ProviderIcon provider={s.provider} className="size-6" decorative />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-slate-800">{s.label}</div>
-                  <div className="text-xs text-slate-500">{PROVIDER_LABELS[s.provider]}</div>
+                  <div className="text-xs text-slate-500">
+                    {PROVIDER_LABELS[s.provider]} · {plural(checksPerProvider(s.provider))}
+                  </div>
                 </div>
                 <SystemStatus s={s} />
               </li>
@@ -61,12 +65,8 @@ export function StepLaunch({ scan, back, navigating }: StepProps) {
           </ul>
           <dl className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Criteria</dt>
-              <dd className="font-medium">{crit.data ? `${included} checks` : '...'}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Risk profile</dt>
-              <dd className="font-medium capitalize">{scan.riskProfile.level}</dd>
+              <dt className="text-slate-500">Checks to run</dt>
+              <dd className="font-medium">{plural(total)}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-slate-500">Secrets</dt>

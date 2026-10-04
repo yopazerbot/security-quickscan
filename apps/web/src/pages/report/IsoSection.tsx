@@ -119,7 +119,7 @@ function ControlHeatmap({ controls, selected, onSelect }: { controls: Control[];
   );
 }
 
-const TRIAGE_TEXT = { accepted: 'Risk accepted', false_positive: 'False positive' } as const;
+const TRIAGE_TEXT = { accepted: 'Risk accepted', false_positive: 'Not applicable' } as const;
 
 /** The results behind one control, grouped by system. */
 function ControlDrillDown({ control, systems, onClose, onSystem }: { control: Control; systems: Map<string, ReportSystem>; onClose(): void; onSystem(id: string): void }) {

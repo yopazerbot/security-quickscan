@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Check, KeyRound, ListChecks, Rocket, Server, Trash2 } from 'lucide-react';
+import { Check, KeyRound, Rocket, Server, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { AsyncButton, useAction } from '../../components/feedback';
@@ -9,7 +9,6 @@ import { ApiError, del, get, patch } from '../../lib/api';
 import { accessCan, type CustomerAccess } from '../../lib/auth';
 import { useDocumentTitle } from '../../lib/use-document-title';
 import { StepCredentials } from './StepCredentials';
-import { StepCriteria } from './StepCriteria';
 import { StepLaunch } from './StepLaunch';
 import { StepScope } from './StepScope';
 
@@ -18,8 +17,6 @@ export interface WizardScan {
   name: string;
   status: string;
   wizardStep: number;
-  context: any;
-  riskProfile: any;
   retentionMode: 'purge_on_completion' | 'days' | 'manual';
   retentionDays: number | null;
   customer: { id: string; name: string; myAccess: CustomerAccess | null };
@@ -69,8 +66,8 @@ function lockReason(scan: WizardScan, i: number): string | null {
 }
 
 /**
- * The organisation context and risk profile come from the organisation record, so the wizard starts at Scope.
- * The stored wizardStep still counts the former context step as 0, hence the offset.
+ * The stored wizardStep still counts the former context step as 0, hence the offset. Drafts saved at the former
+ * Criteria step (stored 3) or Review step (stored 4) open at Review, which is the last step now.
  */
 const STEP_OFFSET = 1;
 const reached = (scan: WizardScan) => Math.max(0, scan.wizardStep - STEP_OFFSET);
@@ -78,7 +75,6 @@ const reached = (scan: WizardScan) => Math.max(0, scan.wizardStep - STEP_OFFSET)
 const STEPS = [
   { id: 'scope', label: 'Scope', desc: 'Systems', icon: Server },
   { id: 'access', label: 'Access', desc: 'Credentials', icon: KeyRound },
-  { id: 'criteria', label: 'Criteria', desc: 'What to evaluate', icon: ListChecks },
   { id: 'review', label: 'Review', desc: 'Check and start', icon: Rocket },
 ];
 
@@ -115,7 +111,7 @@ export function ScanWizard() {
 
   useEffect(() => {
     if (!q.data || step !== null) return;
-    // ?step=criteria (e.g. returning from the organisation form) opens that step when it is reachable.
+    // ?step=review (e.g. returning from the organisation form) opens that step when it is reachable.
     const asked = STEPS.findIndex((x) => x.id === params.get('step'));
     let s = asked >= 0 && asked <= reached(q.data) ? asked : Math.min(reached(q.data), STEPS.length - 1);
     while (s > 0 && lockReason(q.data, s)) s--;
@@ -207,7 +203,7 @@ export function ScanWizard() {
         }
       />
       <nav aria-label="Scan wizard steps" className="mb-8 rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200/70">
-        <ol className="grid grid-cols-4 gap-1">
+        <ol className="grid grid-cols-3 gap-1">
           {STEPS.map((s, i) => {
             const done = i < step;
             const lock = lockReason(scan, i) ?? (i > reached(scan) ? 'Complete the previous steps first' : null);
@@ -254,8 +250,7 @@ export function ScanWizard() {
         </h2>
         {step === 0 && <StepScope {...props} />}
         {step === 1 && <StepCredentials {...props} />}
-        {step === 2 && <StepCriteria {...props} />}
-        {step === 3 && <StepLaunch {...props} />}
+        {step === 2 && <StepLaunch {...props} />}
       </div>
     </>
   );

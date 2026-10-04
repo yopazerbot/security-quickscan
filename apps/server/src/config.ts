@@ -7,6 +7,11 @@ const bool = z
   .enum(['true', 'false', '1', '0', ''])
   .optional()
   .transform((v) => v === 'true' || v === '1');
+/** Like bool, but undefined when not set (moved settings: unset means "no environment fallback"). */
+const optBool = z
+  .enum(['true', 'false', '1', '0'])
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v === 'true' || v === '1'));
 
 /** Docker: the /data volume. Elsewhere (local development): .data/ in the working directory. */
 function defaultKeyFile() {
@@ -48,29 +53,34 @@ const schema = z
     TRUST_PROXY: z.string().default('false'),
     COOKIE_SECURE: z.string().default('true').transform((v) => v !== 'false'),
 
+    /*
+     * Moved to the application settings (Settings in the UI). These variables remain supported as a fallback:
+     * the effective value is the saved app setting, else the variable, else the default (see settings/runtime.ts).
+     */
     ENTRA_TENANT_ID: z.string().optional(),
     ENTRA_CLIENT_ID: z.string().optional(),
     ENTRA_CLIENT_SECRET: z.string().optional(),
     /** Require the Entra token to show MFA was performed (amr claim). */
-    ENTRA_REQUIRE_MFA: bool,
+    ENTRA_REQUIRE_MFA: optBool,
+    /** Legacy: first administrator created at their first Microsoft sign-in. First-run setup (/setup) replaces it. */
     BOOTSTRAP_ADMIN_EMAIL: z.string().optional(),
+    SCANNER_AWS_ACCESS_KEY_ID: z.string().optional(),
+    SCANNER_AWS_SECRET_ACCESS_KEY: z.string().optional(),
+    SCANNER_MS_CLIENT_ID: z.string().optional(),
+    SCANNER_MS_CLIENT_SECRET: z.string().optional(),
+    DEMO_MODE: optBool,
+    SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(480).optional(),
+    SESSION_MAX_HOURS: z.coerce.number().int().min(1).max(24).optional(),
+    /** Audit log entries older than this are deleted by housekeeping (at most once a day). */
+    AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(1).max(240).optional(),
 
+    /** Emergency access (recovery), always configured through the environment. */
     BREAKGLASS_ENABLED: bool,
     BREAKGLASS_USERNAME: z.string().optional(),
     BREAKGLASS_PASSWORD_HASH: z.string().optional(),
     BREAKGLASS_TOTP_SECRET: z.string().optional(),
 
-    SCANNER_AWS_ACCESS_KEY_ID: z.string().optional(),
-    SCANNER_AWS_SECRET_ACCESS_KEY: z.string().optional(),
-    SCANNER_MS_CLIENT_ID: z.string().optional(),
-    SCANNER_MS_CLIENT_SECRET: z.string().optional(),
-
-    DEMO_MODE: bool,
-    SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(480).default(30),
-    SESSION_MAX_HOURS: z.coerce.number().int().min(1).max(24).default(8),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-    /** Audit log entries older than this are deleted by housekeeping (at most once a day). */
-    AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(1).max(240).default(24),
   })
   .superRefine((c, ctx) => {
     if (c.LOCAL_MODE) {
@@ -78,8 +88,7 @@ const schema = z
       if (!LOOPBACK.has(new URL(c.APP_URL).hostname)) ctx.addIssue({ code: 'custom', message: 'LOCAL_MODE requires APP_URL on localhost (e.g. http://localhost:8080)' });
       return;
     }
-    const entra = c.ENTRA_TENANT_ID && c.ENTRA_CLIENT_ID && c.ENTRA_CLIENT_SECRET;
-    if (!entra && !c.BREAKGLASS_ENABLED) ctx.addIssue({ code: 'custom', message: 'Configure ENTRA_* variables (or enable break glass) so someone can sign in' });
+    // No sign-in method is required here: without an administrator, first-run setup (/setup) creates one.
     if (c.BREAKGLASS_ENABLED && !(c.BREAKGLASS_USERNAME && c.BREAKGLASS_PASSWORD_HASH && c.BREAKGLASS_TOTP_SECRET)) {
       ctx.addIssue({ code: 'custom', message: 'BREAKGLASS_ENABLED requires BREAKGLASS_USERNAME, BREAKGLASS_PASSWORD_HASH and BREAKGLASS_TOTP_SECRET' });
     }
@@ -124,13 +133,4 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration:\n${msg}`);
   }
   return r.data;
-}
-
-export const entraEnabled = (c: Config) => Boolean(c.ENTRA_TENANT_ID && c.ENTRA_CLIENT_ID && c.ENTRA_CLIENT_SECRET);
-
-export function scannerEnv(c: Config) {
-  return {
-    aws: c.SCANNER_AWS_ACCESS_KEY_ID && c.SCANNER_AWS_SECRET_ACCESS_KEY ? { accessKeyId: c.SCANNER_AWS_ACCESS_KEY_ID, secretAccessKey: c.SCANNER_AWS_SECRET_ACCESS_KEY } : undefined,
-    ms: c.SCANNER_MS_CLIENT_ID && c.SCANNER_MS_CLIENT_SECRET ? { clientId: c.SCANNER_MS_CLIENT_ID, clientSecret: c.SCANNER_MS_CLIENT_SECRET } : undefined,
-  };
 }

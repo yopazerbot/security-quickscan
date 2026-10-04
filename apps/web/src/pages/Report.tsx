@@ -14,7 +14,6 @@ import { ArrowDownRight, ArrowUpRight, ChevronDown, Download, ExternalLink, File
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { Bar, BarChart, Cell, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { RISK_STYLE } from '../components/ContextForm';
 import { AsyncButton, useToast } from '../components/feedback';
 import { DataTable, Pager, usePaged } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
@@ -30,7 +29,9 @@ import { SystemCards } from './report/SystemCards';
 
 type Item = any;
 
-const TRIAGE_LABEL: Record<string, string> = { open: 'Open', accepted: 'Risk accepted', false_positive: 'False positive' };
+const TRIAGE_LABEL: Record<string, string> = { open: 'Open', accepted: 'Risk accepted', false_positive: 'Not applicable / false positive' };
+/** Short labels for the small badges on finding cards. */
+const TRIAGE_BADGE: Record<string, string> = { accepted: 'Risk accepted', false_positive: 'Not applicable' };
 
 /** DOM id of a finding card, so other parts of the report can link to it. */
 const findingId = (key: string) => `finding-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -100,10 +101,10 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
         Applies to this check on {item.systemLabel} for scans that finish from now on. Finished reports do not change.
       </p>
       <div className="flex flex-wrap items-start gap-3">
-        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44" aria-label={`Triage status for ${item.systemLabel}`} aria-describedby={labelId}>
+        <Select value={status} onChange={(e) => setStatus(e.target.value)} className="w-64" aria-label={`Triage status for ${item.systemLabel}`} aria-describedby={`${labelId} ${labelId}-help`}>
           <option value="open">Open</option>
           <option value="accepted">Risk accepted</option>
-          <option value="false_positive">False positive</option>
+          <option value="false_positive">Not applicable / false positive</option>
         </Select>
         <Textarea
           className="min-h-9 min-w-48 flex-1 py-1.5"
@@ -118,6 +119,13 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
           Save
         </Button>
       </div>
+      <p id={`${labelId}-help`} className="mt-2 text-xs text-slate-600">
+        {status === 'false_positive'
+          ? 'Not applicable / false positive removes the finding from the score. Use it when the check does not apply to this organisation or the result is wrong.'
+          : status === 'accepted'
+            ? 'Risk accepted keeps the finding in the report but leaves it out of the score; the related ISO control still shows it as a gap.'
+            : 'Choose Not applicable / false positive to remove the finding from the score, or Risk accepted to record a deliberate decision.'}
+      </p>
       {inReport !== current && (
         <p className="mt-3 text-xs text-slate-600">
           In this report: <strong className="font-semibold text-slate-800">{TRIAGE_LABEL[inReport]}</strong>. Current decision:{' '}
@@ -224,7 +232,7 @@ function FindingCard({
               <span className="font-medium text-slate-900">{f.title}</span>
               {showNew && f.isNew && <span className="rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">New</span>}
               {f.triage && f.triage.status !== 'open' && (
-                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{TRIAGE_LABEL[f.triage.status]}</span>
+                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-600">{TRIAGE_BADGE[f.triage.status] ?? TRIAGE_LABEL[f.triage.status]}</span>
               )}
             </div>
             <div className="mt-0.5 line-clamp-2 text-sm text-slate-500 md:truncate">{f.summary}</div>
@@ -354,10 +362,9 @@ export function Report() {
     ['Failed', s.counts.fail ?? 0, '#dc2626'],
     ['Warnings', s.counts.warn ?? 0, '#b45309'],
     ['Passed', s.counts.pass ?? 0, '#047857'],
-    ['Accepted / triaged', (s.counts.accepted ?? 0) + (s.counts.false_positive ?? 0), '#4338ca'],
+    ['Accepted / not applicable', (s.counts.accepted ?? 0) + (s.counts.false_positive ?? 0), '#4338ca'],
     ['Not assessed', (s.counts.na ?? 0) + (s.counts.error ?? 0), '#475569'],
   ];
-  const risk = RISK_STYLE[m.riskProfile.level as keyof typeof RISK_STYLE];
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['report', scanId] });
     void qc.invalidateQueries({ queryKey: ['customer', m.customer.id] });
@@ -485,8 +492,6 @@ export function Report() {
                 ))}
               </div>
               <div className="mt-5 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                <span className={clsx('rounded-md px-2 py-0.5 text-xs font-semibold ring-1', risk.cls)}>{risk.label} risk profile</span>
-                <span className="text-slate-300" aria-hidden>|</span>
                 {m.systems.map((x: any) => (
                   <span key={x.id} className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">
                     <SystemBadge provider={x.provider} label={x.label} showIdentity={false} size="xs" />
@@ -640,7 +645,7 @@ export function Report() {
               <option value="fail">Fail</option>
               <option value="warn">Warning</option>
             </Select>
-            <Select value={triage} onChange={(e) => setTriage(e.target.value)} className="w-44" aria-label="Filter by triage">
+            <Select value={triage} onChange={(e) => setTriage(e.target.value)} className="w-60" aria-label="Filter by triage">
               <option value="all">All triage states</option>
               {Object.entries(TRIAGE_LABEL).map(([k, l]) => (
                 <option key={k} value={k}>{l}</option>
@@ -753,7 +758,7 @@ export function Report() {
             <p className="text-sm text-slate-500">{m.passed.length} checks met the baseline.</p>
           )}
         </Card>
-        <Card title={`Not assessed (${m.notAssessed.length}) and excluded (${m.excluded.length})`}>
+        <Card title={m.excluded.length ? `Not assessed (${m.notAssessed.length}) and excluded (${m.excluded.length})` : `Not assessed (${m.notAssessed.length})`}>
           {m.notAssessed.length > 0 && (
             <div className="-mx-6 -mt-6 mb-4">
               <DataTable

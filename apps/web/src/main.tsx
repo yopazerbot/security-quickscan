@@ -6,11 +6,13 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router';
 import { ToastProvider } from './components/feedback';
 import { Layout } from './components/Layout';
+import { ReauthProvider } from './components/reauth';
 import { PageLoader } from './components/ui';
 import './index.css';
 import { ApiError } from './lib/api';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AuditPage } from './pages/Audit';
+import { ChangePasswordPage } from './pages/ChangePassword';
 import { ConsentCallback } from './pages/ConsentCallback';
 import { CustomerDetail } from './pages/CustomerDetail';
 import { CustomerEdit } from './pages/CustomerEdit';
@@ -20,6 +22,7 @@ import { Login } from './pages/Login';
 import { Report } from './pages/Report';
 import { ScanProgress } from './pages/ScanProgress';
 import { SettingsPage } from './pages/Settings';
+import { SetupPage } from './pages/Setup';
 import { UsersPage } from './pages/Users';
 import { ScanWizard } from './pages/wizard/ScanWizard';
 
@@ -74,6 +77,8 @@ function Protected({ children, admin }: { children: ReactNode; admin?: boolean }
   if (!me && localLinkRequired) return <LocalLinkRequired />;
   // The query string is kept: the admin-consent callback carries its result there.
   if (!me) return <Navigate to="/login" replace state={{ from: loc.pathname + loc.search }} />;
+  // A temporary password must be replaced before anything else (the server refuses other requests meanwhile).
+  if (me.mustChangePassword) return <Navigate to="/change-password" replace state={{ from: loc.pathname + loc.search }} />;
   if (admin && me.user.role !== 'admin') return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -89,6 +94,7 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
       <AuthProvider>
+        <ReauthProvider>
         <BrowserRouter>
           <Routes>
             <Route
@@ -99,6 +105,8 @@ createRoot(document.getElementById('root')!).render(
                 </LocalGate>
               }
             />
+            <Route path="/setup" element={<SetupPage />} />
+            <Route path="/change-password" element={<ChangePasswordPage />} />
             <Route
               element={
                 <Protected>
@@ -126,6 +134,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+        </ReauthProvider>
       </AuthProvider>
       </ToastProvider>
     </QueryClientProvider>

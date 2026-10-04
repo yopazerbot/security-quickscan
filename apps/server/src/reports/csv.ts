@@ -12,7 +12,7 @@ const row = (values: unknown[]) => values.map(cell).join(',');
 
 /** Readable result labels, the same words as the web report. */
 export const STATUS_TEXT: Record<ResultStatus, string> = { pass: 'pass', fail: 'fail', warn: 'warning', na: 'not applicable', error: 'error (not assessed)' };
-export const TRIAGE_TEXT: Record<'open' | 'accepted' | 'false_positive', string> = { open: 'open', accepted: 'risk accepted', false_positive: 'false positive' };
+export const TRIAGE_TEXT: Record<'open' | 'accepted' | 'false_positive', string> = { open: 'open', accepted: 'risk accepted', false_positive: 'not applicable / false positive' };
 
 /** "fail (risk accepted)": the raw result plus the triage in effect for this report. */
 export function statusText(status: ResultStatus, triage: ReportItem['triage']): string {

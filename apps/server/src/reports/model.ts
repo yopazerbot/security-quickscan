@@ -4,11 +4,9 @@ import {
   PROVIDER_LABELS,
   SEVERITIES,
   type Branding,
-  type CustomerContext,
   type Provider,
   type ResourceRef,
   type ResultStatus,
-  type RiskProfile,
   type ScoreInput,
   type ScoreSummary,
   type Severity,
@@ -83,9 +81,7 @@ export interface ReportModel {
     /** True when the score was stored when the scan finished and later triage does not change it. */
     frozen: boolean;
   };
-  /** context is the organisation context at scan time. */
-  customer: { id: string; name: string; country: string; context: CustomerContext };
-  riskProfile: RiskProfile;
+  customer: { id: string; name: string };
   branding: Branding;
   systems: {
     id: string;
@@ -98,13 +94,14 @@ export interface ReportModel {
     /** When the stored secret is deleted automatically; null when not stored or kept until deleted manually. */
     credentialsExpireAt: Date | null;
     authMode: string;
-    /** Score, grade, coverage and counts over this system's results only (same domain weights as the scan). */
+    /** Score, grade, coverage and counts over this system's results only. */
     summary: ScoreSummary;
   }[];
   summary: ScoreSummary;
   findings: ReportItem[];
   passed: ReportItem[];
   notAssessed: ReportItem[];
+  /** Checks excluded before the scan by the former criteria step; only scans from before every check always ran have them. */
   excluded: { checkId: string; title: string; provider: Provider; reason: string }[];
   topRisks: ReportItem[];
   quickWins: ReportItem[];
@@ -239,7 +236,6 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
     });
 
   // Scores per system and for legacy frozen summaries use the triage this report shows (frozen or current).
-  const weights = (scan.riskProfile as RiskProfile).domainWeights;
   const toInput = (i: ReportItem): ScoreInput => ({
     checkId: i.checkId,
     status: i.status,
@@ -250,7 +246,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
   // Summaries frozen before evidence strength and per-system attribution existed keep their score, grade and counts;
   // the control assessments and the not-covered list are derived again so every report has the same shape.
   if (frozen && (!Array.isArray(summary.notCovered) || summary.controls.some((c) => !c.evidence))) {
-    const again = computeScore(items.map(toInput), CHECKS_BY_ID, weights);
+    const again = computeScore(items.map(toInput), CHECKS_BY_ID);
     summary.controls = again.controls;
     summary.notCovered = again.notCovered;
   }
@@ -264,7 +260,6 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
   const currentFailing = new Set(findings.filter((f) => shared.has(f.systemKey)).map((f) => triageKey(f.systemKey, f.checkId)));
   const currentPassing = new Set(items.filter((i) => i.status === 'pass').map((i) => triageKey(i.systemKey, i.checkId)));
   const differentScope = Boolean(prev) && (shared.size !== myKeys.size || shared.size !== prevKeys.size);
-  const scanContext = (scan.context as CustomerContext | null) ?? (customer.context as CustomerContext);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -278,8 +273,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
       retentionDays: scan.retentionMode === 'days' ? scan.retentionDays : null,
       frozen: Boolean(frozen),
     },
-    customer: { id: customer.id, name: customer.name, country: customer.country, context: scanContext },
-    riskProfile: scan.riskProfile as RiskProfile,
+    customer: { id: customer.id, name: customer.name },
     branding: await getBranding(ctx),
     systems: systems.map((s) => {
       const identity = sysIdentity.get(s.id) ?? null;
@@ -294,7 +288,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         credentialsStored: Boolean(cred),
         credentialsExpireAt: cred?.expiresAt ?? null,
         authMode: (s.config as any).authMode,
-        summary: computeScore(items.filter((i) => i.systemId === s.id).map(toInput), CHECKS_BY_ID, weights),
+        summary: computeScore(items.filter((i) => i.systemId === s.id).map(toInput), CHECKS_BY_ID),
       };
     }),
     summary,

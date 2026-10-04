@@ -38,6 +38,11 @@ export const users = pgTable(
     isBreakglass: boolean('is_breakglass').notNull().default(false),
     /** Shared visitor account for demo PIN login; only sees demo organisations. */
     isDemo: boolean('is_demo').notNull().default(false),
+    /** Argon2id hash for local password sign-in; null = the user can only use single sign-on. */
+    passwordHash: text('password_hash'),
+    passwordChangedAt: ts('password_changed_at'),
+    /** Set with a temporary password from an administrator: the next password sign-in must change it first. */
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
     createdAt: ts('created_at').notNull().defaultNow(),
     lastLoginAt: ts('last_login_at'),
   },
@@ -59,6 +64,8 @@ export const sessions = pgTable(
     createdAt: ts('created_at').notNull().defaultNow(),
     lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
     expiresAt: ts('expires_at').notNull(),
+    /** Last re-authentication within this session (recent sign-in for sensitive settings). */
+    reauthAt: ts('reauth_at'),
   },
   (t) => [index('sessions_user_idx').on(t.userId)],
 );

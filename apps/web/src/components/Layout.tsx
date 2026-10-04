@@ -1,9 +1,9 @@
 import { PRODUCT_NAME, ROLE_LABELS } from '@qs/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Building2, Clock, LayoutDashboard, LogOut, Menu, ScrollText, Settings, ShieldAlert, ShieldCheck, Users, X } from 'lucide-react';
+import { Building2, Clock, KeyRound, LayoutDashboard, LogOut, Menu, ScrollText, Settings, ShieldAlert, ShieldCheck, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { EXPIRED_FLAG, lastServerContact, post } from '../lib/api';
 import { fetchMe, useAuth, type Me } from '../lib/auth';
 import { SOURCE_URL } from '../lib/constants';
@@ -322,14 +322,29 @@ export function Layout() {
           {me.features.local ? (
             <p className="mt-3 px-3 text-xs text-slate-400">Local installation, no sign-in required</p>
           ) : (
-            <button
-              type="button"
-              className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
-              onClick={() => void logout()}
-            >
-              <LogOut className="size-[18px]" aria-hidden />
-              Sign out
-            </button>
+            <>
+              {me.authMethod === 'password' && (
+                <Link
+                  to="/change-password"
+                  state={{ from: loc.pathname + loc.search }}
+                  className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+                >
+                  <KeyRound className="size-[18px]" aria-hidden />
+                  Change password
+                </Link>
+              )}
+              <button
+                type="button"
+                className={clsx(
+                  'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white',
+                  me.authMethod === 'password' ? 'mt-1' : 'mt-3',
+                )}
+                onClick={() => void logout()}
+              >
+                <LogOut className="size-[18px]" aria-hidden />
+                Sign out
+              </button>
+            </>
           )}
           <a href={SOURCE_URL} target="_blank" rel="noreferrer noopener" className="mt-2 block px-3 text-[11px] text-slate-400 hover:text-slate-200">
             Source code (MIT)
@@ -341,7 +356,7 @@ export function Layout() {
         {me.authMethod === 'breakglass' && (
           <div role="alert" className="no-print flex items-center gap-2 bg-red-600 px-4 py-2 text-sm font-medium text-white sm:px-8">
             <ShieldAlert className="size-4 shrink-0" aria-hidden />
-            Break-glass session: emergency access is logged. Restore Microsoft sign-in and sign out as soon as possible.
+            Break-glass session: emergency access is logged. Restore the normal sign-in and sign out as soon as possible.
           </div>
         )}
         {me.user.isDemo ? (

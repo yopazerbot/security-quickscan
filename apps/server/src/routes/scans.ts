@@ -2,18 +2,12 @@ import { IMPLEMENTED_CHECKS, testConnection, verifyMsConsentSince } from '@qs/ch
 import {
   awsSecretSchema,
   CHECKS,
-  CHECKS_BY_ID,
-  computeRiskProfile,
-  customerContextSchema,
   githubSecretSchema,
   msSecretSchema,
   PROVIDERS,
   retentionSchema,
-  riskRank,
   systemInputSchema,
-  type CustomerContext,
   type Provider,
-  type RiskProfile,
 } from '@qs/shared';
 import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -99,9 +93,10 @@ export function credentialExpiry(scan: Pick<ScanRow, 'retentionMode' | 'retentio
   return days === null ? null : new Date(Date.now() + days * 86_400_000);
 }
 
-function defaultIncluded(checkId: string, profile: RiskProfile) {
-  const m = CHECKS_BY_ID[checkId];
-  return Boolean(m) && riskRank(m.minRisk) <= riskRank(profile.level);
+/** Every implemented check for the given providers: scans are best-practice baselines, not risk based. */
+export function checksFor(providers: Iterable<Provider>) {
+  const set = new Set(providers);
+  return CHECKS.filter((c) => set.has(c.provider) && IMPLEMENTED_CHECKS.has(c.id));
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -150,18 +145,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const s = (await q.select().from(scanSystems).where(and(eq(scanSystems.id, sid), eq(scanSystems.scanId, scanId))).limit(1))[0];
     if (!s) throw notFound();
     return s;
-  }
-
-  async function criteriaFor(scan: ScanRow, q: Q = db) {
-    const providers = new Set((await q.select({ p: scanSystems.provider }).from(scanSystems).where(eq(scanSystems.scanId, scan.id))).map((r) => r.p));
-    const overrides = await q.select().from(scanCriteria).where(eq(scanCriteria.scanId, scan.id));
-    const omap = new Map(overrides.map((o) => [o.checkId, o]));
-    const profile = scan.riskProfile as RiskProfile;
-    return CHECKS.filter((c) => providers.has(c.provider) && IMPLEMENTED_CHECKS.has(c.id)).map((c) => {
-      const o = omap.get(c.id);
-      const def = defaultIncluded(c.id, profile);
-      return { checkId: c.id, included: o ? o.included : def, reason: o?.reason ?? '', defaultIncluded: def };
-    });
   }
 
   /** Limits for the shared demo visitor account (anonymous PIN holders). */
@@ -220,14 +203,14 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const c = (await db.select().from(customers).where(eq(customers.id, customerId)).limit(1))[0];
     if (!c) throw notFound();
     const { name } = parse(z.object({ name: z.string().trim().max(200).optional() }), req.body ?? {});
-    const context = customerContextSchema.parse(c.context);
+    // context and risk_profile are kept for scans from before scans became purely best practice; new scans store {}.
     const [s] = await db
       .insert(scans)
       .values({
         customerId,
         name: name || `Quick scan ${today()}`,
-        context,
-        riskProfile: computeRiskProfile(context),
+        context: {},
+        riskProfile: {},
         createdBy: u.id,
       })
       .returning();
@@ -243,7 +226,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   const patchSchema = z.object({
     name: z.string().trim().min(1).max(200).optional(),
-    context: customerContextSchema.optional(),
     retention: retentionSchema.optional(),
     wizardStep: z.number().int().min(0).max(10).optional(),
   });
@@ -255,12 +237,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       const set: Partial<ScanRow> = {};
       if (body.name) set.name = body.name;
       if (body.wizardStep !== undefined) set.wizardStep = Math.max(scan.wizardStep, body.wizardStep);
-      if (body.context) {
-        set.context = body.context;
-        set.riskProfile = computeRiskProfile(body.context as CustomerContext);
-        // The customer record always reflects the latest known context.
-        await tx.update(customers).set({ context: body.context, updatedAt: new Date() }).where(eq(customers.id, scan.customerId));
-      }
       if (body.retention) {
         set.retentionMode = body.retention.mode;
         set.retentionDays = body.retention.mode === 'days' ? (body.retention.days ?? 30) : null;
@@ -275,7 +251,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (body.retention) {
       await audit(ctx, req, 'scan.retention', { type: 'scan', id: scan.id }, body.retention);
     }
-    if (body.context || body.name) await audit(ctx, req, 'scan.update', { type: 'scan', id: scan.id }, { name: body.name, contextChanged: Boolean(body.context) });
+    if (body.name) await audit(ctx, req, 'scan.update', { type: 'scan', id: scan.id }, { name: body.name });
     return { ok: true };
   });
 
@@ -533,40 +509,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     return { ok: true, scanId: data.scanId, systemId: s.id };
   });
 
-  // ---------- criteria ----------
-
-  app.get('/api/scans/:scanId/criteria', async (req) => {
-    const scan = await loadScan(ctx, req);
-    return criteriaFor(scan);
-  });
-
-  app.put('/api/scans/:scanId/criteria', async (req) => {
-    const scan = await loadScan(ctx, req, { write: true, draft: true });
-    const { items } = parse(
-      z.object({ items: z.array(z.object({ checkId: z.string().max(100), included: z.boolean(), reason: z.string().max(1000).default('') })).max(500) }),
-      req.body,
-    );
-    const valid = items.filter((i) => CHECKS_BY_ID[i.checkId]);
-    if (valid.length) {
-      const profile = scan.riskProfile as RiskProfile;
-      await withDraftLock(ctx, scan.id, async (tx) => {
-        for (const i of valid) {
-          // Only real overrides are stored, so a changed risk profile still moves the other checks.
-          if (i.included === defaultIncluded(i.checkId, profile) && !i.reason.trim()) {
-            await tx.delete(scanCriteria).where(and(eq(scanCriteria.scanId, scan.id), eq(scanCriteria.checkId, i.checkId)));
-            continue;
-          }
-          await tx
-            .insert(scanCriteria)
-            .values({ scanId: scan.id, ...i })
-            .onConflictDoUpdate({ target: [scanCriteria.scanId, scanCriteria.checkId], set: { included: i.included, reason: i.reason } });
-        }
-      });
-      await audit(ctx, req, 'scan.criteria', { type: 'scan', id: scan.id }, { excluded: valid.filter((i) => !i.included).map((i) => i.checkId) });
-    }
-    return { ok: true };
-  });
-
   // ---------- run ----------
 
   app.post('/api/scans/:scanId/start', async (req) => {
@@ -585,9 +527,8 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
         await assertTenantBound(scan, s, req, 'start');
         if (!s.connectionOk) throw badRequest(`Run a successful connection test for ${s.label} first`);
       }
-      const crit = await criteriaFor(scan, tx);
-      const included = crit.filter((c) => c.included);
-      if (!included.length) throw badRequest('Select at least one evaluation criterion');
+      const included = checksFor(sys.map((s) => s.provider));
+      if (!included.length) throw badRequest('No checks are available for the systems in this scan');
 
       const upd = await tx
         .update(scans)
@@ -595,15 +536,11 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
         .where(and(eq(scans.id, scan.id), eq(scans.status, 'draft')))
         .returning({ id: scans.id });
       if (!upd.length) throw new HttpError(409, 'Scan already started');
-      for (const c of crit) {
-        await tx
-          .insert(scanCriteria)
-          .values({ scanId: scan.id, checkId: c.checkId, included: c.included, reason: c.reason })
-          .onConflictDoNothing();
-      }
+      // Exclusions stored by the former criteria step no longer apply: every check runs. Old scans keep theirs for their reports.
+      await tx.delete(scanCriteria).where(eq(scanCriteria.scanId, scan.id));
       // Freeze the validated configuration: the worker scans exactly this.
       for (const s of sys) await tx.update(scanSystems).set({ startedConfig: s.config }).where(eq(scanSystems.id, s.id));
-      const rows = sys.flatMap((s) => included.filter((c) => CHECKS_BY_ID[c.checkId].provider === s.provider).map((c) => ({ scanId: scan.id, systemId: s.id, checkId: c.checkId })));
+      const rows = sys.flatMap((s) => included.filter((c) => c.provider === s.provider).map((c) => ({ scanId: scan.id, systemId: s.id, checkId: c.id })));
       if (rows.length) await tx.insert(checkResults).values(rows);
       return { sys, included };
     });
@@ -635,7 +572,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     return { ok: true };
   });
 
-  /** New draft with the same scope, criteria and (if still stored) credentials. */
+  /** New draft with the same scope and (if still stored) credentials. */
   app.post('/api/scans/:scanId/rescan', async (req) => {
     const scan = await loadScan(ctx, req, { write: true });
     // Only finished scans: a running purge-on-completion scan must not hand its secret to a new draft.
@@ -643,16 +580,14 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const sourceModes = (await db.select({ c: scanSystems.config }).from(scanSystems).where(eq(scanSystems.scanId, scan.id))).map((r) => (r.c as any).authMode);
     await assertDemoRules(req, scan.customerId, sourceModes, 'run');
     if (req.user!.isDemo) await demoQuota('scans', scan.customerId);
-    const c = (await db.select().from(customers).where(eq(customers.id, scan.customerId)).limit(1))[0];
-    const context = customerContextSchema.parse(c.context);
     const newId = await db.transaction(async (tx) => {
       const [n] = await tx
         .insert(scans)
         .values({
           customerId: scan.customerId,
           name: `Quick scan ${today()}`,
-          context,
-          riskProfile: computeRiskProfile(context),
+          context: {},
+          riskProfile: {},
           retentionMode: scan.retentionMode,
           retentionDays: scan.retentionDays,
           createdBy: req.user!.id,
@@ -677,12 +612,6 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
           await tx.insert(credentials).values({ systemId: ns.id, blob, hint: cred.hint, createdBy: req.user!.id, expiresAt });
         }
       }
-      // Copy only the overrides; everything else follows the organisation's current risk profile.
-      const prevProfile = scan.riskProfile as RiskProfile;
-      const crit = (await tx.select().from(scanCriteria).where(eq(scanCriteria.scanId, scan.id))).filter(
-        (x) => x.included !== defaultIncluded(x.checkId, prevProfile) || x.reason.trim(),
-      );
-      if (crit.length) await tx.insert(scanCriteria).values(crit.map((x) => ({ ...x, scanId: n.id })));
       return n.id;
     });
     await audit(ctx, req, 'scan.rescan', { type: 'scan', id: newId }, { from: scan.id });

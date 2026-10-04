@@ -31,7 +31,7 @@ export interface ControlAssessment {
   passed: number;
 }
 
-/** Assessed = a result that says something about the control (pass, fail, warn, also when triaged). In scope = every applicable check (all results except 'na'). */
+/** Assessed = a result that says something about the control (pass, fail, warn, also when risk accepted). In scope = every applicable check (all results except 'na' and findings marked not applicable). */
 export interface ScoreCoverage {
   assessed: number;
   inScope: number;
@@ -48,7 +48,7 @@ export interface ScoreSummary {
   coverage: ScoreCoverage;
   /** Graded, but fewer than 90% of the applicable checks were assessed. */
   partial: boolean;
-  /** Per result after triage. false_positive is counted separately (not as pass); tiles sum to the number of results. */
+  /** Per result after triage. false_positive (not applicable) is counted separately and not scored; tiles sum to the number of results. */
   counts: Record<ResultStatus | 'accepted' | 'false_positive', number>;
   severityCounts: Record<Severity, number>;
   domainScores: { domain: Domain; score: number | null }[];
@@ -69,14 +69,15 @@ export function gradeFor(score: number): string {
   return 'F';
 }
 
-function effectiveStatus(r: ScoreInput): ResultStatus | 'accepted' {
-  if (r.triage === 'false_positive' && (r.status === 'fail' || r.status === 'warn')) return 'pass';
+/** Status after triage: 'false_positive' (not applicable) takes a failure or warning out of the score entirely. */
+function effectiveStatus(r: ScoreInput): ResultStatus | 'accepted' | 'false_positive' {
+  if (r.triage === 'false_positive' && (r.status === 'fail' || r.status === 'warn')) return 'false_positive';
   if (r.triage === 'accepted' && (r.status === 'fail' || r.status === 'warn')) return 'accepted';
   return r.status;
 }
 
 /** Fraction of the check weight earned: pass = full, warn = half, fail = none. */
-function earned(status: ResultStatus | 'accepted'): number | null {
+function earned(status: ResultStatus | 'accepted' | 'false_positive'): number | null {
   switch (status) {
     case 'pass':
       return 1;
@@ -85,15 +86,12 @@ function earned(status: ResultStatus | 'accepted'): number | null {
     case 'fail':
       return 0;
     default:
-      return null; // na, error, accepted: not scored
+      return null; // na, error, accepted, not applicable: not scored
   }
 }
 
-export function computeScore(
-  results: ScoreInput[],
-  catalog: Record<string, CheckMeta>,
-  domainWeights: Record<Domain, number>,
-): ScoreSummary {
+/** Every check is weighted by its severity only; there is no weighting per domain or organisation. */
+export function computeScore(results: ScoreInput[], catalog: Record<string, CheckMeta>): ScoreSummary {
   const counts = { pass: 0, fail: 0, warn: 0, na: 0, error: 0, accepted: 0, false_positive: 0 };
   const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   const domainAcc = Object.fromEntries(DOMAINS.map((d) => [d, { got: 0, max: 0 }])) as Record<
@@ -120,16 +118,15 @@ export function computeScore(
     const meta = catalog[r.checkId];
     if (!meta) continue;
     const status = effectiveStatus(r);
-    const falsePositive = status === 'pass' && r.status !== 'pass';
-    counts[falsePositive ? 'false_positive' : status]++;
+    const falsePositive = status === 'false_positive';
+    counts[status]++;
     if (status === 'fail' || status === 'warn') severityCounts[r.severity]++;
 
     const e = earned(status);
     const sevW = Math.max(SEVERITY_WEIGHT[r.severity], 0.5);
     if (e !== null) {
-      const w = sevW * (domainWeights[meta.domain] ?? 1);
-      got += w * e;
-      max += w;
+      got += sevW * e;
+      max += sevW;
       domainAcc[meta.domain].got += sevW * e;
       domainAcc[meta.domain].max += sevW;
     }
@@ -164,8 +161,9 @@ export function computeScore(
     });
   }
 
-  const inScope = results.filter((r) => catalog[r.checkId] && r.status !== 'na').length;
-  const assessed = counts.pass + counts.fail + counts.warn + counts.accepted + counts.false_positive;
+  // Findings marked not applicable (false_positive) leave the scope, like results that are not applicable.
+  const inScope = results.filter((r) => catalog[r.checkId] && r.status !== 'na').length - counts.false_positive;
+  const assessed = counts.pass + counts.fail + counts.warn + counts.accepted;
   const graded = inScope > 0 && max > 0 && assessed / inScope >= MIN_GRADED_COVERAGE;
   const score = graded ? Math.round((got / max) * 100) : null;
   const controls: ControlAssessment[] = [...controlAcc.entries()]
@@ -248,6 +246,6 @@ export function executiveSummarySentences(s: ScoreSummary): string[] {
   const accepted = s.counts.accepted ?? 0;
   const fp = s.counts.false_positive ?? 0;
   if (accepted) parts.push(`${plural(accepted, 'finding is', 'findings are')} risk accepted.`);
-  if (fp) parts.push(`${plural(fp, 'finding is', 'findings are')} marked as false positive.`);
+  if (fp) parts.push(`${plural(fp, 'finding is', 'findings are')} marked not applicable or false positive and left out of the score.`);
   return parts;
 }

@@ -1,3 +1,5 @@
+import { REAUTH_REQUIRED } from '@qs/shared';
+
 let csrfToken = '';
 /** Time of the last request the server saw from this tab: every API request resets the server's idle timer. */
 let lastRequestAt = Date.now();
@@ -47,7 +49,16 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+
+  /** Machine-readable error code from the JSON body ({ error, code }), e.g. 'reauth_required'. */
+  get code(): string | undefined {
+    const c = this.data?.code;
+    return typeof c === 'string' ? c : undefined;
+  }
 }
+
+/** Error code in a 403 body while the signed-in user still has to replace a temporary password. */
+export const PASSWORD_CHANGE_REQUIRED = 'password_change_required';
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -93,7 +104,12 @@ export async function api<T = any>(path: string, opts: { method?: Method; body?:
       throw new ApiError(401, SESSION_EXPIRED_MESSAGE);
     }
   }
-  if (!res.ok && method !== 'GET' && (res.status === 403 || res.status === 404)) {
+  const code = typeof data?.code === 'string' ? (data.code as string) : undefined;
+  // The user must replace a temporary password first: the auth provider reloads the session, which shows that page.
+  if (res.status === 403 && code === PASSWORD_CHANGE_REQUIRED) window.dispatchEvent(new Event('qs:password-change-required'));
+  // A 403 that asks for a fresh sign-in or a password change is not a lost access right.
+  const specific403 = res.status === 403 && (code === PASSWORD_CHANGE_REQUIRED || code === REAUTH_REQUIRED);
+  if (!res.ok && method !== 'GET' && !specific403 && (res.status === 403 || res.status === 404)) {
     // Access may have been removed while the page was open (share revoked, organisation deleted): pages listen
     // for this to reload their data, which then shows a clear "no access" state.
     window.dispatchEvent(new CustomEvent('qs:access-denied', { detail: { status: res.status, path } }));

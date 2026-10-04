@@ -1,11 +1,12 @@
 import { PRODUCT_NAME } from '@qs/shared';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { KeyRound, Lock, LogIn, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useSearchParams } from 'react-router';
-import { Alert, Button, Field, Input } from '../components/ui';
-import { get, post } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
+import { PasswordInput } from '../components/password-input';
+import { Alert, Button, Field, Input, Spinner } from '../components/ui';
+import { ApiError, post } from '../lib/api';
+import { rememberSignInPassword, useAuth, useAuthConfig } from '../lib/auth';
 import { SOURCE_URL } from '../lib/constants';
 import { useDocumentTitle } from '../lib/use-document-title';
 
@@ -35,14 +36,14 @@ const ERRORS: Record<string, string> = {
 };
 
 const CODE_HINTS: Record<string, string> = {
-  AADSTS7000215: 'invalid client secret. Use the secret Value (not the Secret ID) in ENTRA_CLIENT_SECRET.',
+  AADSTS7000215: 'invalid client secret. Use the secret Value (not the Secret ID) in Settings, Sign-in methods.',
   AADSTS7000222: 'the client secret has expired. Create a new one.',
-  AADSTS700016: 'application not found. Check ENTRA_CLIENT_ID and ENTRA_TENANT_ID.',
+  AADSTS700016: 'application not found. Check the tenant ID and client ID in Settings, Sign-in methods.',
   AADSTS700025: 'the app is configured as a public client. In Entra > Authentication, register the redirect URI under the Web platform (not SPA or Mobile/desktop) and set "Allow public client flows" to No.',
-  AADSTS50011: 'redirect URI mismatch. Add APP_URL/api/auth/callback as a Web redirect URI.',
+  AADSTS50011: 'redirect URI mismatch. Add the redirect URI shown in Settings, Sign-in methods as a Web redirect URI.',
   AADSTS54005: 'the sign-in code was already used. Start again in a new tab.',
   AADSTS70008: 'the sign-in code expired. Please try again.',
-  invalid_client: 'check ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET.',
+  invalid_client: 'check the client ID and client secret in Settings, Sign-in methods.',
 };
 
 /** Only same-app paths are accepted as a return target (no protocol-relative or absolute URLs). */
@@ -68,8 +69,11 @@ export function Login() {
   const [params] = useSearchParams();
   const location = useLocation();
   const from = safeReturnPath((location.state as { from?: unknown } | null)?.from);
-  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => get<{ entra: boolean; breakglass: boolean; demoLogin: boolean; local: boolean }>('/api/auth/config') });
+  const cfg = useAuthConfig();
   const [showBg, setShowBg] = useState(false);
+  const [pw, setPw] = useState({ email: '', password: '' });
+  const [pwErr, setPwErr] = useState<string | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', totp: '' });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -96,8 +100,8 @@ export function Login() {
     if (cfg.data?.local) void qc.invalidateQueries({ queryKey: ['me'] });
   }, [cfg.data?.local, qc]);
 
-  // After any successful sign-in (break glass, demo PIN) `me` is set and we return to the page that sent us here.
-  if (me) return <Navigate to={from ?? '/'} replace />;
+  // After any successful sign-in `me` is set and we return to the page that sent us here (after a forced password change).
+  if (me) return <Navigate to={me.mustChangePassword ? '/change-password' : (from ?? '/')} replace state={me.mustChangePassword ? { from } : undefined} />;
   const detail = params.get('code')?.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60);
   const hint = detail ? CODE_HINTS[detail] : undefined;
   const signedOut = Boolean(params.get('signedOut'));
@@ -116,6 +120,33 @@ export function Login() {
       setForm((f) => ({ ...f, totp: '' }));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setPwBusy(true);
+    setPwErr(null);
+    try {
+      const r = await post<{ mustChangePassword: boolean }>('/api/auth/password/login', pw);
+      // Memory only: spares retyping the temporary password on the change password page.
+      rememberSignInPassword(r.mustChangePassword ? pw.password : null);
+      await qc.invalidateQueries({ queryKey: ['me'] });
+    } catch (e) {
+      setPwErr(
+        e instanceof ApiError && e.status === 429
+          ? e.message && !/^Request failed/.test(e.message)
+            ? e.message
+            : 'Too many sign-in attempts. Wait a few minutes and try again.'
+          : e instanceof ApiError && e.status === 401
+            ? 'Invalid email or password.'
+            : e instanceof Error
+              ? e.message
+              : 'Sign-in failed.',
+      );
+      setPw((f) => ({ ...f, password: '' }));
+    } finally {
+      setPwBusy(false);
     }
   };
 
@@ -165,7 +196,15 @@ export function Login() {
             <span className="text-base font-semibold text-slate-900">{PRODUCT_NAME}</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h1>
-          {cfg.data?.entra && <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>}
+          {cfg.data?.entra && !cfg.data.password && <p className="mt-1 text-sm text-slate-500">Use your organisation Microsoft account.</p>}
+          {cfg.data?.password && !cfg.data.entra && <p className="mt-1 text-sm text-slate-500">Use the email address and password of your account.</p>}
+
+          {cfg.data?.setupRequired && (
+            <Alert tone="info" className="mt-6" title="Finish the first-run setup">
+              Create the first administrator on the <Link to="/setup" className="font-medium underline underline-offset-2">setup page</Link>. The setup link with its token is printed in the
+              server log.
+            </Alert>
+          )}
 
           {sessionExpired && !signedOut && !error ? (
             <Alert tone="info" className="mt-6">
@@ -197,7 +236,23 @@ export function Login() {
             </Alert>
           )}
 
-          {cfg.data?.entra !== false && (
+          {cfg.isLoading && (
+            <div className="mt-8 flex justify-center">
+              <Spinner />
+            </div>
+          )}
+          {cfg.isError && (
+            <Alert tone="error" className="mt-6" live>
+              The sign-in options could not be loaded. Reload the page to try again.
+            </Alert>
+          )}
+          {cfg.data && !cfg.data.entra && !cfg.data.password && !cfg.data.demoLogin && !cfg.data.breakglass && !cfg.data.setupRequired && (
+            <Alert tone="warn" className="mt-6">
+              No sign-in method is turned on. Ask the person who runs this installation for help.
+            </Alert>
+          )}
+
+          {cfg.data?.entra && (
             <a
               href="/api/auth/login"
               onClick={() => {
@@ -213,6 +268,34 @@ export function Login() {
               <MicrosoftLogo />
               Sign in with Microsoft
             </a>
+          )}
+
+          {cfg.data?.entra && cfg.data.password && (
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-500" aria-hidden>
+              <span className="h-px flex-1 bg-slate-200" />
+              or
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+          )}
+
+          {cfg.data?.password && (
+            <form onSubmit={(e) => void submitPassword(e)} className={cfg.data.entra ? 'space-y-4' : 'mt-6 space-y-4'} aria-label="Sign in with email and password">
+              <Field label="Email">
+                <Input type="email" autoComplete="username" inputMode="email" value={pw.email} onChange={(e) => setPw({ ...pw, email: e.target.value })} required />
+              </Field>
+              <Field label="Password">
+                <PasswordInput autoComplete="current-password" value={pw.password} onChange={(e) => setPw({ ...pw, password: e.target.value })} required />
+              </Field>
+              {pwErr && (
+                <Alert tone="error" live>
+                  {pwErr}
+                </Alert>
+              )}
+              <Button type="submit" className="w-full" loading={pwBusy} disabled={!pw.email || !pw.password} icon={<LogIn className="size-4" aria-hidden />}>
+                Sign in
+              </Button>
+              <p className="text-xs text-slate-500">Forgot your password? Ask an administrator to reset it.</p>
+            </form>
           )}
 
           {cfg.data?.demoLogin && (
@@ -251,7 +334,7 @@ export function Login() {
                 </button>
               ) : (
                 <form onSubmit={submit} className="space-y-4">
-                  <Alert tone="warn">Emergency access is for when Microsoft sign-in is unavailable. Every use is audited.</Alert>
+                  <Alert tone="warn">Emergency access is for when the normal sign-in is unavailable. Every use is audited.</Alert>
                   <Field label="Username">
                     <Input autoComplete="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required />
                   </Field>

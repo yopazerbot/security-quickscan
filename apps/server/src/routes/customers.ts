@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, computeRiskProfile, customerInputSchema, systemKey, triageSchema, type CustomerContext, type Role } from '@qs/shared';
+import { CHECKS_BY_ID, customerInputSchema, systemKey, triageSchema, type Role } from '@qs/shared';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -60,9 +60,6 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
       permission: u.role === 'viewer' && myShares.some((m) => m.customerId === c.id) ? 'view' : (myShares.find((m) => m.customerId === c.id)?.permission ?? null),
       ownerName: owners.find((o) => o.id === c.ownerId)?.name ?? null,
       name: c.name,
-      contactName: c.contactName,
-      country: c.country,
-      industry: (c.context as any)?.industry,
       isDemo: c.isDemo,
       updatedAt: c.updatedAt,
       latestScan: latest.find((l) => l.customerId === c.id) ?? null,
@@ -80,7 +77,8 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     // Organisations created by the demo visitor are demo data (removed by "Reset demo data"). The visitor is a
     // shared account, so it never owns them: it gets an edit share and only admins manage access.
     const c = await db.transaction(async (tx) => {
-      const [row] = await tx.insert(customers).values({ ...body, createdBy: u.id, ownerId: u.isDemo ? null : u.id, isDemo: u.isDemo }).returning();
+      // The context column is kept for organisations created before scans became purely best practice; new ones store {}.
+      const [row] = await tx.insert(customers).values({ name: body.name, context: {}, createdBy: u.id, ownerId: u.isDemo ? null : u.id, isDemo: u.isDemo }).returning();
       if (u.isDemo) await tx.insert(customerAssignments).values({ userId: u.id, customerId: row.id, permission: 'edit' });
       return row;
     });
@@ -145,14 +143,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     const id = uuidParam(req, 'customerId');
     await assertCustomerAccess(ctx, req, id, true);
     const body = parse(customerInputSchema, req.body);
-    const [c] = await db.update(customers).set({ ...body, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
-    // Draft scans follow the customer context; started scans keep the snapshot they ran with.
-    if (body.context) {
-      await db
-        .update(scans)
-        .set({ context: body.context, riskProfile: computeRiskProfile(body.context as CustomerContext) })
-        .where(and(eq(scans.customerId, id), eq(scans.status, 'draft')));
-    }
+    const [c] = await db.update(customers).set({ name: body.name, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
     await audit(ctx, req, 'customer.update', { type: 'customer', id });
     return c;
   });
