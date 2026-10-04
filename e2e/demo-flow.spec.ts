@@ -101,7 +101,7 @@ test('new organisation through the full wizard with demo systems', async ({ page
 
 test('reset demo data restores the original demo organisation', async ({ page }) => {
   await page.goto('/');
-  await page.goto('/admin/settings');
+  await page.goto('/admin/settings?tab=demo');
   await page.getByRole('button', { name: 'Reset demo data' }).click();
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await expect(page.getByText('Demo data was reset.')).toBeVisible();
@@ -142,7 +142,7 @@ test('admin tables sort and page, and the audit log shows Brussels time', async 
 // Runs last: signing out ends the shared admin session.
 test('demo PIN login: admin enables it, visitor only sees demo data, sign out works', async ({ page }) => {
   await page.goto('/');
-  await page.goto('/admin/settings');
+  await page.goto('/admin/settings?tab=demo');
   await page.getByLabel(/PIN/).fill(DEMO_PIN);
   await page.getByRole('button', { name: /Set PIN and enable|Change PIN/ }).click();
   await expect(page.getByText(/PIN saved/)).toBeVisible();

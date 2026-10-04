@@ -22,6 +22,9 @@ Only the latest version on the `main` branch receives security fixes.
 
 - Never expose `LOCAL_MODE` to a network: it has no login by design.
 - Keep `MASTER_KEY` (hosted) or the `/data/master.key` volume (local) secret and backed up.
-- Protect the sign-in app with Conditional Access (MFA) and "Assignment required".
+- Prefer Microsoft sign-in for administrators and protect the sign-in app with Conditional Access (phishing-resistant MFA) and "Assignment required". Email and password accounts have no second factor; use them where single sign-on is not available.
+- Complete first-run setup right after the first deployment: until an administrator exists, anyone holding the one-time link from the server log can create one. Keep server logs private.
+- Share temporary passwords through a separate channel; users must change them at first sign-in.
+- After importing environment values into Settings, remove them from the server environment.
 - Enable break-glass and demo PIN login only when needed.
 - Review the audit log regularly.

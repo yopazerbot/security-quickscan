@@ -201,6 +201,9 @@ d('API authorisation', () => {
     const ran = (await db.select({ checkId: checkResults.checkId }).from(checkResults).where(eq(checkResults.scanId, sid))).map((r) => r.checkId).sort();
     expect(ran).toEqual(CHECKS.filter((c) => c.provider === 'github').map((c) => c.id).sort());
     expect(await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, sid))).toEqual([]);
+    // The organisation's scan list shows the platforms of each scan.
+    const detail = (await req('alice', 'GET', `/api/customers/${cid}`)).json();
+    expect(detail.scans.find((x: { id: string }) => x.id === sid).providers).toEqual(['github']);
   });
 
   it('makes the audit log append-only', async () => {

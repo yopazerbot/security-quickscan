@@ -103,7 +103,8 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
         startedAt: scans.startedAt,
         finishedAt: scans.finishedAt,
         wizardStep: scans.wizardStep,
-        providers: sql<string[]>`coalesce((select array_agg(distinct ${scanSystems.provider}::text) from ${scanSystems} where ${scanSystems.scanId} = ${scans.id}), '{}'::text[])`,
+        // Written out with table names: drizzle renders bare column names inside sql``, which would compare scan_systems.id here.
+        providers: sql<string[]>`coalesce((select array_agg(distinct ss.provider::text) from scan_systems ss where ss.scan_id = "scans"."id"), '{}'::text[])`,
       })
       .from(scans)
       .where(eq(scans.customerId, id))

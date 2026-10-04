@@ -149,57 +149,78 @@ Some Microsoft checks need Entra ID P1/P2 licences; without them they are report
 
 **Upgrading from an earlier version:** the AWS role now needs 46 read actions (previously 24), for checks such as administrators through groups and roles, S3 ACLs, public snapshots, VPC flow logs, AWS Backup and Inspector. Update the CloudFormation stack with the template from the wizard. Until then, the checks that need the new actions report "could not be evaluated" rather than failing.
 
-## Hosted setup (team use with Microsoft sign-in)
+## Hosted setup (team use)
 
-The same Docker image runs as a hosted service. It needs only a Postgres database: no Redis, no object storage. PDFs and CSVs are generated on demand.
+The same Docker image runs as a hosted service. It needs only a Postgres database: no Redis, no object storage. PDFs and CSVs are generated on demand. Environment variables only cover infrastructure and emergency access; everything else is configured in the app under **Settings**, without a restart.
 
-### 1. Microsoft Entra app for signing in
-
-In your own tenant: **App registrations > New registration**.
-
-1. Name it, for example `Security QuickScan`, with supported accounts **Accounts in this organizational directory only**.
-2. Under **Authentication**, add the **Web** platform with redirect URI `https://<your-domain>/api/auth/callback`. Leave implicit grant unchecked and keep **Allow public client flows** set to **No**.
-3. Under **Certificates & secrets**, create a client secret and copy its **Value**.
-4. Recommended: in **Enterprise applications**, set **Assignment required** to **Yes** and assign the people who may use the tool. Protect the app with a Conditional Access policy that requires (phishing-resistant) MFA.
-
-Users are invite-only: an administrator adds them under **Users**. The first administrator is created by signing in once with the address in `BOOTSTRAP_ADMIN_EMAIL`; remove that variable afterwards.
-
-### 2. Optional: scanner identities for secret-less access
-
-- **Microsoft:** register a second app, **multitenant**, with Web redirect URI `https://<your-domain>/consent/callback` and the Graph application permissions listed above. Create a client secret and set `SCANNER_MS_CLIENT_ID` and `SCANNER_MS_CLIENT_SECRET`. A tenant administrator then grants consent via a link from the wizard.
-- **AWS:** create an IAM user in your own account with only [infra/scanner-platform-policy.json](infra/scanner-platform-policy.json) attached (it may only assume `SecurityQuickScanReadOnly` roles). Set `SCANNER_AWS_ACCESS_KEY_ID` and `SCANNER_AWS_SECRET_ACCESS_KEY`.
-
-### 3. Deploy
+### 1. Deploy
 
 Any Docker host works. Example for [Railway](https://railway.com):
 
 1. Create a project and add **PostgreSQL**.
 2. Add **one** service from this repository. It builds the `Dockerfile` using `railway.json`: start command, health check on `/healthz`. If Railway offers to create one service per package of this monorepo, keep a single service with the repository root as root directory.
-3. Set the variables (below), generate a domain, and update the redirect URIs in Entra.
+3. Set `DATABASE_URL`, `APP_URL` and `MASTER_KEY` (see [Configuration](#configuration)) and generate a domain.
 
 Migrations run automatically on start. Enable database backups.
 
+### 2. First-run setup
+
+On the first start, the server log prints a one-time link:
+
+```
+Security QuickScan needs a first administrator. Open this link to set it up:
+https://<your-domain>/setup?token=...
+```
+
+Open it to create the first administrator with an email address and password. The token is only valid while no administrator exists, changes on every restart, and is never accepted once setup is done. There is no open, unauthenticated setup page.
+
+### 3. Sign-in methods (Settings > Sign-in methods)
+
+Administrators turn each method on or off. A change that would leave no administrator able to sign in is refused, and switching off the method you are signed in with asks for confirmation.
+
+- **Email and password.** Administrators add users with a temporary password, which the user must change at first sign-in; administrators can reset it later, which ends that user's sessions. Passwords need at least 14 characters by default (configurable, never below 12), are checked against a list of over 22,000 common passwords, and are stored as Argon2id hashes. Sign-in gives one generic error and locks an account for 15 minutes after 5 failures, with a separate limit per client address.
+- **Microsoft Entra ID (single sign-on).** In your own tenant, under **App registrations > New registration**:
+  1. Name it, for example `Security QuickScan`, with supported accounts **Accounts in this organizational directory only**.
+  2. Under **Authentication**, add the **Web** platform with the redirect URI shown in Settings (`https://<your-domain>/api/auth/callback`). Leave implicit grant unchecked and keep **Allow public client flows** set to **No**.
+  3. Under **Certificates & secrets**, create a client secret.
+  4. Recommended: in **Enterprise applications**, set **Assignment required** to **Yes** and protect the app with a Conditional Access policy that requires (phishing-resistant) MFA.
+
+  Enter the tenant ID, client ID and secret in Settings and use **Test configuration** before turning it on. Optionally reject tokens without an MFA claim.
+
+Users are invite-only: an administrator adds them under **Users**, choosing Microsoft sign-in or a temporary password.
+
+### 4. Optional: scanner identities (Settings > Scanner identities)
+
+These enable the secret-less access methods:
+
+- **Microsoft:** register a second app, **multitenant**, with Web redirect URI `https://<your-domain>/consent/callback` and the Graph application permissions listed above. Enter its client ID and secret in Settings. A tenant administrator then grants consent via a link from the wizard.
+- **AWS:** create an IAM user in your own account with only [infra/scanner-platform-policy.json](infra/scanner-platform-policy.json) attached (it may only assume `SecurityQuickScanReadOnly` roles). Enter its access key in Settings; the page shows the principal ARN to trust.
+
+### Secure handling of settings
+
+- Secrets in Settings (Microsoft client secrets, AWS secret key) are envelope encrypted with the master key, bound to their setting, write-only in the API (only the last four characters are shown) and never written to the audit log.
+- Changing sign-in methods, scanner identities, importing from the environment, resetting a password or turning on demo mode requires a sign-in in the last 15 minutes; otherwise the app asks you to confirm your password or sign in with Microsoft again.
+- Every settings change is audited, with the fields that changed but never secret values.
+
 ### Configuration
+
+Only infrastructure and emergency access are environment variables:
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string (on Railway: `${{Postgres.DATABASE_URL}}`) |
 | `APP_URL` | yes (hosted) | Public URL without trailing slash, e.g. `https://scan.example.com` |
-| `MASTER_KEY` | yes (hosted) | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts stored credentials. |
+| `MASTER_KEY` | yes (hosted) | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts stored credentials and secret settings. |
 | `MASTER_KEY_PREVIOUS` | no | Previous master key during a key rotation (see below) |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | yes (hosted) | Sign-in app from step 1 |
-| `BOOTSTRAP_ADMIN_EMAIL` | first start | This account becomes administrator on its first sign-in |
-| `ENTRA_REQUIRE_MFA` | no | Reject tokens without an MFA claim |
-| `BREAKGLASS_ENABLED`, `BREAKGLASS_USERNAME`, `BREAKGLASS_PASSWORD_HASH`, `BREAKGLASS_TOTP_SECRET` | no | Emergency login when Entra is unavailable: password (Argon2id) plus TOTP, rate limited, audited |
-| `SCANNER_MS_CLIENT_ID`, `SCANNER_MS_CLIENT_SECRET` | no | Multi-tenant scanner app (admin consent method) |
-| `SCANNER_AWS_ACCESS_KEY_ID`, `SCANNER_AWS_SECRET_ACCESS_KEY` | no | Identity that assumes the scanner roles in the AWS accounts to assess |
-| `LOCAL_MODE` | no | Single-user local installation without login (see above) |
-| `DEMO_MODE` | no | Fictional demo organisation and simulated systems |
+| `BREAKGLASS_ENABLED`, `BREAKGLASS_USERNAME`, `BREAKGLASS_PASSWORD_HASH`, `BREAKGLASS_TOTP_SECRET` | no | Recovery login that works even when every other method is misconfigured: password (Argon2id) plus TOTP, rate limited, audited |
+| `LOCAL_MODE`, `LOCAL_REQUIRE_TOKEN` | no | Single-user local installation without login (see above) |
 | `MODE` | no | `all` (default), or run `api` and `worker` as separate services |
-| `SESSION_IDLE_MINUTES`, `SESSION_MAX_HOURS` | no | Session timeouts (default 30 minutes idle, 8 hours absolute); users get a warning two minutes before expiry |
-| `AUDIT_RETENTION_MONTHS` | no | How long audit log entries are kept (default 24) |
 | `TRUST_PROXY` | no | Proxy hops in front of the app, used for client IPs in rate limits and the audit log. Defaults to `1` on Railway and `false` elsewhere; set it to match your reverse proxy |
 | `DATABASE_SSL`, `COOKIE_SECURE`, `PORT`, `LOG_LEVEL` | no | Infrastructure settings, see [.env.example](.env.example) |
+
+Everything else lives in **Settings**: sign-in methods, scanner identities, session timeouts (default 30 minutes idle, 8 hours absolute), audit log retention (default 24 months) and demo mode.
+
+**Upgrading from environment variables.** Earlier versions configured these with `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_REQUIRE_MFA`, `SCANNER_MS_CLIENT_ID`, `SCANNER_MS_CLIENT_SECRET`, `SCANNER_AWS_ACCESS_KEY_ID`, `SCANNER_AWS_SECRET_ACCESS_KEY`, `SESSION_IDLE_MINUTES`, `SESSION_MAX_HOURS`, `AUDIT_RETENTION_MONTHS`, `DEMO_MODE` and `BOOTSTRAP_ADMIN_EMAIL`. They still work as fallbacks (a value saved in Settings wins) and Settings marks them "From environment". Use **Import from environment** to copy them into the app, then remove them from the server. Existing Microsoft sign-in users keep working; an administrator can additionally give users a password.
 
 Generate break-glass values with the bundled CLI:
 
@@ -218,10 +239,10 @@ Rotate the master key without downtime:
 
 ## Security model
 
-- **Authentication (hosted):** Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after 30 minutes idle and 8 hours absolute, and rotate at login.
+- **Authentication (hosted):** email and password (Argon2id, common-password list, temporary passwords that must be changed, lockout per account and per address) and/or Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Administrators choose the methods in Settings, guarded against locking everyone out; break-glass from the environment stays available for recovery. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after an idle and an absolute timeout (default 30 minutes and 8 hours), rotate at login and password change, and sensitive settings need a sign-in in the last 15 minutes.
 - **Access control (need-to-know):** invite-only users with roles admin, analyst and viewer. Every organisation has an owner, who decides who else may view or edit it (when an admin deletes, deactivates or demotes an owner, they must pick a new owner in the same step); other users get 404, not 403, so they cannot even tell it exists. Shares go to existing accounts by email (no user directory is exposed), viewer accounts always stay read-only, and admins can see and manage all organisations. Access is checked on every request and re-checked on live progress streams.
 - **CSRF:** SameSite=Strict cookies, a per-session CSRF token header, and Origin / `Sec-Fetch-Site` checks on every state-changing request.
-- **Stored credentials:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
+- **Stored credentials and secret settings:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system, or to its setting. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
 - **Least privilege:** read-only permissions only. The preferred methods (AWS role with external ID, Microsoft admin consent) avoid exchanging secrets at all.
 - **Hardening:**
   - strict Content Security Policy (no inline scripts), HSTS, `frame-ancestors 'none'`, no-referrer, Permissions-Policy;
@@ -231,19 +252,19 @@ Rotate the master key without downtime:
   - secrets, cookies and OAuth codes redacted from logs;
   - CSV formula-injection protection and PNG/JPEG-only logo upload.
 - **Microsoft tenant links:** a Microsoft tenant can be linked to only one organisation, and only after Microsoft confirms that the admin consent was granted through that organisation's consent link. Links survive deletion of the organisation until an admin releases them under Settings.
-- **Audit:** an append-only audit log of logins, break-glass and demo access, sharing and ownership changes, credential storage, use and purge, scans, report views and exports, and admin changes. A database trigger blocks updates and deletes; the only way to remove entries is the retention job (`AUDIT_RETENTION_MONTHS`).
+- **Audit:** an append-only audit log of logins, break-glass and demo access, sharing and ownership changes, credential storage, use and purge, scans, report views and exports, and admin changes. A database trigger blocks updates and deletes; the only way to remove entries is the retention job (Settings > Sessions and retention).
 - **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit` and gitleaks, plus CodeQL code scanning.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
 
 ## Demo mode
 
-With `DEMO_MODE=true` the app adds simulated systems to the wizard and, on startup, seeds the fictional organisation **Noordkust Logistics NV**. It uses only reserved example domains and documentation account IDs. The seed contains:
+With demo mode turned on (Settings > Demo) the app adds simulated systems to the wizard and, on startup, seeds the fictional organisation **Noordkust Logistics NV**. It uses only reserved example domains and documentation account IDs. The seed contains:
 - two completed scans with an improving trend;
 - triaged findings;
 - a draft scan ready to run.
 
-Simulated findings are realistic for each check, for example a public invoices bucket, RDP open to the internet, or an MFA policy left in report-only mode. Administrators can reset the demo data under **Settings > Demo data**.
+Simulated findings are realistic for each check, for example a public invoices bucket, RDP open to the internet, or an MFA policy left in report-only mode. Administrators can reset the demo data under **Settings > Demo**.
 
 For hosted demos, an administrator can enable a **demo PIN login** in the same place:
 - The PIN is 8 to 12 digits and stored as an Argon2 hash.
@@ -336,6 +357,8 @@ The end-to-end suite starts the app in demo mode and covers:
 
 - **From versions before need-to-know sharing:** the former "access to all organisations" option no longer exists. Users who relied on it only see organisations they own or that are shared with them. To find them, look in the audit log for `user.update` or `user.create` entries with `allCustomers: true`, then share the relevant organisations with them.
 - **Triage** decisions made before per-system triage keep applying to every system of the organisation. New decisions apply to one system.
+- **Configuration in Settings:** sign-in, scanner identities, timeouts, retention and demo mode moved from environment variables to Settings. The old variables keep working as fallbacks; see [Configuration](#configuration) to import them.
+- **Risk profiles and evaluation criteria** are gone: every check runs, scored by severity only. Organisation context saved by earlier versions stays in the database but is no longer used, and reports of earlier scans still list the checks that were excluded then.
 - Database migrations run automatically at startup.
 
 ## Contributing

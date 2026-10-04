@@ -318,6 +318,8 @@ export function settingsRoutes(app: FastifyInstance, ctx: AppCtx) {
     const { rows, rt: before } = await load();
     const next: GeneralStored = { ...(rows[SETTING_KEYS.general] ?? {}), ...body };
     const after = computeRuntime(ctx, { ...rows, [SETTING_KEYS.general]: next });
+    // Turning demo mode on opens a shared visitor sign-in, so it needs a recent sign-in like the auth settings.
+    if (after.general.demoMode && !before.general.demoMode) requireRecentAuth(ctx, req);
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const k of Object.keys(body) as (keyof GeneralStored)[]) {
       if (before.general[k] !== after.general[k]) changes[k] = { from: before.general[k], to: after.general[k] };

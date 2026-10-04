@@ -28,9 +28,9 @@ services:
     environment:
       LOCAL_MODE: "true"
       DATABASE_URL: postgres://quickscan:quickscan@db:5432/quickscan
-      # Set DEMO_MODE=true to get the fictional demo organisation and simulated systems.
-      DEMO_MODE: ${DEMO_MODE:-false}
-      # Optional platform scanner identities (see README):
+      # Demo mode and scanner identities are set in the app under Settings. These variables are optional
+      # shortcuts, e.g. DEMO_MODE=true for the fictional demo organisation and simulated systems.
+      DEMO_MODE: ${DEMO_MODE:-}
       SCANNER_AWS_ACCESS_KEY_ID: ${SCANNER_AWS_ACCESS_KEY_ID:-}
       SCANNER_AWS_SECRET_ACCESS_KEY: ${SCANNER_AWS_SECRET_ACCESS_KEY:-}
       SCANNER_MS_CLIENT_ID: ${SCANNER_MS_CLIENT_ID:-}
