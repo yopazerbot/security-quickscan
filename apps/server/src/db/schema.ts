@@ -157,6 +157,8 @@ export const scanSystems = pgTable(
       .references(() => scans.id, { onDelete: 'cascade' }),
     provider: providerEnum('provider').notNull(),
     label: text('label').notNull(),
+    /** Free-text environment (production, acceptance, test, ...); a label only, the system key stays the identity. */
+    environment: text('environment'),
     /** Non-secret configuration (tenant, account, org, auth mode, generated external ID). */
     config: jsonb('config').notNull(),
     connectionOk: boolean('connection_ok'),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ENVIRONMENT_MAX } from './system-key.js';
 import { PROVIDERS, RETENTION_MODES, ROLES } from './types.js';
 
 const guid = z.string().regex(/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/, 'Must be a GUID');
@@ -44,11 +45,25 @@ export const githubConfigSchema = z
   .transform((c) => ({ ...c, org: c.org || (c.authMode === 'demo' ? 'demo-org' : '') }))
   .refine((c) => GITHUB_ORG_RE.test(c.org), { message: GITHUB_ORG_HINT, path: ['org'] });
 
+/**
+ * Optional free-text environment of a system (production, acceptance, uat...); never a fixed list. Empty or null
+ * clears it; leaving the field out of an update keeps the current value.
+ */
+export const environmentSchema = z
+  .string()
+  .max(200)
+  .refine((v) => !/[\u0000-\u001f\u007f]/.test(v), 'No control characters')
+  .refine((v) => v.replace(/\s+/g, ' ').trim().length <= ENVIRONMENT_MAX, `At most ${ENVIRONMENT_MAX} characters`)
+  .nullable()
+  .optional();
+
+const systemBase = { label: z.string().trim().min(1).max(100), environment: environmentSchema };
+
 export const systemInputSchema = z.discriminatedUnion('provider', [
-  z.object({ provider: z.literal('aws'), label: z.string().trim().min(1).max(100), config: awsConfigSchema }),
-  z.object({ provider: z.literal('m365'), label: z.string().trim().min(1).max(100), config: msConfigSchema }),
-  z.object({ provider: z.literal('azure'), label: z.string().trim().min(1).max(100), config: msConfigSchema }),
-  z.object({ provider: z.literal('github'), label: z.string().trim().min(1).max(100), config: githubConfigSchema }),
+  z.object({ provider: z.literal('aws'), ...systemBase, config: awsConfigSchema }),
+  z.object({ provider: z.literal('m365'), ...systemBase, config: msConfigSchema }),
+  z.object({ provider: z.literal('azure'), ...systemBase, config: msConfigSchema }),
+  z.object({ provider: z.literal('github'), ...systemBase, config: githubConfigSchema }),
 ]);
 export type SystemInput = z.infer<typeof systemInputSchema>;
 
