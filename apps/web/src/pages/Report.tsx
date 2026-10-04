@@ -3,12 +3,9 @@ import {
   DOMAIN_SHORT,
   executiveSummarySentences,
   ISO_BY_ID,
-  ISO_CONTROLS,
   partialLabel,
   PROVIDER_LABELS,
   REPORT_TITLE,
-  VERDICT_LABELS,
-  type ControlVerdict,
   type Severity,
 } from '@qs/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,7 +23,7 @@ import { SystemBadge } from '../components/SystemBadge';
 import { Alert, AnchorButton, Button, Card, EmptyState, ErrorState, Input, PageHeader, PageLoader, Select, SeverityBadge, StatusBadge, Textarea } from '../components/ui';
 import { del, get, post, put } from '../lib/api';
 import { accessCan } from '../lib/auth';
-import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX, VERDICT_STYLE } from '../lib/format';
+import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX } from '../lib/format';
 import { useDocumentTitle } from '../lib/use-document-title';
 import { IsoSection } from './report/IsoSection';
 import { SystemCards } from './report/SystemCards';
