@@ -8,3 +8,4 @@ export * from './aws-policy.js';
 export * from './system-key.js';
 export * from './branding-names.js';
 export * from './provider-icons.js';
+export * from './settings-api.js';
