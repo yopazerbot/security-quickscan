@@ -1,128 +1,143 @@
 # Check catalogue
 
-Security QuickScan runs **64 read-only checks**. Each check maps to one primary ISO/IEC 27001:2022 Annex A control (bold) and optional secondary controls.
+Security QuickScan runs **84 read-only checks**. Each check maps to one primary ISO/IEC 27001:2022 Annex A control (bold) and optional secondary controls.
 The "Default from" column is the lowest risk profile at which the check is included by default; any check can be included or excluded per scan.
 
 _This file is generated from `packages/shared/src/catalog` by `npm run docs:checks`._
 
-## Microsoft 365 / Entra ID (18)
+## Microsoft 365 / Entra ID (23)
 
 | Check | Severity | Domain | ISO 27001:2022 | Default from | Other refs |
 | --- | --- | --- | --- | --- | --- |
-| MFA enforced for all users | critical | Identity & Access | **A.8.5**, A.5.17 | low | M365 CIS 5.2.2.2; NIS2 Art. 21(2)(j) |
-| Legacy authentication blocked | high | Identity & Access | **A.8.5** | low | M365 CIS 5.2.2.3 |
-| Phishing-resistant MFA for administrators | high | Privileged Access | **A.8.2**, A.8.5 | low | M365 CIS 5.2.2.1 |
-| Between 2 and 4 Global Administrators | high | Privileged Access | **A.8.2**, A.5.18 | low | M365 CIS 1.1.3 |
-| Privileged accounts are cloud-only | medium | Privileged Access | **A.8.2** | medium | M365 CIS 1.1.1 |
-| Users registered for MFA | high | Identity & Access | **A.8.5**, A.5.17 | low |  |
-| User consent to applications restricted | medium | Governance & Hygiene | **A.5.19**, A.5.23 | low | M365 CIS 5.1.5.1 |
-| Users cannot register applications | low | Governance & Hygiene | **A.5.15**, A.8.9 | medium | M365 CIS 5.1.2.2 |
-| Guest invitations restricted | medium | Identity & Access | **A.5.15**, A.5.19 | low | M365 CIS 5.1.6.2 |
-| Guest directory access restricted | low | Identity & Access | **A.8.3** | medium | M365 CIS 5.1.6.3 |
+| MFA enforced for all users | critical | Identity & Access | **A.8.5**, A.5.17 | low | M365 CIS v4.0 5.2.2.2; NIS2 Art. 21(2)(j) |
+| Legacy authentication blocked | high | Identity & Access | **A.8.5** | low | M365 CIS v4.0 5.2.2.3 |
+| Phishing-resistant MFA for administrators | high | Privileged Access | **A.8.5**, A.8.2 | low | M365 CIS v4.0 5.2.2.1, 5.2.2.5 |
+| Between 2 and 4 Global Administrators | high | Privileged Access | **A.8.2**, A.5.18 | low | M365 CIS v4.0 1.1.3 |
+| Privileged accounts are cloud-only | medium | Privileged Access | **A.8.2** | medium | M365 CIS v4.0 1.1.1 |
+| Users registered for MFA | high | Identity & Access | **A.8.5**, A.5.17 | low | M365 CIS v4.0 5.2.3.4 |
+| User consent to applications restricted | medium | Governance & Hygiene | **A.5.15**, A.8.2, A.5.23 | low | M365 CIS v4.0 5.1.5.1 |
+| Users cannot register applications | low | Governance & Hygiene | **A.5.15**, A.8.9 | medium | M365 CIS v4.0 5.1.2.2 |
+| Guest invitations restricted | medium | Identity & Access | **A.5.15** | low | M365 CIS v4.0 5.1.6.3 |
+| Guest directory access restricted | low | Identity & Access | **A.8.3** | medium | M365 CIS v4.0 5.1.6.2 |
 | No stale enabled accounts (90+ days) | medium | Identity & Access | **A.5.18**, A.5.16 | low |  |
 | No over-privileged application permissions | high | Privileged Access | **A.8.2**, A.5.19 | low |  |
-| Privileged Identity Management in use | medium | Privileged Access | **A.8.2** | medium |  |
-| Sign-in and user risk policies | medium | Identity & Access | **A.8.16**, A.8.5 | high |  |
+| Privileged Identity Management in use | medium | Privileged Access | **A.8.2** | medium | M365 CIS v4.0 5.3.1 |
+| Sign-in and user risk policies | medium | Identity & Access | **A.8.5**, A.8.16 | high | M365 CIS v4.0 5.2.2.6, 5.2.2.7 |
 | Access requires managed or compliant devices | medium | Identity & Access | **A.8.1**, A.6.7 | high |  |
-| Weak MFA methods (SMS / voice) disabled | low | Identity & Access | **A.8.5** | medium |  |
-| SPF and DMARC enforced on mail domains | medium | Data Protection | **A.5.14**, A.8.21 | low | M365 CIS 2.1.10 |
-| Microsoft Secure Score | low | Governance & Hygiene | **A.8.9**, A.8.8 | low |  |
+| Weak MFA methods (SMS / voice) disabled | low | Identity & Access | **A.8.5** | medium | M365 CIS v4.0 5.2.3.5 |
+| SPF, DKIM and DMARC enforced on mail domains | medium | Network Exposure | **A.5.14**, A.8.21 | low | M365 CIS v4.0 2.1.8, 2.1.9, 2.1.10 |
+| Microsoft Secure Score | low | Governance & Hygiene | **A.8.9** | low |  |
+| Device code flow blocked | high | Identity & Access | **A.8.5** | low | M365 CIS v4.0 5.2.2.12 |
+| Session controls for administrators | medium | Privileged Access | **A.8.5**, A.8.2 | medium | M365 CIS v4.0 5.2.2.4 |
+| Authenticator number matching and context | medium | Identity & Access | **A.8.5** | low | M365 CIS v4.0 5.2.3.1 |
+| No long-lived application secrets | high | Privileged Access | **A.5.17**, A.8.2 | low |  |
+| No guests or service principals in privileged roles | high | Privileged Access | **A.8.2**, A.5.18 | low |  |
 
-## Microsoft Azure (9)
-
-| Check | Severity | Domain | ISO 27001:2022 | Default from | Other refs |
-| --- | --- | --- | --- | --- | --- |
-| Microsoft Defender for Cloud plans enabled | high | Logging & Detection | **A.8.16**, A.8.7, A.8.8 | low | Azure CIS 3.1 |
-| Security contact configured | low | Governance & Hygiene | **A.5.24**, A.5.25 | low | Azure CIS 3.1.13 |
-| Activity log exported | medium | Logging & Detection | **A.8.15**, A.5.28 | low | Azure CIS 5.1.1 |
-| Storage accounts disallow public blob access | high | Data Protection | **A.8.3**, A.8.12 | low | Azure CIS 4.7 |
-| Storage enforces HTTPS and TLS 1.2+ | medium | Data Protection | **A.8.24** | low | Azure CIS 4.1 |
-| Key Vault purge protection enabled | medium | Data Protection | **A.8.24**, A.8.13 | medium | Azure CIS 8.5 |
-| No management ports open to the internet | high | Network Exposure | **A.8.20**, A.8.22 | low | Azure CIS 6.1 |
-| SQL servers not open to all IPs | high | Network Exposure | **A.8.20**, A.8.3 | low | Azure CIS 6.3 |
-| Limited subscription Owners | medium | Privileged Access | **A.8.2**, A.5.18 | low | Azure CIS 1.23 |
-
-## Amazon Web Services (21)
+## Microsoft Azure (13)
 
 | Check | Severity | Domain | ISO 27001:2022 | Default from | Other refs |
 | --- | --- | --- | --- | --- | --- |
-| Root account protected with MFA | critical | Privileged Access | **A.8.5**, A.8.2 | low | AWS CIS 1.5; NIS2 Art. 21(2)(j) |
+| Microsoft Defender for Cloud plans enabled | high | Logging & Detection | **A.8.16** | low | Azure CIS v3.0 2.1.1-2.1.13 |
+| Security contact configured | low | Logging & Detection | **A.5.24**, A.5.25 | low | Azure CIS v3.0 2.1.19, 2.1.20 |
+| Activity log exported | medium | Logging & Detection | **A.8.15** | low | Azure CIS v3.0 5.1.1, 5.1.2 |
+| Storage accounts disallow public blob access | high | Data Protection | **A.8.3** | low | Azure CIS v3.0 3.17 |
+| Storage enforces HTTPS and TLS 1.2+ | medium | Data Protection | **A.8.24** | low | Azure CIS v3.0 3.1, 3.15 |
+| Storage network access restricted | high | Network Exposure | **A.8.20**, A.8.3 | low | Azure CIS v3.0 3.7, 3.8, 3.11 |
+| Key Vault soft delete, purge protection and RBAC | medium | Data Protection | **A.8.24** | medium | Azure CIS v3.0 8.5, 8.6 |
+| No management or database ports open to the internet | high | Network Exposure | **A.8.20** | low | Azure CIS v3.0 6.1, 6.2 |
+| SQL servers not open to the internet | high | Network Exposure | **A.8.20**, A.8.3 | low | Azure CIS v3.0 4.1.2 |
+| SQL auditing, TDE and Entra admin | high | Logging & Detection | **A.8.15**, A.8.24 | low | Azure CIS v3.0 4.1.1, 4.1.4, 4.1.5 |
+| No unhealthy high-severity Defender recommendations | high | Governance & Hygiene | **A.8.8**, A.8.9 | low |  |
+| Backup vaults protected against deletion | medium | Data Protection | **A.8.13** | medium |  |
+| Limited subscription Owners | medium | Privileged Access | **A.8.2**, A.5.18 | low |  |
+
+## Amazon Web Services (28)
+
+| Check | Severity | Domain | ISO 27001:2022 | Default from | Other refs |
+| --- | --- | --- | --- | --- | --- |
+| Root account protected with MFA | critical | Privileged Access | **A.8.5**, A.8.2 | low | AWS CIS 1.5, 1.6, 1.7; NIS2 Art. 21(2)(j) |
 | No access keys for the root account | critical | Privileged Access | **A.8.2**, A.5.17 | low | AWS CIS 1.4 |
 | Console IAM users have MFA | high | Identity & Access | **A.8.5**, A.5.17 | low | AWS CIS 1.10; NIS2 Art. 21(2)(j) |
 | Access keys rotated within 90 days | medium | Identity & Access | **A.5.17** | low | AWS CIS 1.14 |
-| No unused credentials (90+ days) | medium | Identity & Access | **A.5.18**, A.5.16 | low | AWS CIS 1.12 |
-| Strong IAM password policy | low | Identity & Access | **A.5.17** | medium | AWS CIS 1.8 |
-| No IAM users with direct AdministratorAccess | high | Privileged Access | **A.8.2**, A.5.15 | low | AWS CIS 1.16 |
-| Multi-region CloudTrail with log validation | high | Logging & Detection | **A.8.15**, A.5.28 | low | AWS CIS 3.1; NIS2 Art. 21(2)(b) |
-| GuardDuty threat detection enabled | high | Logging & Detection | **A.8.16**, A.5.7 | low | NIS2 Art. 21(2)(b) |
-| Security Hub enabled | medium | Governance & Hygiene | **A.8.16**, A.8.9 | medium |  |
-| AWS Config recording enabled | medium | Governance & Hygiene | **A.8.9**, A.5.9, A.8.32 | medium | AWS CIS 3.3 |
-| Account-level S3 Block Public Access | high | Data Protection | **A.8.3**, A.8.12 | low | AWS CIS 2.1.4 |
-| No publicly accessible S3 buckets | critical | Data Protection | **A.8.3**, A.8.12, A.5.34 | low |  |
+| No unused credentials (45+ days) | medium | Identity & Access | **A.5.18**, A.5.16 | low | AWS CIS 1.12 |
+| Strong IAM password policy | low | Identity & Access | **A.5.17** | medium | AWS CIS 1.8, 1.9 |
+| No IAM users with administrator access | high | Privileged Access | **A.8.2**, A.5.15 | low | AWS CIS 1.16 |
+| Multi-region CloudTrail with log validation | high | Logging & Detection | **A.8.15** | low | AWS CIS 3.1, 3.2, 3.5; NIS2 Art. 21(2)(b) |
+| GuardDuty threat detection enabled | high | Logging & Detection | **A.8.16** | low | NIS2 Art. 21(2)(b) |
+| Security Hub enabled | medium | Logging & Detection | **A.8.16**, A.8.9 | medium | AWS CIS 4.16 |
+| AWS Config recording enabled | medium | Governance & Hygiene | **A.8.9** | medium | AWS CIS 3.3 |
+| Account-level S3 Block Public Access | high | Data Protection | **A.8.3** | low | AWS CIS 2.1.4 |
+| No publicly accessible S3 buckets | critical | Data Protection | **A.8.3** | low | AWS CIS 2.1.4 |
 | EBS encryption by default | medium | Data Protection | **A.8.24** | medium | AWS CIS 2.2.1 |
-| No admin ports open to the internet | high | Network Exposure | **A.8.20**, A.8.22 | low | AWS CIS 5.2; NIS2 Art. 21(2)(e) |
-| EC2 instances require IMDSv2 | medium | Network Exposure | **A.8.9** | medium | AWS CIS 5.6 |
-| No publicly accessible RDS instances | high | Network Exposure | **A.8.20**, A.8.3 | low |  |
+| No admin ports open to the internet | high | Network Exposure | **A.8.20** | low | AWS CIS 5.2, 5.3; NIS2 Art. 21(2)(e) |
+| EC2 instances require IMDSv2 | medium | Governance & Hygiene | **A.8.9** | medium | AWS CIS 5.6 |
+| No publicly accessible RDS instances | high | Network Exposure | **A.8.20**, A.8.3 | low | AWS CIS 2.3.3 |
 | RDS storage encrypted | medium | Data Protection | **A.8.24** | medium | AWS CIS 2.3.1 |
 | RDS automated backups retained 7+ days | medium | Data Protection | **A.8.13** | medium | NIS2 Art. 21(2)(c) |
 | Customer managed KMS keys rotated | low | Data Protection | **A.8.24** | high | AWS CIS 3.6 |
 | IAM Access Analyzer enabled | low | Governance & Hygiene | **A.5.18**, A.5.19 | medium | AWS CIS 1.20 |
+| Default security groups restrict all traffic | medium | Network Exposure | **A.8.20** | medium | AWS CIS 5.4 |
+| VPC flow logs enabled | medium | Logging & Detection | **A.8.15**, A.8.16 | medium | AWS CIS 3.7; NIS2 Art. 21(2)(b) |
+| No public snapshots or AMIs | high | Data Protection | **A.8.3**, A.8.12 | low |  |
+| S3 buckets deny plain HTTP | medium | Data Protection | **A.8.24** | medium | AWS CIS 2.1.1; NIS2 Art. 21(2)(h) |
+| No open critical or high Security Hub findings | high | Logging & Detection | **A.8.8**, A.8.9 | low | NIS2 Art. 21(2)(e) |
+| AWS Backup plans protect resources | medium | Data Protection | **A.8.13** | medium | NIS2 Art. 21(2)(c) |
+| Amazon Inspector vulnerability scanning | medium | Governance & Hygiene | **A.8.8** | medium | NIS2 Art. 21(2)(e) |
 
-## GitHub (16)
+## GitHub (20)
 
 | Check | Severity | Domain | ISO 27001:2022 | Default from | Other refs |
 | --- | --- | --- | --- | --- | --- |
-| Organisation requires 2FA | critical | Identity & Access | **A.8.5**, A.8.4 | low | NIS2 Art. 21(2)(j) |
-| Least-privilege base permissions | high | Identity & Access | **A.8.4**, A.5.15 | low |  |
-| Limited organisation owners | medium | Privileged Access | **A.8.2** | low |  |
-| Outside collaborators reviewed | low | Identity & Access | **A.5.19**, A.5.18 | medium |  |
-| Members cannot create public repositories | medium | Data Protection | **A.8.12**, A.8.4 | low |  |
+| Organisation requires 2FA | critical | Identity & Access | **A.8.5**, A.8.4 | low | GitHub CIS 1.3.5; NIS2 Art. 21(2)(j) |
+| Least-privilege base permissions | high | Identity & Access | **A.8.4**, A.5.15 | low | GitHub CIS 1.3.8 |
+| Limited organisation owners | medium | Privileged Access | **A.8.2** | low | GitHub CIS 1.3.3 |
+| Outside collaborators reviewed | medium | Identity & Access | **A.5.19**, A.5.18 | medium |  |
+| Members cannot create public repositories | medium | Data Protection | **A.8.12**, A.8.4 | low | GitHub CIS 1.2.2 |
 | Private repository forking restricted | low | Data Protection | **A.8.12** | medium |  |
-| Public repositories reviewed | info | Data Protection | **A.5.9**, A.8.12 | low |  |
-| Default branches protected | high | Code & Supply Chain | **A.8.32**, A.8.25, A.8.4 | low |  |
-| Secret scanning enabled | high | Code & Supply Chain | **A.8.28**, A.5.17 | low |  |
-| Secret push protection enabled | medium | Code & Supply Chain | **A.8.28**, A.5.17 | medium |  |
-| No open critical/high Dependabot alerts | high | Code & Supply Chain | **A.8.8**, A.8.25 | low | NIS2 Art. 21(2)(e) |
-| No open critical/high code scanning alerts | medium | Code & Supply Chain | **A.8.28**, A.8.8 | medium |  |
-| GitHub Actions restricted to trusted actions | medium | Code & Supply Chain | **A.5.19**, A.8.25 | low |  |
+| Public repositories reviewed | info | Data Protection | **A.8.12** | low |  |
+| Default branches protected | high | Code & Supply Chain | **A.8.32**, A.8.25, A.8.4 | low | GitHub CIS 1.1.3, 1.1.4, 1.1.14, 1.1.16, 1.1.17 |
+| Secret scanning enabled | high | Code & Supply Chain | **A.8.28**, A.5.17 | low | GitHub CIS 1.5.1 |
+| Secret push protection enabled | medium | Code & Supply Chain | **A.8.28**, A.5.17 | medium | GitHub CIS 1.5.1 |
+| No open secret scanning alerts | critical | Code & Supply Chain | **A.8.28**, A.5.17 | low | GitHub CIS 1.5.1 |
+| No open critical/high Dependabot alerts | high | Code & Supply Chain | **A.8.8**, A.5.21, A.8.25 | low | GitHub CIS 1.5.5; NIS2 Art. 21(2)(e) |
+| No open critical/high code scanning alerts | medium | Code & Supply Chain | **A.8.28**, A.8.8 | medium | GitHub CIS 1.5.4 |
+| GitHub Actions restricted to trusted actions | medium | Code & Supply Chain | **A.5.21**, A.8.25 | low |  |
 | Read-only default workflow token | high | Code & Supply Chain | **A.8.25**, A.8.2 | low |  |
 | Deploy keys are read-only | low | Code & Supply Chain | **A.5.17**, A.8.4 | medium |  |
 | Webhooks use verified HTTPS | low | Network Exposure | **A.8.21**, A.8.24 | medium |  |
+| No members without 2FA | high | Identity & Access | **A.8.5** | low | GitHub CIS 1.3.4; NIS2 Art. 21(2)(j) |
+| GitHub Apps hold least privilege | medium | Code & Supply Chain | **A.5.21**, A.5.19 | low | GitHub CIS 1.4.3 |
+| Security features on by default for new repositories | low | Code & Supply Chain | **A.8.9**, A.8.25 | medium |  |
 
 ## Annex A coverage
 
 | Control | Title | Primary checks | Secondary checks |
 | --- | --- | --- | --- |
-| A.5.7 | Threat intelligence | 0 | 1 |
-| A.5.9 | Inventory of information and other associated assets | 1 | 1 |
 | A.5.14 | Information transfer | 1 | 0 |
-| A.5.15 | Access control | 2 | 2 |
+| A.5.15 | Access control | 3 | 2 |
 | A.5.16 | Identity management | 0 | 2 |
-| A.5.17 | Authentication information | 3 | 6 |
-| A.5.18 | Access rights | 3 | 3 |
-| A.5.19 | Information security in supplier relationships | 3 | 3 |
+| A.5.17 | Authentication information | 4 | 7 |
+| A.5.18 | Access rights | 3 | 4 |
+| A.5.19 | Information security in supplier relationships | 1 | 3 |
+| A.5.21 | Managing information security in the ICT supply chain | 2 | 1 |
 | A.5.23 | Information security for use of cloud services | 0 | 1 |
 | A.5.24 | Incident management planning and preparation | 1 | 0 |
 | A.5.25 | Assessment and decision on information security events | 0 | 1 |
-| A.5.28 | Collection of evidence | 0 | 2 |
-| A.5.34 | Privacy and protection of PII | 0 | 1 |
 | A.6.7 | Remote working | 0 | 1 |
 | A.8.1 | User endpoint devices | 1 | 0 |
-| A.8.2 | Privileged access rights | 9 | 2 |
-| A.8.3 | Information access restriction | 4 | 2 |
+| A.8.2 | Privileged access rights | 9 | 6 |
+| A.8.3 | Information access restriction | 5 | 3 |
 | A.8.4 | Access to source code | 1 | 4 |
-| A.8.5 | Secure authentication | 7 | 2 |
-| A.8.7 | Protection against malware | 0 | 1 |
-| A.8.8 | Management of technical vulnerabilities | 1 | 3 |
-| A.8.9 | Configuration management | 3 | 2 |
-| A.8.12 | Data leakage prevention | 2 | 4 |
-| A.8.13 | Information backup | 1 | 1 |
-| A.8.15 | Logging | 2 | 0 |
-| A.8.16 | Monitoring activities | 4 | 0 |
-| A.8.20 | Networks security | 4 | 0 |
+| A.8.5 | Secure authentication | 13 | 0 |
+| A.8.8 | Management of technical vulnerabilities | 4 | 1 |
+| A.8.9 | Configuration management | 4 | 4 |
+| A.8.12 | Data leakage prevention | 3 | 1 |
+| A.8.13 | Information backup | 3 | 0 |
+| A.8.15 | Logging | 4 | 0 |
+| A.8.16 | Monitoring activities | 3 | 2 |
+| A.8.20 | Networks security | 6 | 0 |
 | A.8.21 | Security of network services | 1 | 1 |
-| A.8.22 | Segregation of networks | 0 | 2 |
-| A.8.24 | Use of cryptography | 5 | 1 |
-| A.8.25 | Secure development life cycle | 1 | 3 |
-| A.8.28 | Secure coding | 3 | 0 |
-| A.8.32 | Change management | 1 | 1 |
+| A.8.24 | Use of cryptography | 6 | 2 |
+| A.8.25 | Secure development life cycle | 1 | 4 |
+| A.8.28 | Secure coding | 4 | 0 |
+| A.8.32 | Change management | 1 | 0 |

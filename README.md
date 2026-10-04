@@ -13,8 +13,8 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
 
 ## Highlights
 
-- **64 automated, read-only checks** across Microsoft 365 / Entra ID (18), Azure (9), AWS (21) and GitHub (16). See the [check catalogue](docs/CHECKS.md).
-- **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control, and results roll up into a per-control verdict: effective, partially effective, not effective or not assessed. CIS and NIS2 references are included as secondary mappings.
+- **84 automated, read-only checks** across Microsoft 365 / Entra ID (23), Azure (13), AWS (28) and GitHub (20). See the [check catalogue](docs/CHECKS.md).
+- **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control, and results roll up into a per-control verdict (effective, no issues found with limited evidence, partially effective, not effective or not assessed) with an evidence strength, and every finding links back to the system and console page it came from. CIS and NIS2 references are included as secondary mappings.
 - **Risk-based evaluation.** A short organisation questionnaire (sector, size, NIS2/DORA/ISO scope, data sensitivity, internet exposure, maturity) produces a risk profile that selects the default criteria and weights the score.
 - **Guided, least-privilege access.** Step-by-step instructions per platform, including a ready-made AWS CloudFormation role with external ID and a Microsoft admin-consent flow, so no long-lived secrets need to be shared. A connection test checks access before scanning.
 - **You choose how long credentials are kept** per scan: deleted right after the scan, kept for N days, or kept until you delete them. Secrets are always envelope-encrypted (AES-256-GCM) and never shown again.
@@ -100,10 +100,10 @@ Rescan later with one click: scope, criteria and still-valid credentials are cop
 
 | Platform | Checks | Examples |
 | --- | --- | --- |
-| Microsoft 365 / Entra ID | 18 | MFA enforcement and report-only policies, legacy authentication, phishing-resistant admin MFA, Global Administrator count, PIM, user consent and risky app permissions, stale accounts, guest settings, SPF/DMARC, Secure Score |
-| Microsoft Azure | 9 | Defender for Cloud plans, public storage, TLS and HTTPS, Key Vault purge protection, NSG management ports, SQL firewall, activity log export, subscription owners |
-| Amazon Web Services | 21 | Root MFA and keys, IAM user MFA, key rotation and unused credentials, CloudTrail, GuardDuty, Security Hub, Config, S3 Block Public Access and public buckets, security groups, IMDSv2, RDS exposure, encryption and backups, KMS rotation |
-| GitHub | 16 | Organisation 2FA, base permissions, owners, outside collaborators, branch protection and rulesets, secret scanning and push protection, Dependabot and code scanning alerts, Actions policies and token permissions, deploy keys, webhooks |
+| Microsoft 365 / Entra ID | 23 | Conditional Access coverage including exclusions and break-glass accounts, legacy authentication and device code flow, phishing-resistant MFA for all privileged roles, admin session controls, number matching, Global Administrator count including PIM-eligible members, PIM, privileged guests, user consent, risky app permissions and long-lived app credentials, stale accounts, SPF/DKIM/DMARC, Secure Score |
+| Microsoft Azure | 13 | Defender for Cloud plans and high-severity recommendations, storage public access, network rules, shared keys, TLS 1.2 and HTTPS, Key Vault soft delete, purge protection and RBAC, NSG management ports, SQL firewall, auditing and TDE, activity log categories, backup vault soft delete and immutability, subscription owners |
+| Amazon Web Services | 28 | Root MFA, keys and recent use, administrators through users, groups, roles and inline policies, IAM user MFA, key rotation and unused credentials, CloudTrail event selectors, GuardDuty, Security Hub standards and failed controls, Inspector, Config, S3 public access through policies and ACLs, TLS-only buckets, public snapshots and AMIs, security groups and default security groups, VPC flow logs, IMDSv2, RDS exposure, encryption and backups, AWS Backup plans, KMS rotation |
+| GitHub | 20 | Organisation 2FA and members without 2FA, base permissions, owners, outside collaborators with write or admin, branch protection and ruleset content, secret scanning, push protection and open secret alerts, Dependabot alerts and security updates, recent code scanning, Actions policies and token permissions, GitHub App installations, security defaults for new repositories, deploy keys, webhooks |
 
 The full list with severities, Annex A mappings, CIS and NIS2 references is in [docs/CHECKS.md](docs/CHECKS.md).
 
@@ -113,10 +113,21 @@ Each check names one **primary** Annex A control and optionally **secondary** co
 
 | Verdict | Rule |
 | --- | --- |
-| Effective | all evaluated checks for the control pass |
+| Effective | all evaluated checks for the control pass and the evidence is strong |
+| No issues found (limited evidence) | all evaluated checks pass, but the evidence is limited or indirect |
 | Not effective | a primary check of critical or high severity fails, or less than 50% of the weighted evidence passes |
-| Partially effective | anything in between |
+| Partially effective | anything in between, including a critical or high failure on a secondary mapping |
 | Not assessed | only not-applicable or errored checks |
+
+Evidence strength per control:
+
+| Evidence | Meaning |
+| --- | --- |
+| Strong | at least one primary check of high or critical severity, or at least two primary checks, was assessed |
+| Limited | only primary checks of lower severity were assessed |
+| Indirect | the control is only evidenced through secondary mappings |
+
+An accepted risk still counts as a gap for the control (half credit): accepting a risk does not make a control effective. Assessable Annex A controls that no check evidenced are listed as **not covered** in the report, the PDF and the CSV, so coverage gaps are visible rather than silent. Each control lists the results that fed it per system.
 
 The overall score (0 to 100, graded A to F) weights each check by severity and by the domain weights from the organisation's risk profile. Findings marked as false positive count as passed; accepted risks are excluded from the score but listed in the report.
 
@@ -128,12 +139,14 @@ All access is read-only. The wizard shows these steps in context, with copy butt
 
 | Platform | Recommended method | Alternative |
 | --- | --- | --- |
-| AWS | Cross-account IAM role with a least-privilege inline policy (only the 24 read actions the checks use, no access to data such as S3 objects), assumable only by your scanner identity with a per-scan external ID. The app generates the CloudFormation template ([infra/aws-scanner-role.yaml](infra/aws-scanner-role.yaml)). `iam:GenerateCredentialReport` is the only non-Get/List/Describe action: it refreshes IAM's own credential report and changes no configuration. | Temporary or dedicated read-only access keys with the same policy |
+| AWS | Cross-account IAM role with a least-privilege inline policy (only the 46 read actions the checks use, no access to data such as S3 objects), assumable only by your scanner identity with a per-scan external ID. The app generates the CloudFormation template ([infra/aws-scanner-role.yaml](infra/aws-scanner-role.yaml)). `iam:GenerateCredentialReport` is the only non-Get/List/Describe action: it refreshes IAM's own credential report and changes no configuration. | Temporary or dedicated read-only access keys with the same policy |
 | Microsoft 365 / Entra ID | Admin consent to your multi-tenant read-only scanner app. Graph application permissions: `Directory.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory`, `AuditLog.Read.All`, `Application.Read.All`, `Reports.Read.All`, `SecurityEvents.Read.All` | App registration created in the tenant, with a short-lived client secret |
 | Azure | Same app, plus `Reader` and `Security Reader` on the subscriptions in scope | App registration created in the tenant |
 | GitHub | Fine-grained personal access token with read-only permissions, created by an organisation owner | Classic token |
 
 Some Microsoft checks need Entra ID P1/P2 licences; without them they are reported as not applicable rather than failed.
+
+**Upgrading from an earlier version:** the AWS role now needs 46 read actions (previously 24), for checks such as administrators through groups and roles, S3 ACLs, public snapshots, VPC flow logs, AWS Backup and Inspector. Update the CloudFormation stack with the template from the wizard. Until then, the checks that need the new actions report "could not be evaluated" rather than failing.
 
 ## Hosted setup (team use with Microsoft sign-in)
 
@@ -246,7 +259,7 @@ flowchart TB
   subgraph Container["Docker container (Node.js)"]
     direction LR
     API["Fastify API<br/>sessions, CSRF, roles, audit log,<br/>PDF and CSV reports"]
-    WRK["Scan worker<br/>64 read-only checks,<br/>up to 3 scans in parallel"]
+    WRK["Scan worker<br/>84 read-only checks,<br/>up to 3 scans in parallel"]
   end
   DB[("PostgreSQL<br/>data, sessions, job queue,<br/>encrypted secrets, uploads")]
   subgraph Scanned["Scanned environments (read-only access)"]

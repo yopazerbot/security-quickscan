@@ -70,7 +70,7 @@
     <div class="abs" id="C-text" style="left: 120px; top: 330px; width: 560px;">
       <div class="eyebrow"><b>02</b>Scan</div>
       <div class="h" style="margin-top: 26px;">Live, read-only scanning</div>
-      <div class="sub" style="margin-top: 26px;">Up to 64 automated checks run in parallel across every system, with a live score as results come in.</div>
+      <div class="sub" style="margin-top: 26px;">Up to 84 automated checks run in parallel across every system, with a live score as results come in.</div>
     </div>
     <div class="abs" id="C-frame" style="left: 740px; top: 150px; width: 1080px; perspective: 2400px;">
       <div class="frame" id="C-inner"><div class="bar"><span class="dot" style="background:#f87171"></span><span class="dot" style="background:#fbbf24"></span><span class="dot" style="background:#34d399"></span><span class="url">quickscan.local/scans/progress</span></div><img class="shot" src="../../screenshots/progress.png" /></div>
@@ -180,9 +180,9 @@
       set('C-inner', null, `rotateY(${lerp(-18, -7, k) + 2 * p(t, s, e)}deg) rotateX(${lerp(6, 3, k)}deg) translateY(${-14 * p(t, s, e)}px)`);
       const pk = p(t, s + 0.7, s + 1.1);
       set('C-pill', eo(pk), `translateY(${lerp(30, 0, back(pk))}px)`);
-      const n = Math.round(62 * eio(p(t, s + 0.8, e - 0.5)));
-      $('C-count').textContent = `${n} / 62`;
-      $('C-bar').style.width = `${(n / 62) * 100}%`;
+      const n = Math.round(84 * eio(p(t, s + 0.8, e - 0.5)));
+      $('C-count').textContent = `${n} / 84`;
+      $('C-bar').style.width = `${(n / 84) * 100}%`;
     }
     // D: report
     {
