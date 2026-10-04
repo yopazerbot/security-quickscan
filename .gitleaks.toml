@@ -1,0 +1,13 @@
+# Gitleaks configuration for CI (gitleaks/gitleaks-action). Extends the default rules.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public identifiers and documented fake credentials, never real secrets"
+regexTarget = "match"
+regexes = [
+  # Built-in Microsoft Entra and Azure role definition IDs are public GUIDs, documented by Microsoft.
+  '''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''',
+  # Test fixtures use AWS-style example key IDs that contain the word EXAMPLE.
+  '''AKIAEXAMPLE[A-Z0-9]*''',
+]
