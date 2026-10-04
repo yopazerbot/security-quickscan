@@ -6,6 +6,26 @@ export const fmtDate = (d?: string | Date | null) =>
 export const fmtDateTime = (d?: string | Date | null) =>
   d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
 
+const BE_DATE_TIME = new Intl.DateTimeFormat('nl-BE', {
+  timeZone: 'Europe/Brussels',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Belgian (Brussels) local time, 24-hour clock: "03/10/2026 20:15:32". Built from parts so the format is fixed across browsers. */
+export function fmtDateTimeBE(d?: string | Date | null) {
+  if (!d) return '-';
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '-';
+  const p = Object.fromEntries(BE_DATE_TIME.formatToParts(date).map((x) => [x.type, x.value])) as Record<string, string>;
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
+}
+
 export function fmtDuration(ms: number) {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
@@ -31,9 +51,11 @@ export const STATUS_STYLE: Record<ResultStatus | 'pending' | 'running', { label:
   running: { label: 'Running', cls: 'bg-brand-50 text-brand-700 ring-brand-200', dot: 'bg-brand-500' },
 };
 
-export const VERDICT_STYLE: Record<ControlVerdict, { cls: string; hex: string }> = {
+export const VERDICT_STYLE: Record<ControlVerdict, { cls: string; hex: string; swatch?: string }> = {
   // Same colours as the PDF report; white text on these shades meets WCAG AA.
   effective: { cls: 'bg-emerald-700 text-white', hex: '#047857' },
+  // Clean results on limited or indirect evidence: light green with a dashed outline, so it never reads as "Effective".
+  no_issues_limited: { cls: 'bg-emerald-100 text-emerald-900 outline-2 outline-dashed -outline-offset-2 outline-emerald-700', hex: '#d1fae5', swatch: 'outline-1 outline-dashed outline-emerald-700' },
   partial: { cls: 'bg-amber-700 text-white', hex: '#b45309' },
   not_effective: { cls: 'bg-red-700 text-white', hex: '#b91c1c' },
   not_assessed: { cls: 'bg-slate-200 text-slate-700', hex: '#cbd5e1' },

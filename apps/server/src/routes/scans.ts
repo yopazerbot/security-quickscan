@@ -7,6 +7,7 @@ import {
   customerContextSchema,
   githubSecretSchema,
   msSecretSchema,
+  PROVIDERS,
   retentionSchema,
   riskRank,
   systemInputSchema,
@@ -783,12 +784,20 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const u = requireUser(req);
     const allowed = await accessibleCustomerIds(ctx, u);
     if (allowed && !allowed.length) return [];
-    return db
+    const rows = await db
       .select({ id: scans.id, name: scans.name, status: scans.status, score: scans.score, grade: scans.grade, createdAt: scans.createdAt, finishedAt: scans.finishedAt, customerId: scans.customerId, customerName: customers.name, isDemo: customers.isDemo })
       .from(scans)
       .innerJoin(customers, eq(customers.id, scans.customerId))
       .where(allowed ? inArray(scans.customerId, allowed) : undefined)
       .orderBy(desc(scans.createdAt))
       .limit(25);
+    // Distinct providers per scan (in PROVIDERS order) for the provider icons on the dashboard.
+    const sys = rows.length
+      ? await db.select({ scanId: scanSystems.scanId, provider: scanSystems.provider }).from(scanSystems).where(inArray(scanSystems.scanId, rows.map((r) => r.id)))
+      : [];
+    return rows.map((r) => {
+      const mine = new Set(sys.filter((s) => s.scanId === r.id).map((s) => s.provider));
+      return { ...r, providers: PROVIDERS.filter((p) => mine.has(p)) };
+    });
   });
 }

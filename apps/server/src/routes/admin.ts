@@ -229,6 +229,8 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
         action: z.string().max(100).optional(),
         organisationId: z.uuid().optional(),
         userId: z.uuid().optional(),
+        /** Page size (1 to 100); the client pages with `before` cursors. */
+        limit: z.coerce.number().int().min(1).max(100).default(100),
       }),
       req.query,
     );
@@ -270,7 +272,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
       )
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(auditLog.id))
-      .limit(100);
+      .limit(q.limit);
     return rows.map((r) => ({ ...r.log, userEmail: r.actorEmail, actorEmail: r.actorEmail, targetName: r.targetName, targetEmail: r.targetEmail }));
   });
 

@@ -1,5 +1,6 @@
 import {
   CHECKS_BY_ID,
+  computeScore,
   PROVIDER_LABELS,
   SEVERITIES,
   type Branding,
@@ -8,6 +9,7 @@ import {
   type ResourceRef,
   type ResultStatus,
   type RiskProfile,
+  type ScoreInput,
   type ScoreSummary,
   type Severity,
 } from '@qs/shared';
@@ -37,8 +39,12 @@ export interface ReportItem {
   cis?: string;
   nis2?: string;
   effort: string;
+  /** Scan system row id; matches systems[].id and summary.controls[].checks[].systemId. */
   systemId: string;
   systemLabel: string;
+  providerLabel: string;
+  /** Human readable account, tenant or organisation of the system, e.g. 'AWS account 111122223333'. */
+  systemIdentity: string | null;
   /** Stable identity of the system (provider plus account, tenant or org); triage is stored per (checkId, systemKey). */
   systemKey: string;
   /** Triage in effect for this report (frozen with the score once the scan finished). */
@@ -92,6 +98,8 @@ export interface ReportModel {
     /** When the stored secret is deleted automatically; null when not stored or kept until deleted manually. */
     credentialsExpireAt: Date | null;
     authMode: string;
+    /** Score, grade, coverage and counts over this system's results only (same domain weights as the scan). */
+    summary: ScoreSummary;
   }[];
   summary: ScoreSummary;
   findings: ReportItem[];
@@ -104,6 +112,38 @@ export interface ReportModel {
 }
 
 const sevRank = (s: Severity) => SEVERITIES.indexOf(s);
+
+const listNames = (xs: string[], max = 4) => (xs.length > max ? `${xs.slice(0, max).join(', ')} and ${xs.length - max} more` : xs.join(', '));
+
+/**
+ * Human readable identity of a scanned system from its connection details (what the provider reported) with the
+ * configuration as fallback: 'AWS account 111122223333', 'Tenant Contoso (GUID)', 'github.com/acme',
+ * 'Tenant GUID; subscriptions: prod, dev'.
+ */
+export function systemIdentity(provider: Provider, config: unknown, details: unknown): string | null {
+  const c = (config ?? {}) as Record<string, any>;
+  const d = (details ?? {}) as Record<string, any>;
+  if (provider === 'aws') {
+    const fromArn = typeof c.roleArn === 'string' ? c.roleArn.split(':')[4] : '';
+    const id = d.accountId || c.accountId || fromArn;
+    return id ? `AWS account ${id}` : null;
+  }
+  if (provider === 'github') {
+    const org = d.org || c.org;
+    return org ? `github.com/${org}` : null;
+  }
+  const tenantId = d.tenantId || c.tenantId;
+  const tenant = d.displayName ? `Tenant ${d.displayName}${tenantId ? ` (${tenantId})` : ''}` : tenantId ? `Tenant ${tenantId}` : null;
+  if (provider === 'm365') return tenant;
+  const subs: string[] = Array.isArray(d.subscriptions)
+    ? d.subscriptions.map((x: any) => (x?.name && x?.id && x.name !== x.id ? `${x.name} (${x.id})` : String(x?.name || x?.id || ''))).filter(Boolean)
+    : Array.isArray(c.subscriptionIds)
+      ? c.subscriptionIds.map(String)
+      : [];
+  const subText = subs.length ? `${subs.length === 1 ? 'subscription' : 'subscriptions'} ${listNames(subs)}` : null;
+  return [tenant, subText].filter(Boolean).join('; ') || null;
+}
+
 const failing = (status: string) => status === 'fail' || status === 'warn';
 
 export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportModel> {
@@ -119,6 +159,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
   const criteria = await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, scanId));
   const lookup = triageLookup(triage);
   const sysLabel = new Map(systems.map((s) => [s.id, s.label]));
+  const sysIdentity = new Map(systems.map((s) => [s.id, systemIdentity(s.provider, s.startedConfig ?? s.config, s.connectionDetails)]));
   const sysKey = new Map(systems.map((s) => [s.id, scanSystemKey(s)]));
   const myKeys = new Set(sysKey.values());
 
@@ -188,12 +229,31 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         effort: m.effort,
         systemId: r.systemId,
         systemLabel: sysLabel.get(r.systemId) ?? '',
+        providerLabel: PROVIDER_LABELS[m.provider],
+        systemIdentity: sysIdentity.get(r.systemId) ?? null,
         systemKey: key,
         triage: effective,
         currentTriage: current,
         isNew: shared.has(key) && failing(r.status) && !prevFailing.has(triageKey(key, r.checkId)),
       };
     });
+
+  // Scores per system and for legacy frozen summaries use the triage this report shows (frozen or current).
+  const weights = (scan.riskProfile as RiskProfile).domainWeights;
+  const toInput = (i: ReportItem): ScoreInput => ({
+    checkId: i.checkId,
+    status: i.status,
+    severity: i.severity,
+    triage: i.triage?.status ?? null,
+    systemId: i.systemId,
+  });
+  // Summaries frozen before evidence strength and per-system attribution existed keep their score, grade and counts;
+  // the control assessments and the not-covered list are derived again so every report has the same shape.
+  if (frozen && (!Array.isArray(summary.notCovered) || summary.controls.some((c) => !c.evidence))) {
+    const again = computeScore(items.map(toInput), CHECKS_BY_ID, weights);
+    summary.controls = again.controls;
+    summary.notCovered = again.notCovered;
+  }
 
   const isFinding = (i: ReportItem) => failing(i.status);
   const bySeverity = (a: ReportItem, b: ReportItem) =>
@@ -222,8 +282,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
     riskProfile: scan.riskProfile as RiskProfile,
     branding: await getBranding(ctx),
     systems: systems.map((s) => {
-      const d = (s.connectionDetails ?? {}) as Record<string, any>;
-      const identity = d.accountId ? `AWS account ${d.accountId}` : d.displayName ? `${d.displayName} (${d.tenantId})` : d.org ? `github.com/${d.org}` : d.subscriptions ? `${d.subscriptions.length} subscription(s)` : null;
+      const identity = sysIdentity.get(s.id) ?? null;
       const cred = creds.find((c) => c.id === s.id);
       return {
         id: s.id,
@@ -235,6 +294,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         credentialsStored: Boolean(cred),
         credentialsExpireAt: cred?.expiresAt ?? null,
         authMode: (s.config as any).authMode,
+        summary: computeScore(items.filter((i) => i.systemId === s.id).map(toInput), CHECKS_BY_ID, weights),
       };
     }),
     summary,

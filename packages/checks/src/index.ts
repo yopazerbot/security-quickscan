@@ -2,3 +2,16 @@ export { runSystem, testConnection, IMPLEMENTED_CHECKS, safeError, awsPrincipalA
 export type { ConsentProof } from './runner.js';
 export { demoOutcomeSync, DEMO_COMPANY, DEMO_SCENARIO_IDS } from './demo.js';
 export type { ScannerEnv, ConnectionResult } from './types.js';
+export {
+  entraUrl,
+  entraPageUrl,
+  azurePortalUrl,
+  azureSubscriptionId,
+  awsConsoleUrl,
+  arnResourceName,
+  arnRegion,
+  githubUrl,
+  githubRepoUrl,
+  githubOrgSettingsUrl,
+} from './links.js';
+export type { EntraKind, AwsConsoleService } from './links.js';

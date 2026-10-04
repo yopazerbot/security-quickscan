@@ -55,6 +55,7 @@ export async function scoreScanDetailed(ctx: AppCtx, scanId: string) {
       status: unfinished ? 'error' : (r.status as ScoreInput['status']),
       severity: CHECKS_BY_ID[r.checkId].severity,
       triage: t?.status ?? null,
+      systemId: r.systemId,
     });
   }
   const profile = scan.riskProfile as RiskProfile;
