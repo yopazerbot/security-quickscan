@@ -109,31 +109,67 @@ const warn = (summary: string, resources: ResourceRef[] = [], evidence?: Record<
 const SCENARIOS: Record<string, Scenario> = {
   // ---------- Microsoft 365 / Entra ID ----------
   'm365.mfa-all-users': {
-    bad: warn("The policy 'CA001 - Require MFA - all users' exists but is in report-only mode.", [{ id: 'ca-001', name: 'CA001 - Require MFA - all users', detail: 'enabledForReportingButNotEnforced' }]),
-    good: "MFA enforced for all users by 'CA001 - Require MFA - all users'.",
+    bad: warn(
+      "MFA is enforced for all users and all cloud apps by 'CA001 - Require MFA - all users', but it excludes 3 user(s), 1 group(s): more than break-glass accounts. Review the exclusions.",
+      [
+        caPol('CA001 - Require MFA - all users', 'enabled'),
+        user('breakglass01', 'excluded'),
+        user('breakglass02', 'excluded'),
+        user('scanner.magazijn', 'excluded'),
+        entra('group', 'Group', 'SG-Chauffeurs-NoMFA', 'excluded (group)'),
+      ],
+      { exclusions: ['breakglass01@noordkust.example (User)', 'breakglass02@noordkust.example (User)', 'scanner.magazijn@noordkust.example (User)', 'SG-Chauffeurs-NoMFA (Group)'] },
+    ),
+    good: "MFA is enforced for all users and all cloud apps by 'CA001 - Require MFA - all users', with break-glass exclusions: breakglass01@noordkust.example, breakglass02@noordkust.example.",
   },
   'm365.legacy-auth': {
-    bad: fail('Legacy authentication is not blocked for all users.', [], { clientAppTypesAllowed: ['exchangeActiveSync', 'other'] }),
-    good: "Legacy authentication is blocked by 'CA002 - Block legacy authentication'.",
+    bad: fail(
+      "Legacy authentication is not blocked for all users and all cloud apps. 1 related policy(ies) do not count: 'CA002 - Block legacy authentication' (policy is disabled; client app types miss other).",
+      [caPol('CA002 - Block legacy authentication', 'does not count: policy is disabled; client app types miss other')],
+    ),
+    good: "Legacy authentication (Exchange ActiveSync and other clients) is blocked for all users and all cloud apps by 'CA002 - Block legacy authentication'.",
   },
   'm365.admin-mfa': {
-    bad: warn('Administrators require MFA, but not a phishing-resistant authentication strength.', [{ id: 'ca-001', name: 'CA001 - Require MFA - all users', detail: 'enabled' }]),
-    good: "Administrators must use phishing-resistant MFA ('CA003 - Admins phishing-resistant MFA').",
+    bad: warn(
+      'All administrator roles require MFA, but 14 role(s) are not held to a phishing-resistant authentication strength: Global Administrator, Privileged Role Administrator, Security Administrator, Exchange Administrator and 10 more.',
+      [caPol('CA001 - Require MFA - all users', 'enabled'), msRole('Global Administrator', 'MFA without phishing-resistant strength'), msRole('Privileged Role Administrator', 'MFA without phishing-resistant strength')],
+    ),
+    good: "All 14 administrator roles must use phishing-resistant MFA ('CA003 - Admins phishing-resistant MFA').",
+  },
+  'm365.admin-session-controls': {
+    bad: fail('No enforced Conditional Access session controls (sign-in frequency, no persistent browser) for administrator roles.', [
+      caPol('CA004 - Admin session lifetime', 'does not count: policy is disabled'),
+    ]),
+    good: 'All 14 administrator roles have a sign-in frequency of 4 hours or less and no persistent browser sessions.',
+  },
+  'm365.device-code-flow': {
+    bad: fail('Device code flow is not blocked by Conditional Access: attackers can use device code phishing to obtain tokens.'),
+    good: "Device code flow is blocked for all users and all cloud apps by 'CA005 - Block device code flow', with break-glass exclusions: breakglass01@noordkust.example.",
   },
   'm365.global-admin-count': {
-    bad: fail('6 active Global Administrators (recommended 2-4).', [
-      user('admin.pieters'),
-      user('k.janssens'),
-      user('it-support'),
-      user('l.maes'),
-      user('breakglass01'),
-      user('msp-partner', 'guest of the managed service provider'),
+    bad: fail('6 Global Administrator(s) (1 PIM-eligible), recommended 2-4.', [
+      user('admin.pieters', 'active'),
+      user('k.janssens', 'active'),
+      user('it-support', 'active, via group SG-Tier0-Admins'),
+      user('l.maes', 'eligible (PIM)'),
+      user('breakglass01', 'active'),
+      user('msp-partner', 'active, guest of the managed service provider'),
     ]),
-    good: '3 active Global Administrators, including 1 emergency access account.',
+    good: '3 Global Administrator(s) (1 PIM-eligible).',
   },
   'm365.admins-cloud-only': {
-    bad: fail('2 privileged account(s) are synchronised from on-premises AD.', [user('k.janssens', 'synchronised from on-premises'), user('l.maes', 'synchronised from on-premises')]),
-    good: 'All privileged role members are cloud-only accounts.',
+    bad: fail('2 privileged account(s) are synchronised from on-premises AD.', [
+      user('k.janssens', 'Global Administrator, synchronised from on-premises (active)'),
+      user('l.maes', 'Exchange Administrator, synchronised from on-premises (eligible)'),
+    ]),
+    good: 'All active and eligible privileged role members are cloud-only accounts.',
+  },
+  'm365.privileged-guests': {
+    bad: fail('1 guest(s) and 1 service principal(s) hold privileged directory roles.', [
+      entra('user', 'User', 'msp-partner_partner.example#EXT#@noordkust.example', 'guest: Global Administrator (active)'),
+      entra('servicePrincipal', 'Service principal', 'TMS Provisioning', 'service principal: User Administrator (active)'),
+    ]),
+    good: 'No guests or service principals hold privileged directory roles.',
   },
   'm365.mfa-registration': {
     bad: warn('86% of users registered for MFA (19 missing).', [user('chauffeur.planning'), user('magazijn.antwerpen'), user('s.peeters'), user('t.wouters'), user('receptie')], { registered: 118, total: 137, percentage: 86 }),
@@ -144,65 +180,196 @@ const SCENARIOS: Record<string, Scenario> = {
     good: 'User consent is limited to verified publishers and low-impact permissions.',
   },
   'm365.user-app-registration': { bad: warn('All users can register applications.'), good: 'Users cannot register applications.' },
-  'm365.guest-invites': { bad: warn('All member users can invite guests.', [], { allowInvitesFrom: 'adminsGuestInvitersAndAllMembers' }), good: 'Guest invitations restricted to admins and Guest Inviters.' },
+  'm365.guest-invites': {
+    bad: warn('All member users can invite guests.', [], { allowInvitesFrom: 'adminsGuestInvitersAndAllMembers' }),
+    good: 'Guest invitations are restricted to admins and users in the Guest Inviter role.',
+  },
   'm365.guest-access': { bad: warn('Guests have limited access to directory objects (default); consider the most restrictive setting.'), good: 'Guest access is restricted to their own directory objects.' },
   'm365.stale-accounts': {
-    bad: warn('7 enabled account(s) without sign-in for 90+ days.', [
-      user('j.devos', 'Member, last sign-in 2025-11-03'),
-      user('stagiair2024', 'Member, last sign-in 2025-08-29'),
-      user('scanner.magazijn', 'Member, last sign-in never'),
-      { id: 'ext-1', name: 'consultant_partner.example#EXT#', detail: 'Guest, last sign-in 2025-06-12' },
-      user('oud.boekhouding', 'Member, last sign-in 2025-10-21'),
-      user('test.user', 'Member, last sign-in never'),
-      user('h.claes', 'Member, last sign-in 2025-12-01'),
-    ]),
+    bad: warn(
+      '7 enabled account(s) without a successful sign-in for 90+ days.',
+      [
+        user('j.devos', 'Member, last successful sign-in 2026-05-03'),
+        user('stagiair2024', 'Member, last successful sign-in 2025-08-29'),
+        user('scanner.magazijn', 'Member, last successful sign-in never'),
+        entra('user', 'User', 'consultant_partner.example#EXT#@noordkust.example', 'Guest, last successful sign-in 2026-02-12'),
+        user('oud.boekhouding', 'Member, last successful sign-in 2026-04-21'),
+        user('test.user', 'Member, last successful sign-in never'),
+        user('h.claes', 'Member, last successful sign-in 2026-06-01'),
+      ],
+      { lastSuccessfulSignIn: { [upn('j.devos')]: '2026-05-03T07:12:44Z', [upn('stagiair2024')]: '2025-08-29T15:40:02Z', [upn('scanner.magazijn')]: null } },
+    ),
     good: 'No stale enabled accounts.',
   },
   'm365.risky-app-permissions': {
-    bad: warn('2 application(s) hold high-impact Microsoft Graph application permissions.', [
-      { id: 'sp-1', name: 'TMS Mail Connector', detail: 'Mail.ReadWrite, Mail.Send' },
-      { id: 'sp-2', name: 'Legacy Backup Tool', detail: 'Files.ReadWrite.All, Sites.FullControl.All' },
+    bad: fail('1 application(s) hold Tier-0 Microsoft Graph permissions that allow taking over the tenant, 2 hold tenant-wide write permissions.', [
+      msSp('Legacy Provisioning Script', 'Tier-0: Directory.ReadWrite.All'),
+      msSp('TMS Mail Connector', 'write: Mail.ReadWrite, Mail.Send'),
+      msSp('Legacy Backup Tool', 'write: Files.ReadWrite.All, Sites.FullControl.All'),
+      msSp('Planning Dashboard', 'read-all: Calendars.Read; delegated for all users: Mail.Read'),
     ]),
-    good: 'No applications hold high-impact Graph application permissions.',
+    good: 'No applications hold high-impact Microsoft Graph application permissions or tenant-wide delegated grants.',
   },
-  'm365.pim': { bad: warn('No PIM eligible role assignments: privileged roles are permanently assigned.'), good: 'PIM is used (9 eligible role assignments).' },
-  'm365.risk-policies': { bad: fail('No sign-in or user risk Conditional Access policies.'), good: 'Risk-based Conditional Access policies are enabled.' },
-  'm365.device-compliance': { bad: fail('No Conditional Access policy requires managed devices.'), good: 'Conditional Access requires compliant or joined devices.' },
-  'm365.weak-auth-methods': { bad: warn('Weak methods enabled: Sms, Voice.', [{ id: 'Sms', name: 'Sms' }, { id: 'Voice', name: 'Voice' }]), good: 'SMS and voice authentication are disabled.' },
+  'm365.app-credentials': {
+    bad: fail('1 privileged or multi-tenant application(s) use long-lived client secrets. 2 more have credential hygiene issues.', [
+      msApp('TMS Mail Connector', '1 client secret(s) valid for more than 1 year (until 2028-03-31) (privileged)'),
+      msApp('Planning Dashboard', '1 client secret(s) valid for more than 1 year (until 2027-11-15)'),
+      msApp('Old Intranet SSO', '2 expired credential(s) still present'),
+    ]),
+    good: 'None of 23 application registrations have long-lived client secrets or expired credentials.',
+  },
+  'm365.pim': {
+    bad: warn('No PIM-eligible assignments for privileged roles: privileged roles are permanently assigned.', [
+      user('admin.pieters', 'permanent Global Administrator'),
+      user('k.janssens', 'permanent Global Administrator'),
+      user('it-support', 'permanent Helpdesk Administrator'),
+    ]),
+    good: 'PIM is used: 9 eligible privileged assignment(s); permanent assignments limited to 2 break-glass Global Administrator(s).',
+  },
+  'm365.risk-policies': {
+    bad: fail('No enforced sign-in or user risk Conditional Access policies for all users and apps. 1 related policy(ies) do not count.', [
+      caPol('CA006 - Risky sign-ins (pilot)', 'does not count: does not apply to all users'),
+    ]),
+    good: 'Sign-in risk and user risk Conditional Access policies are enforced for all users.',
+  },
+  'm365.device-compliance': { bad: fail('No Conditional Access policy requires managed devices.'), good: "Conditional Access requires compliant or joined devices ('CA007 - Require compliant device')." },
+  'm365.weak-auth-methods': {
+    bad: warn('Weak methods enabled: Sms, Voice.', [{ id: 'Sms', name: 'Sms', type: 'Authentication method', account: D }, { id: 'Voice', name: 'Voice', type: 'Authentication method', account: D }], {
+      policyMigrationState: 'migrationInProgress',
+      enabled: ['Sms', 'Voice'],
+    }),
+    good: 'SMS and voice authentication are disabled.',
+  },
+  'm365.authenticator-number-matching': {
+    bad: warn('Number matching is on, but additional context is not shown to all users: application name default, geographic location default.', [], {
+      numberMatching: 'enabled',
+      applicationName: 'default',
+      geographicLocation: 'default',
+    }),
+    good: 'Microsoft Authenticator requires number matching and shows the application name and location.',
+  },
   'm365.email-auth': {
-    bad: warn(`1 of 2 mail domain(s) lack SPF/DMARC enforcement.`, [{ id: D, name: D, detail: 'DMARC p=none' }]),
-    good: 'All 2 mail domains have SPF and enforcing DMARC.',
+    bad: warn('1 of 2 mail domain(s) have SPF, DKIM or DMARC gaps.', [
+      { id: D, name: D, detail: 'DMARC p=none, DKIM not configured for Exchange Online (no selector1/selector2 CNAME)', type: 'Mail domain', url: `https://admin.microsoft.com/#/Domains/Details/${D}` },
+    ]),
+    good: 'All 2 mail domains have valid SPF, DKIM and enforcing DMARC.',
   },
   'm365.secure-score': {
-    bad: warn('Secure Score is 48% (162/338).', [], { currentScore: 162, maxScore: 338, percentage: 48 }),
+    bad: warn('Secure Score is 48% (162/338). Biggest gaps: Ensure all users can complete MFA, Block legacy authentication, Turn on Microsoft Defender for Office 365 Safe Links.', [], {
+      currentScore: 162,
+      maxScore: 338,
+      percentage: 48,
+      weakestControls: [
+        { control: 'Ensure all users can complete multifactor authentication', category: 'Identity', score: 0, maxScore: 9 },
+        { control: 'Block legacy authentication', category: 'Identity', score: 0, maxScore: 8 },
+        { control: 'Turn on Microsoft Defender for Office 365 Safe Links', category: 'Apps', score: 2, maxScore: 9 },
+      ],
+    }),
     good: 'Secure Score is 74% (250/338).',
   },
 
   // ---------- Azure ----------
   'azure.defender-plans': {
-    bad: fail('1 subscription(s) have no key Defender plans enabled.', [sub('noordkust-prod', 'not enabled: VirtualMachines, StorageAccounts, KeyVaults, Arm, SqlServers'), sub('noordkust-dev', 'not enabled: KeyVaults, SqlServers')]),
-    good: 'Key Defender for Cloud plans are enabled on all subscriptions.',
+    bad: fail('1 subscription(s) have none of the Defender plans their workloads need.', [
+      sub('noordkust-prod', 'not enabled: Arm, CloudPosture, VirtualMachines, StorageAccounts, KeyVaults, SqlServers (required: Arm, CloudPosture, VirtualMachines, StorageAccounts, KeyVaults, SqlServers)'),
+      sub('noordkust-dev', 'not enabled: CloudPosture, AppServices (required: Arm, CloudPosture, StorageAccounts, AppServices)'),
+    ]),
+    good: 'Defender for Cloud plans are enabled for every deployed workload type (plus Resource Manager and CSPM).',
   },
-  'azure.security-contact': { bad: warn('1 subscription(s) without a security contact.', [sub('noordkust-dev')]), good: 'Security contacts are configured.' },
-  'azure.activity-log-export': { bad: fail('2 subscription(s) do not export the activity log.', [sub('noordkust-prod'), sub('noordkust-dev')]), good: 'Activity logs are exported on all subscriptions.' },
+  'azure.security-contact': { bad: warn('1 subscription(s) without a security contact.', [sub('noordkust-dev', 'no security contact e-mail')]), good: 'Security contacts are configured.' },
+  'azure.activity-log-export': {
+    bad: fail('1 subscription(s) do not export the activity log; 1 subscription(s) miss required categories (required: Administrative, Alert, Policy, Security).', [
+      sub('noordkust-dev', 'no diagnostic setting'),
+      sub('noordkust-prod', 'missing categories: Alert, Policy'),
+    ]),
+    good: 'Activity logs (Administrative, Alert, Policy, Security) are exported on all subscriptions.',
+  },
   'azure.storage-public': {
     bad: fail('2 of 5 storage accounts allow anonymous blob access.', [
-      { id: 'st-1', name: 'stnoordkustdocs', detail: 'noordkust-prod' },
-      { id: 'st-2', name: 'stnkdevtemp', detail: 'noordkust-dev' },
+      azRes('noordkust-prod', 'rg-documents', 'Microsoft.Storage/storageAccounts', 'stnoordkustdocs', 'Storage account', 'anonymous blob access allowed'),
+      azRes('noordkust-dev', 'rg-dev', 'Microsoft.Storage/storageAccounts', 'stnkdevtemp', 'Storage account', 'anonymous blob access allowed'),
     ]),
     good: 'All 5 storage accounts disallow anonymous blob access.',
   },
-  'azure.storage-transport': { bad: fail('1 storage account(s) allow insecure transport.', [{ id: 'st-3', name: 'stnklegacyftp', detail: 'min TLS1_0' }]), good: 'All storage accounts enforce HTTPS and TLS 1.2+.' },
-  'azure.keyvault-protection': { bad: warn('2 of 3 Key Vaults without purge protection.', [{ id: 'kv-1', name: 'kv-noordkust-prod' }, { id: 'kv-2', name: 'kv-nk-dev' }]), good: 'All 3 Key Vaults have purge protection.' },
-  'azure.nsg-admin-ports': {
-    bad: fail('2 NSG rule(s) open RDP/SSH to the internet.', [
-      { id: 'nsg-1', name: 'nsg-tms-app/Allow-RDP', detail: 'ports 3389 from any' },
-      { id: 'nsg-2', name: 'nsg-jumphost/ssh-anywhere', detail: 'ports 22 from any' },
+  'azure.storage-transport': {
+    bad: fail('2 of 5 storage account(s) do not enforce HTTPS and TLS 1.2+.', [
+      azRes('noordkust-prod', 'rg-legacy', 'Microsoft.Storage/storageAccounts', 'stnklegacyftp', 'Storage account', 'minimum TLS1_0'),
+      azRes('noordkust-dev', 'rg-dev', 'Microsoft.Storage/storageAccounts', 'stnkdevtemp', 'Storage account', 'secure transfer not explicitly required, minimum TLS version not set'),
     ]),
-    good: 'No NSG rules open RDP/SSH to the internet.',
+    good: 'All 5 storage accounts enforce HTTPS and TLS 1.2+.',
   },
-  'azure.sql-public': { bad: warn('1 server(s) allow access from all Azure services (including other tenants).'), good: 'None of 2 SQL servers are open to all IPs.' },
-  'azure.subscription-owners': { bad: warn('1 subscription(s) have more than 3 Owner assignments.', [sub('noordkust-prod', '5 Owner assignments')]), good: 'All subscriptions have 3 or fewer Owner assignments.' },
+  'azure.storage-network': {
+    bad: fail('3 of 5 storage account(s) are reachable from all networks; 1 more allow shared keys or lack soft delete.', [
+      azRes('noordkust-prod', 'rg-documents', 'Microsoft.Storage/storageAccounts', 'stnoordkustdocs', 'Storage account', 'reachable from all networks, shared key access allowed'),
+      azRes('noordkust-prod', 'rg-legacy', 'Microsoft.Storage/storageAccounts', 'stnklegacyftp', 'Storage account', 'reachable from all networks, shared key access allowed, blob soft delete off'),
+      azRes('noordkust-dev', 'rg-dev', 'Microsoft.Storage/storageAccounts', 'stnkdevtemp', 'Storage account', 'reachable from all networks, shared key access allowed, blob soft delete off'),
+      azRes('noordkust-prod', 'rg-tms', 'Microsoft.Storage/storageAccounts', 'sttmsdata', 'Storage account', 'shared key access allowed'),
+    ]),
+    good: 'All 5 storage accounts restrict network access, disable shared keys and keep blob soft delete on.',
+  },
+  'azure.keyvault-protection': {
+    bad: fail('2 of 3 Key Vaults lack soft delete or purge protection; 1 more use access policies instead of RBAC.', [
+      azRes('noordkust-prod', 'rg-security', 'Microsoft.KeyVault/vaults', 'kv-noordkust-prod', 'Key Vault', 'no purge protection, access policies instead of RBAC'),
+      azRes('noordkust-dev', 'rg-dev', 'Microsoft.KeyVault/vaults', 'kv-nk-dev', 'Key Vault', 'no purge protection, access policies instead of RBAC'),
+      azRes('noordkust-prod', 'rg-tms', 'Microsoft.KeyVault/vaults', 'kv-nk-tms', 'Key Vault', 'access policies instead of RBAC'),
+    ]),
+    good: 'All 3 Key Vaults have soft delete, purge protection and RBAC authorization.',
+  },
+  'azure.nsg-admin-ports': {
+    bad: fail('3 NSG rule(s) expose administrative or database ports to the internet or very broad ranges.', [
+      ['noordkust-prod', 'rg-tms', 'nsg-tms-app', 'Allow-RDP', 'ports 3389 from * (priority 300)'],
+      ['noordkust-prod', 'rg-network', 'nsg-jumphost', 'ssh-anywhere', 'ports 22 from Internet (priority 100)'],
+      ['noordkust-dev', 'rg-dev', 'nsg-dev-db', 'db-temp', 'ports 1433, 5432 from 0.0.0.0/0 (priority 200)'],
+    ].map(([s, rg, nsg, rule, detail]) => {
+      const n = azRes(s, rg, 'Microsoft.Network/networkSecurityGroups', nsg, 'NSG rule', detail);
+      return { ...n, id: `${n.id}/securityRules/${rule}`, name: `${nsg}/${rule}` };
+    })),
+    good: 'None of 6 NSGs expose administrative or database ports to the internet.',
+  },
+  'azure.sql-public': {
+    bad: warn('1 of 2 SQL server(s) allow access from all Azure services (including other tenants).', [
+      azRes('noordkust-prod', 'rg-tms', 'Microsoft.Sql/servers', 'sql-nk-tms', 'SQL server', 'allows access from all Azure services'),
+    ]),
+    good: 'None of the 2 SQL servers are open to the internet or all Azure services.',
+  },
+  'azure.sql-auditing-tde': {
+    bad: fail('1 of 2 SQL server(s) lack auditing or transparent data encryption.', [
+      azRes('noordkust-prod', 'rg-tms', 'Microsoft.Sql/servers', 'sql-nk-tms', 'SQL server', 'auditing off, no Entra admin'),
+      azRes('noordkust-dev', 'rg-dev', 'Microsoft.Sql/servers', 'sql-nk-dev', 'SQL server', 'no Microsoft Entra admin configured'),
+    ]),
+    good: 'All 2 SQL servers have auditing, TDE on every database and a Microsoft Entra admin.',
+  },
+  'azure.defender-recommendations': {
+    bad: fail(
+      '7 unhealthy high-severity Defender for Cloud recommendation(s) across 3 recommendation type(s).',
+      [
+        azRes('noordkust-prod', 'rg-tms', 'Microsoft.Compute/virtualMachines', 'vm-tms-app01', 'Defender recommendation', 'Machines should have vulnerability findings resolved'),
+        azRes('noordkust-prod', 'rg-tms', 'Microsoft.Compute/virtualMachines', 'vm-tms-app02', 'Defender recommendation', 'Machines should have vulnerability findings resolved'),
+        azRes('noordkust-prod', 'rg-network', 'Microsoft.Compute/virtualMachines', 'vm-jumphost', 'Defender recommendation', 'Management ports of virtual machines should be protected with just-in-time network access control'),
+        azRes('noordkust-dev', 'rg-dev', 'Microsoft.Sql/servers', 'sql-nk-dev', 'Defender recommendation', 'SQL databases should have vulnerability findings resolved'),
+      ],
+      { highSeverityUnhealthy: 7, byRecommendation: { 'Machines should have vulnerability findings resolved': 4, 'Management ports of virtual machines should be protected with just-in-time network access control': 2, 'SQL databases should have vulnerability findings resolved': 1 } },
+    ),
+    good: 'No unhealthy high-severity Defender for Cloud recommendations.',
+  },
+  'azure.backup-vaults': {
+    bad: warn('2 of 2 backup vault(s) do not have immutability enabled.', [
+      azRes('noordkust-prod', 'rg-backup', 'Microsoft.RecoveryServices/vaults', 'rsv-nk-prod', 'Recovery Services vault', 'immutability off'),
+      azRes('noordkust-prod', 'rg-backup', 'Microsoft.DataProtection/backupVaults', 'bv-nk-blobs', 'Backup vault', 'immutability off'),
+    ]),
+    good: 'All 2 backup vaults have soft delete and immutability enabled.',
+  },
+  'azure.subscription-owners': {
+    bad: warn('1 subscription(s) have more than 3 Owner or User Access Administrator principals.', [
+      sub('noordkust-prod', '4 (1 group) Owner(s), 1 User Access Administrator(s): more than 3 privileged principals'),
+      { ...user('admin.pieters', 'Owner'), account: 'noordkust-prod' },
+      { ...user('k.janssens', 'Owner'), account: 'noordkust-prod' },
+      { ...user('l.maes', 'Owner'), account: 'noordkust-prod' },
+      { ...entra('group', 'Group', 'SG-Azure-Platform', 'Owner, group: members inherit the role'), account: 'noordkust-prod' },
+      { ...entra('servicePrincipal', 'Service principal', 'sp-terraform-prod', 'User Access Administrator'), account: 'noordkust-prod' },
+    ]),
+    good: 'All subscriptions have 2 or 3 Owners and no more than 3 Owner or User Access Administrator principals.',
+  },
 
   // ---------- AWS ----------
   'aws.root-mfa': {

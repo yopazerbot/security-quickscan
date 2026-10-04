@@ -16,6 +16,9 @@ vi.mock('node:dns/promises', () => ({
       if (typeof a === 'string') throw Object.assign(new Error(`queryTxt ${a} ${name}`), { code: a });
       return a.map((t) => [t]);
     }
+    async resolveCname(name: string): Promise<string[]> {
+      throw Object.assign(new Error(`queryCname ENOTFOUND ${name}`), { code: 'ENOTFOUND' });
+    }
   },
 }));
 
@@ -197,7 +200,9 @@ describe('Azure subscription coverage', () => {
   it('includes Warned subscriptions and warns about configured subscriptions it cannot see', async () => {
     const ids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'];
     const r = await runAs('azure', { ...M365, subscriptionIds: ids }, { clientSecret: 'x'.repeat(20) }, ['azure.activity-log-export'], {
-      'diagnosticSettings': { value: [{ id: 'd1' }] },
+      'diagnosticSettings': {
+        value: [{ id: 'd1', properties: { workspaceId: '/w', logs: ['Administrative', 'Alert', 'Policy', 'Security'].map((category) => ({ category, enabled: true })) } }],
+      },
       '/subscriptions?api-version': {
         value: [
           { subscriptionId: ids[0], displayName: 'prod', state: 'Enabled' },
