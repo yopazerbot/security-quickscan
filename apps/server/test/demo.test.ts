@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config.js';
 import { Envelope } from '../src/crypto/envelope.js';
 import { createDb, runMigrations } from '../src/db/index.js';
 import { resetDemo, seedDemo } from '../src/demo/seed.js';
+import { buildReport } from '../src/reports/model.js';
 import { customers, scans, settings } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 
@@ -54,6 +55,17 @@ const url = process.env.TEST_DATABASE_URL;
     expect(done).toHaveLength(2);
     expect(done[1].score!).toBeGreaterThan(done[0].score!);
     expect(s.filter((x) => x.status === 'draft')).toHaveLength(1);
+    // AWS production and acceptance: two accounts, tagged with their environment; acceptance is somewhat weaker.
+    const m = await buildReport(ctx, done[1].id);
+    expect(m.environments.map((e) => e.name)).toEqual(['production', 'acceptance']);
+    const aws = m.systems.filter((x) => x.provider === 'aws');
+    expect(aws.map((x) => [x.label, x.environment, x.systemKey])).toEqual([
+      ['AWS production', 'production', 'aws:111122223333'],
+      ['AWS acceptance', 'acceptance', 'aws:444455556666'],
+    ]);
+    expect(aws[1].summary.score!).toBeLessThan(aws[0].summary.score!);
+    expect(m.findings.filter((f) => f.systemId === aws[1].id).flatMap((f) => f.resources).every((r) => !r.account || r.account === '444455556666')).toBe(true);
+    expect(m.systems.every((x) => x.environment)).toBe(true);
   });
 
   it('demo PIN login only works when enabled and only sees demo customers', async () => {

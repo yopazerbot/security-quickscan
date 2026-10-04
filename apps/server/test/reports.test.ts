@@ -10,7 +10,7 @@ import { createDb, runMigrations } from '../src/db/index.js';
 import { auditLog, checkResults, customers, findingTriage, scanCriteria, scans, scanSystems, sessions, users } from '../src/db/schema.js';
 import { controlsCsv, findingsCsv, statusText } from '../src/reports/csv.js';
 import { buildReport, systemIdentity, type ReportItem, type ReportModel } from '../src/reports/model.js';
-import { cover, drawProviderIcon, isoPage, notCoveredList, renderPdf, systemsTable } from '../src/reports/pdf.js';
+import { cover, drawProviderIcon, environmentsTable, isoPage, notCoveredList, renderPdf, systemsTable } from '../src/reports/pdf.js';
 import { refreshCustomerScores, scoreScan, storeScanScore } from '../src/scoring.js';
 
 function fakeModel(over: Partial<ReportModel['summary']> = {}): ReportModel {
@@ -32,6 +32,7 @@ function fakeModel(over: Partial<ReportModel['summary']> = {}): ReportModel {
     customer: { id: 'c', name: 'Acme' },
     branding: brandingSchema.parse({ consultantName: 'A very long consultant name that keeps going', companyName: 'An equally long consultancy company name BV', contactEmail: 'hello@example.com' }),
     systems: [],
+    environments: [],
     summary,
     findings: [],
     passed: [],
@@ -86,23 +87,27 @@ function item(over: Partial<ReportItem> & Pick<ReportItem, 'checkId' | 'status' 
   return {
     key: `${over.systemId}:${over.checkId}`, title: m.title, description: m.description, provider: m.provider, domain: m.domain, severity: m.severity,
     summary: 'x', resources: [], evidence: null, remediation: m.remediation, references: [], iso: m.frameworks.iso27001, effort: m.effort,
-    providerLabel: m.provider, systemIdentity: null, systemKey: `${m.provider}:${over.systemId}`, triage: null, currentTriage: null, isNew: false, ...over,
+    providerLabel: m.provider, systemIdentity: null, systemEnvironment: null, systemKey: `${m.provider}:${over.systemId}`, triage: null, currentTriage: null, isNew: false, ...over,
   };
 }
 
-/** Two AWS systems: root MFA fails on production and passes on the sandbox. */
-function twoSystemModel(): ReportModel {
+/** Two AWS systems: root MFA fails on production and passes on the sandbox. With `envs`, they are tagged production and acceptance. */
+function twoSystemModel(envs = false): ReportModel {
+  const envOf: Record<string, string | null> = envs ? { p: 'production', s: 'acceptance' } : { p: null, s: null };
   const items = [
-    item({ checkId: 'aws.root-mfa', status: 'fail', systemId: 'p', systemLabel: 'AWS production', systemIdentity: 'AWS account 111122223333', resources: [{ id: 'root', url: 'https://console.aws.amazon.com/iam/home#/security_credentials' }] }),
-    item({ checkId: 'aws.root-mfa', status: 'pass', systemId: 's', systemLabel: 'AWS sandbox', systemIdentity: 'AWS account 444455556666' }),
+    item({ checkId: 'aws.root-mfa', status: 'fail', systemId: 'p', systemLabel: 'AWS production', systemIdentity: 'AWS account 111122223333', systemEnvironment: envOf.p, resources: [{ id: 'root', url: 'https://console.aws.amazon.com/iam/home#/security_credentials' }] }),
+    item({ checkId: 'aws.root-mfa', status: 'pass', systemId: 's', systemLabel: 'AWS sandbox', systemIdentity: 'AWS account 444455556666', systemEnvironment: envOf.s }),
   ];
   const inputs = (xs: ReportItem[]) => xs.map((i) => ({ checkId: i.checkId, status: i.status, severity: i.severity, systemId: i.systemId }));
   const m = fakeModel(computeScore(inputs(items), CHECKS_BY_ID));
   const sys = (id: string, label: string, identity: string) => ({
-    id, provider: 'aws' as const, providerLabel: 'AWS', label, systemKey: `aws:${id}`, identity, credentialsStored: false, credentialsExpireAt: null, authMode: 'role',
+    id, provider: 'aws' as const, providerLabel: 'AWS', label, systemKey: `aws:${id}`, identity, environment: envOf[id], credentialsStored: false, credentialsExpireAt: null, authMode: 'role',
     summary: computeScore(inputs(items.filter((i) => i.systemId === id)), CHECKS_BY_ID),
   });
   m.systems = [sys('p', 'AWS production', 'AWS account 111122223333'), sys('s', 'AWS sandbox', 'AWS account 444455556666')];
+  m.environments = envs
+    ? m.systems.map((x) => ({ key: envOf[x.id]!, name: envOf[x.id], systemIds: [x.id], summary: x.summary }))
+    : [{ key: '', name: null, systemIds: ['p', 's'], summary: m.summary }];
   m.findings = items.filter((i) => i.status === 'fail');
   m.passed = items.filter((i) => i.status === 'pass');
   m.topRisks = m.findings;
@@ -129,6 +134,22 @@ describe('PDF icons, systems and ISO evidence', () => {
     expect(texts.some((t) => typeof t === 'string' && /^[A-F] \(\d+\)/.test(t))).toBe(true);
     expect(calls.filter(([k]) => k === 'roundedRect').length).toBeGreaterThanOrEqual(2); // AWS icon background per row
     doc.end();
+  });
+
+  it('adds an environment column and a per-environment table when systems have environments', async () => {
+    const plain = spyDoc();
+    systemsTable(plain.doc, twoSystemModel());
+    expect(plain.calls.filter(([k]) => k === 'text').map(([, v]) => v)).not.toContain('Environment');
+    plain.doc.end();
+    const m = twoSystemModel(true);
+    const { doc, calls } = spyDoc();
+    systemsTable(doc, m);
+    environmentsTable(doc, m);
+    const texts = calls.filter(([k]) => k === 'text').map(([, v]) => v);
+    expect(texts).toEqual(expect.arrayContaining(['Environment', 'production', 'acceptance', 'Results per environment', 'AWS sandbox']));
+    doc.end();
+    const pdf = await renderPdf(m, null);
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
   });
 
   it('shows the evidence column, the limited-evidence verdict with legend and the not covered list', () => {

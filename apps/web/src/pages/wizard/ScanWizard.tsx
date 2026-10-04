@@ -27,6 +27,8 @@ export interface WizardSystem {
   id: string;
   provider: 'm365' | 'azure' | 'aws' | 'github';
   label: string;
+  /** Free-text environment (production, acceptance...), null when none was given. */
+  environment?: string | null;
   config: any;
   needsSecret: boolean;
   credential: { hint: string; expiresAt: string | null; createdAt: string } | null;

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { AsyncButton } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { SystemBadge } from '../components/SystemBadge';
+import { EnvironmentChip, SystemBadge } from '../components/SystemBadge';
 import { Alert, Button, Card, ErrorState, LinkButton, PageHeader, PageLoader, StatusBadge } from '../components/ui';
 import { ApiError, get, post } from '../lib/api';
 import { accessCan } from '../lib/auth';
@@ -392,13 +392,16 @@ export function ScanProgress() {
                   <div className="mb-4 flex flex-wrap items-center gap-3">
                     {s && <ProviderIcon provider={s.provider} className="size-7" decorative />}
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-slate-900">{s?.label}</div>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-sm font-semibold text-slate-900">{s?.label}</span>
+                        <EnvironmentChip environment={s?.environment} />
+                      </div>
                       <div className="truncate text-xs text-slate-500">
                         {s && PROVIDER_LABELS[s.provider]}
                         {identity && <> · {identity}</>}
                       </div>
                     </div>
-                    <div role="group" className="flex items-center gap-3 text-xs text-slate-600" aria-label={`${s?.label ?? 'System'} results so far`}>
+                    <div role="group" className="flex items-center gap-3 text-xs text-slate-600" aria-label={`${s?.label ?? 'System'}${s?.environment ? ` (${s.environment})` : ''} results so far`}>
                       {tally.map(([l, n, tone]) => (
                         <span key={l}>
                           <span className={clsx('font-semibold', n === 0 ? 'text-slate-600' : tone)}>{n}</span> {l}
@@ -420,7 +423,7 @@ export function ScanProgress() {
                         <div
                           key={r.checkId}
                           role="img"
-                          aria-label={`${m?.title} on ${s?.label ?? 'this system'}: ${STATUS_STYLE[r.status].label}`}
+                          aria-label={`${m?.title} on ${s?.label ?? 'this system'}${s?.environment ? ` (${s.environment})` : ''}: ${STATUS_STYLE[r.status].label}`}
                           title={`${m?.title} (A.${m?.frameworks.iso27001[0]} ${ISO_BY_ID[m?.frameworks.iso27001[0] ?? '']?.title ?? ''})\n${s?.label ?? ''}${identity ? ` (${identity})` : ''}\n${STATUS_STYLE[r.status].label}${r.summary ? `: ${r.summary}` : ''}`}
                           className={clsx('size-7 rounded-md transition-colors duration-500', tileClass(r.status))}
                         />
@@ -445,7 +448,7 @@ export function ScanProgress() {
                   </div>
                   {sysLabel.get(r.systemId) && (
                     <div className="mt-1">
-                      <SystemBadge provider={sysLabel.get(r.systemId)!.provider} label={sysLabel.get(r.systemId)!.label} size="xs" showIdentity={false} />
+                      <SystemBadge provider={sysLabel.get(r.systemId)!.provider} label={sysLabel.get(r.systemId)!.label} environment={sysLabel.get(r.systemId)!.environment} size="xs" showIdentity={false} />
                     </div>
                   )}
                   <div className="mt-0.5 truncate text-xs text-slate-500">{r.summary}</div>

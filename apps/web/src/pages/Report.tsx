@@ -6,6 +6,7 @@ import {
   partialLabel,
   PROVIDER_LABELS,
   REPORT_TITLE,
+  environmentKey,
   type Severity,
 } from '@qs/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,6 +25,7 @@ import { del, get, post, put } from '../lib/api';
 import { accessCan } from '../lib/auth';
 import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX } from '../lib/format';
 import { useDocumentTitle } from '../lib/use-document-title';
+import { environmentGroups } from '../lib/systems';
 import { IsoSection } from './report/IsoSection';
 import { SystemCards } from './report/SystemCards';
 
@@ -44,14 +46,19 @@ const scrollBehavior = (): ScrollBehavior => (window.matchMedia?.('(prefers-redu
 
 /** The system of a report item: identity from the item (newer reports) or from the report's system list. */
 const identityOf = (f: Item, systems: Map<string, any>): string | null => f.systemIdentity ?? systems.get(f.systemId)?.identity ?? null;
+/** Environment of a report item's system (production, acceptance...), null when none was given or the report predates environments. */
+const environmentOf = (f: Item, systems: Map<string, any>): string | null => f.systemEnvironment ?? systems.get(f.systemId)?.environment ?? null;
+/** "AWS production · acceptance" for option lists and sorting. */
+const systemText = (label: string, environment: string | null | undefined) => (environment ? `${label} · ${environment}` : label);
 
 const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const STATUS_ORDER: Record<string, number> = { fail: 0, warn: 1, error: 2, na: 3, pass: 4 };
 
-type FindingSort = 'severity' | 'system' | 'status' | 'title';
+type FindingSort = 'severity' | 'system' | 'environment' | 'status' | 'title';
 const FINDING_SORTS: [FindingSort, string][] = [
   ['severity', 'Severity'],
   ['system', 'System'],
+  ['environment', 'Environment'],
   ['status', 'Status'],
   ['title', 'Title'],
 ];
@@ -61,7 +68,12 @@ function sortFindings(list: Item[], by: FindingSort): Item[] {
   if (by === 'severity') return list;
   const sev = (f: Item) => SEV_ORDER[f.severity] ?? 9;
   const key: Record<Exclude<FindingSort, 'severity'>, (a: Item, b: Item) => number> = {
-    system: (a, b) => String(a.systemLabel).localeCompare(String(b.systemLabel)),
+    system: (a, b) => systemText(a.systemLabel, a.systemEnvironment).localeCompare(systemText(b.systemLabel, b.systemEnvironment)),
+    // Systems without an environment last, then by system.
+    environment: (a, b) =>
+      (a.systemEnvironment ? 0 : 1) - (b.systemEnvironment ? 0 : 1) ||
+      environmentKey(a.systemEnvironment).localeCompare(environmentKey(b.systemEnvironment)) ||
+      String(a.systemLabel).localeCompare(String(b.systemLabel)),
     status: (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
     title: (a, b) => String(a.title).localeCompare(String(b.title)),
   };
@@ -136,12 +148,12 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
   );
 }
 
-function FindingDetail({ f, identity, customerId, canWrite, interactive, onTriaged }: { f: Item; identity: string | null; customerId: string; canWrite: boolean; interactive: boolean; onTriaged(): void }) {
+function FindingDetail({ f, identity, environment, customerId, canWrite, interactive, onTriaged }: { f: Item; identity: string | null; environment: string | null; customerId: string; canWrite: boolean; interactive: boolean; onTriaged(): void }) {
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span className="font-semibold uppercase tracking-wide text-slate-500">System</span>
-        <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} size="sm" />
+        <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} environment={environment} size="sm" />
       </div>
       <p className="text-sm text-slate-600">{f.description}</p>
       <div className="grid gap-5 lg:grid-cols-2 print:grid-cols-2">
@@ -199,6 +211,7 @@ function FindingDetail({ f, identity, customerId, canWrite, interactive, onTriag
 function FindingCard({
   f,
   identity,
+  environment,
   customerId,
   canWrite,
   onTriaged,
@@ -207,6 +220,7 @@ function FindingCard({
 }: {
   f: Item;
   identity: string | null;
+  environment: string | null;
   customerId: string;
   canWrite: boolean;
   onTriaged(): void;
@@ -238,7 +252,7 @@ function FindingCard({
             <div className="mt-0.5 line-clamp-2 text-sm text-slate-500 md:truncate">{f.summary}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:justify-end">
-            <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} showIdentity={false} size="xs" className="max-w-[14rem]" />
+            <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} environment={environment} showIdentity={false} size="xs" className="max-w-[18rem]" />
             <span className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] text-brand-700">A.{f.iso[0]}</span>
             <SeverityBadge severity={f.severity} />
             <StatusBadge status={f.status} />
@@ -248,12 +262,12 @@ function FindingCard({
       </button>
       {open ? (
         <div id={bodyId} className="animate-fade-in space-y-5 border-t border-slate-100 px-5 py-5">
-          <FindingDetail f={f} identity={identity} customerId={customerId} canWrite={canWrite} interactive onTriaged={onTriaged} />
+          <FindingDetail f={f} identity={identity} environment={environment} customerId={customerId} canWrite={canWrite} interactive onTriaged={onTriaged} />
         </div>
       ) : (
         // Collapsed on screen, but always fully expanded on paper.
         <div className="print-only space-y-5 border-t border-slate-100 px-5 py-5">
-          <FindingDetail f={f} identity={identity} customerId={customerId} canWrite={canWrite} interactive={false} onTriaged={onTriaged} />
+          <FindingDetail f={f} identity={identity} environment={environment} customerId={customerId} canWrite={canWrite} interactive={false} onTriaged={onTriaged} />
         </div>
       )}
     </div>
@@ -267,6 +281,8 @@ export function Report() {
   const q = useQuery({ queryKey: ['report', scanId], queryFn: () => get(`/api/scans/${scanId}/report`) });
   const [sev, setSev] = useState<string>('all');
   const [system, setSystem] = useState<string>('all');
+  /** Environment filter: 'all' or an environment key (lower case, '' for systems without one). */
+  const [env, setEnv] = useState<string>('all');
   const [sortBy, setSortByState] = useState<FindingSort>(readSort);
   const setSortBy = (v: FindingSort) => {
     setSortByState(v);
@@ -297,18 +313,24 @@ export function Report() {
       (f: Item) =>
         (sev === 'all' || f.severity === sev) &&
         (system === 'all' || f.systemId === system) &&
+        (env === 'all' || environmentKey(environmentOf(f, systems)) === env) &&
         (!control || f.iso.includes(control)) &&
         (status === 'all' || f.status === status) &&
         (triage === 'all' || (f.triage?.status ?? 'open') === triage) &&
-        (!term || `${f.title} ${f.summary} ${f.systemLabel} ${identityOf(f, systems) ?? ''}`.toLowerCase().includes(term)),
+        (!term || `${f.title} ${f.summary} ${f.systemLabel} ${environmentOf(f, systems) ?? ''} ${identityOf(f, systems) ?? ''}`.toLowerCase().includes(term)),
     );
-    return sortFindings(list, sortBy);
-  }, [m, systems, sev, system, control, status, triage, search, sortBy]);
-  const filtered = sev !== 'all' || system !== 'all' || control !== null || status !== 'all' || triage !== 'all' || search !== '';
-  const paged = usePaged(findings, 'report-findings', `${sev}|${system}|${control}|${status}|${triage}|${search}|${sortBy}`);
+    return sortFindings(
+      list.map((f: Item) => (f.systemEnvironment === undefined ? { ...f, systemEnvironment: environmentOf(f, systems) } : f)),
+      sortBy,
+    );
+  }, [m, systems, sev, system, env, control, status, triage, search, sortBy]);
+  const envGroups = useMemo(() => environmentGroups(m?.systems ?? [], m?.environments), [m]);
+  const filtered = sev !== 'all' || system !== 'all' || env !== 'all' || control !== null || status !== 'all' || triage !== 'all' || search !== '';
+  const paged = usePaged(findings, 'report-findings', `${sev}|${system}|${env}|${control}|${status}|${triage}|${search}|${sortBy}`);
   const clearFilters = () => {
     setSev('all');
     setSystem('all');
+    setEnv('all');
     setControl(null);
     setStatus('all');
     setTriage('all');
@@ -419,7 +441,7 @@ export function Report() {
           <ul className="mt-3 space-y-2">
             {storedSecrets.map((x: any) => (
               <li key={x.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} showIdentity={false} />
+                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} environment={x.environment} showIdentity={false} />
                 <span className="text-xs">{x.credentialsExpireAt ? `Deleted automatically on ${fmtDateTime(x.credentialsExpireAt)}` : 'Kept until someone deletes it'}</span>
                 {can.edit && (
                   <AsyncButton
@@ -494,7 +516,7 @@ export function Report() {
               <div className="mt-5 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                 {m.systems.map((x: any) => (
                   <span key={x.id} className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">
-                    <SystemBadge provider={x.provider} label={x.label} showIdentity={false} size="xs" />
+                    <SystemBadge provider={x.provider} label={x.label} environment={x.environment} showIdentity={false} size="xs" />
                   </span>
                 ))}
               </div>
@@ -534,7 +556,23 @@ export function Report() {
         </Card>
       </div>
 
-      {m.systems.length > 0 && <SystemCards systems={m.systems} fallbackCounts={failCounts} selected={system} onSelect={setSystem} />}
+      {m.systems.length > 0 && (
+        <SystemCards
+          systems={m.systems}
+          environments={m.environments}
+          fallbackCounts={failCounts}
+          selected={system}
+          onSelect={(id) => {
+            setSystem(id);
+            if (id !== 'all') setEnv('all');
+          }}
+          selectedEnvironment={env}
+          onSelectEnvironment={(key) => {
+            setEnv(key);
+            if (key !== 'all') setSystem('all');
+          }}
+        />
+      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <IsoSection
@@ -589,11 +627,11 @@ export function Report() {
                     {f.title}
                   </a>
                   <span className="hidden sm:inline-flex">
-                    <SystemBadge provider={f.provider} label={f.systemLabel} showIdentity={false} size="xs" className="max-w-[10rem]" />
+                    <SystemBadge provider={f.provider} label={f.systemLabel} environment={environmentOf(f, systems)} showIdentity={false} size="xs" className="max-w-[14rem]" />
                   </span>
                   <span className="sm:hidden">
                     <ProviderIcon provider={f.provider} className="size-4" />
-                    <span className="sr-only">{f.systemLabel}</span>
+                    <span className="sr-only">{systemText(f.systemLabel, environmentOf(f, systems))}</span>
                   </span>
                   <span className="shrink-0">
                     <SeverityBadge severity={f.severity} />
@@ -613,7 +651,7 @@ export function Report() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-slate-800">{f.title}</span>
                     <SeverityBadge severity={f.severity} />
-                    <SystemBadge provider={f.provider} label={f.systemLabel} showIdentity={false} size="xs" />
+                    <SystemBadge provider={f.provider} label={f.systemLabel} environment={environmentOf(f, systems)} showIdentity={false} size="xs" />
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{f.remediation}</p>
                 </li>
@@ -629,7 +667,8 @@ export function Report() {
             <h2 className="text-lg font-semibold text-slate-900">Findings</h2>
             <p className="text-sm text-slate-500" role="status" aria-live="polite">
               {findings.length} of {m.findings.length} shown{control && <> for A.{control} {ISO_BY_ID[control]?.title}</>}
-              {system !== 'all' && systems.get(system) && <> on {systems.get(system).label}</>}
+              {system !== 'all' && systems.get(system) && <> on {systemText(systems.get(system).label, systems.get(system).environment)}</>}
+              {env !== 'all' && <> in {envGroups.find((g) => g.key === env)?.name ?? 'systems without an environment'}</>}
             </p>
           </div>
           <div className="no-print flex flex-wrap gap-2">
@@ -651,16 +690,26 @@ export function Report() {
                 <option key={k} value={k}>{l}</option>
               ))}
             </Select>
+            {envGroups.length > 1 && (
+              <Select value={env} onChange={(e) => setEnv(e.target.value)} className="w-48" aria-label="Filter by environment" data-testid="environment-filter">
+                <option value="all">All environments</option>
+                {envGroups.map((g) => (
+                  <option key={g.key} value={g.key}>
+                    {g.name ?? 'No environment'}
+                  </option>
+                ))}
+              </Select>
+            )}
             <Select value={system} onChange={(e) => setSystem(e.target.value)} className="w-56" aria-label="Filter by system">
               <option value="all">All systems</option>
               {m.systems.map((x: any) => (
                 <option key={x.id} value={x.id}>
-                  {x.identity ? `${x.label} (${x.identity})` : x.label}
+                  {x.identity ? `${systemText(x.label, x.environment)} (${x.identity})` : systemText(x.label, x.environment)}
                 </option>
               ))}
             </Select>
-            <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as FindingSort)} className="w-44" aria-label="Sort findings">
-              {FINDING_SORTS.map(([k, l]) => (
+            <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as FindingSort)} className="w-48" aria-label="Sort findings">
+              {FINDING_SORTS.filter(([k]) => k !== 'environment' || envGroups.length > 1 || sortBy === k).map(([k, l]) => (
                 <option key={k} value={k}>
                   Sort by {l.toLowerCase()}
                 </option>
@@ -680,6 +729,7 @@ export function Report() {
               key={f.key}
               f={f}
               identity={identityOf(f, systems)}
+              environment={environmentOf(f, systems)}
               customerId={m.customer.id}
               canWrite={can.edit}
               onTriaged={refresh}
@@ -704,7 +754,7 @@ export function Report() {
                     </Button>
                   }
                 >
-                  Try another severity, result, triage state or system, or clear the filters to see all {m.findings.length} findings.
+                  Try another severity, result, triage state, environment or system, or clear the filters to see all {m.findings.length} findings.
                 </EmptyState>
               )}
             </div>
@@ -746,8 +796,8 @@ export function Report() {
                   {
                     key: 'system',
                     header: 'System',
-                    sort: (p) => p.systemLabel,
-                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} size="xs" />,
+                    sort: (p) => systemText(p.systemLabel, environmentOf(p, systems)),
+                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} environment={environmentOf(p, systems)} size="xs" />,
                   },
                   { key: 'severity', header: 'Severity', sort: (p) => SEV_ORDER[p.severity] ?? 9, render: (p) => <SeverityBadge severity={p.severity} /> },
                   { key: 'control', header: 'Control', sort: (p) => p.iso[0], render: (p) => <span className="font-mono text-[11px] text-slate-500">A.{p.iso[0]}</span> },
@@ -785,8 +835,8 @@ export function Report() {
                   {
                     key: 'system',
                     header: 'System',
-                    sort: (p) => p.systemLabel,
-                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} size="xs" />,
+                    sort: (p) => systemText(p.systemLabel, environmentOf(p, systems)),
+                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} environment={environmentOf(p, systems)} size="xs" />,
                   },
                 ]}
               />
@@ -814,7 +864,7 @@ export function Report() {
           <ul className="space-y-3 text-sm">
             {m.systems.map((x: any) => (
               <li key={x.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} size="md" />
+                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} environment={x.environment} size="md" />
                 <span className="text-xs text-slate-500">{x.providerLabel ?? PROVIDER_LABELS[x.provider as keyof typeof PROVIDER_LABELS]}</span>
               </li>
             ))}

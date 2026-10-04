@@ -62,3 +62,10 @@ export function normalizeEnvironment(v: unknown): string | null {
 
 /** Grouping key of an environment: case-insensitive, '' for systems without one. */
 export const environmentKey = (v: string | null | undefined) => (normalizeEnvironment(v) ?? '').toLowerCase();
+
+/** "AWS (acceptance)" for text output; the environment is left out when the label already names it ("AWS production"). */
+export function systemDisplayName(label: string, environment: string | null | undefined): string {
+  const env = normalizeEnvironment(environment);
+  if (!env || label.toLowerCase().includes(env.toLowerCase())) return label;
+  return `${label} (${env})`;
+}

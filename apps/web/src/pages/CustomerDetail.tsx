@@ -8,7 +8,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { AsyncButton, useAction, useToast } from '../components/feedback';
 import { DataTable } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { SystemBadge } from '../components/SystemBadge';
+import { EnvironmentChip, SystemBadge } from '../components/SystemBadge';
 import { AnchorButton, Badge, Button, Card, DemoBadge, EmptyState, ErrorState, Field, GradeBadge, Input, LinkButton, Modal, PageHeader, PageLoader, Select, Spinner } from '../components/ui';
 import { del, get, patch, post, put } from '../lib/api';
 import { accessCan, useAuth, type CustomerAccess } from '../lib/auth';
@@ -17,6 +17,9 @@ import { scanLink } from '../lib/scan-link';
 import { keyOfScanSystem, parseSystemKey, systemIdentity } from '../lib/systems';
 import { useDocumentTitle } from '../lib/use-document-title';
 import { ScanStatusBadge } from './Customers';
+
+/** Environment names without case-only duplicates, sorted. */
+const uniqueEnvironments = (xs: string[] | undefined) => [...new Map((xs ?? []).map((e) => [e.toLowerCase(), e])).values()].sort((a, b) => a.localeCompare(b));
 
 /** What view and edit access allow; shown to the person who shares and to the person who receives access. */
 const PERMISSION_HINT = 'View: see scans and reports. Edit: also add systems and credentials, run scans and triage findings.';
@@ -222,6 +225,9 @@ function ScanTable({ scans, customerId, canEdit }: { scans: ScanSummary[]; custo
                     <span className="sr-only"> ({PROVIDER_LABELS[p]})</span>
                   </span>
                 ))}
+                {uniqueEnvironments(s.environments).map((e) => (
+                  <EnvironmentChip key={e} environment={e} />
+                ))}
               </span>
             ) : (
               <span className="text-xs text-slate-500">None yet</span>
@@ -284,11 +290,12 @@ function DiscardDraft({ s, customerId }: { s: ScanSummary; customerId: string })
 function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] }) {
   const recent = scans.slice(0, 5);
   const results = useQueries({ queries: recent.map((s) => ({ queryKey: ['scan', s.id], queryFn: () => get<ScanDetail>(`/api/scans/${s.id}`) })) });
-  const known = new Map<string, { provider: Provider; label: string; identity: string | null }>();
+  const known = new Map<string, { provider: Provider; label: string; identity: string | null; environment: string | null }>();
   for (const r of results)
     for (const sys of r.data?.systems ?? []) {
       const key = keyOfScanSystem(sys);
-      if (!known.has(key)) known.set(key, { provider: sys.provider, label: sys.label, identity: systemIdentity(sys.provider, sys.connection?.details, sys.config) });
+      if (!known.has(key))
+        known.set(key, { provider: sys.provider, label: sys.label, identity: systemIdentity(sys.provider, sys.connection?.details, sys.config), environment: sys.environment ?? null });
     }
   return (
     <Card title="Triaged findings" subtitle="Risk acceptances and not applicable findings apply to scans that finish from now on.">
@@ -309,7 +316,7 @@ function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] 
                 {key === ALL_SYSTEMS_KEY ? (
                   <span className="text-xs text-slate-600">All systems</span>
                 ) : sys ? (
-                  <SystemBadge provider={sys.provider} label={sys.label} identity={sys.identity} size="xs" />
+                  <SystemBadge provider={sys.provider} label={sys.label} identity={sys.identity} environment={sys.environment} size="xs" />
                 ) : parsed.provider ? (
                   <SystemBadge provider={parsed.provider} label={PROVIDER_LABELS[parsed.provider]} identity={parsed.id} size="xs" />
                 ) : (
@@ -333,6 +340,7 @@ interface ScanDetail {
     id: string;
     provider: Provider;
     label: string;
+    environment?: string | null;
     config?: Record<string, any> | null;
     connection?: { details?: Record<string, any> | null } | null;
     credential: { hint: string; expiresAt: string | null; createdAt: string } | null;
@@ -444,6 +452,8 @@ interface ScanSummary {
   createdAt: string;
   finishedAt: string | null;
   providers: string[];
+  /** Environments of the scan's systems (distinct, may differ only in case). */
+  environments?: string[];
 }
 
 interface CustomerData {

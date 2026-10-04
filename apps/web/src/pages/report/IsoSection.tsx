@@ -27,6 +27,7 @@ export interface ReportSystem {
   provider: Provider;
   label: string;
   identity: string | null;
+  environment?: string | null;
 }
 
 /** Short marker for evidence that is weaker than strong. */
@@ -153,7 +154,7 @@ function ControlDrillDown({ control, systems, onClose, onSystem }: { control: Co
             return (
               <div key={sid || 'unknown'}>
                 {sys ? (
-                  <SystemBadge provider={sys.provider} label={sys.label} identity={sys.identity} onClick={() => onSystem(sys.id)} title={`Show the findings of ${sys.label}`} />
+                  <SystemBadge provider={sys.provider} label={sys.label} identity={sys.identity} environment={sys.environment} onClick={() => onSystem(sys.id)} title={`Show the findings of ${sys.label}${sys.environment ? ` (${sys.environment})` : ''}`} />
                 ) : (
                   <span className="text-xs font-medium text-slate-600">Unknown system</span>
                 )}

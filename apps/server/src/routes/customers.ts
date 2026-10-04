@@ -1,5 +1,5 @@
-import { CHECKS_BY_ID, customerInputSchema, systemKey, triageSchema, type Role } from '@qs/shared';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { CHECKS_BY_ID, customerInputSchema, normalizeEnvironment, systemKey, triageSchema, type Role } from '@qs/shared';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
@@ -23,6 +23,23 @@ const NO_ACCOUNT = 'No account with this email. Ask an administrator to add them
 
 export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
   const { db } = ctx;
+
+  /** Environments used in this organisation's scans, for suggestions: distinct ignoring case, most recently used first. */
+  async function environmentsOf(customerId: string): Promise<string[]> {
+    const rows = await db
+      .select({ environment: scanSystems.environment })
+      .from(scanSystems)
+      .innerJoin(scans, eq(scans.id, scanSystems.scanId))
+      .where(and(eq(scans.customerId, customerId), isNotNull(scanSystems.environment)))
+      .orderBy(desc(scanSystems.createdAt))
+      .limit(500);
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const env = normalizeEnvironment(r.environment);
+      if (env && !seen.has(env.toLowerCase())) seen.set(env.toLowerCase(), env);
+    }
+    return [...seen.values()].slice(0, 50);
+  }
 
   app.get('/api/customers', async (req) => {
     const u = requireUser(req);
@@ -105,6 +122,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
         wizardStep: scans.wizardStep,
         // Written out with table names: drizzle renders bare column names inside sql``, which would compare scan_systems.id here.
         providers: sql<string[]>`coalesce((select array_agg(distinct ss.provider::text) from scan_systems ss where ss.scan_id = "scans"."id"), '{}'::text[])`,
+        environments: sql<string[]>`coalesce((select array_agg(distinct ss.environment) from scan_systems ss where ss.scan_id = "scans"."id" and ss.environment is not null), '{}'::text[])`,
       })
       .from(scans)
       .where(eq(scans.customerId, id))
@@ -133,6 +151,7 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     return {
       ...c,
       scans: scanRows,
+      environments: await environmentsOf(id),
       triage,
       myAccess,
       owner: owner && (manage ? owner : { id: owner.id, name: owner.name, email: '' }),

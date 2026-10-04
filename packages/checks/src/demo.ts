@@ -682,6 +682,8 @@ export interface DemoOptions {
   maturity?: number;
   /** Simulate API latency (live runs). */
   delay?: boolean;
+  /** AWS account of the simulated system (e.g. an acceptance account); resources then name this account. */
+  awsAccount?: string;
 }
 
 export const DEFAULT_DEMO_MATURITY = 0.55;
@@ -690,7 +692,15 @@ export const DEFAULT_DEMO_MATURITY = 0.55;
  * Each check gets a fixed "difficulty" in [0,1). A control is in place when difficulty < maturity, so a more
  * mature scan of the same company fixes a superset of the issues of a less mature scan.
  */
-export function demoOutcomeSync(checkId: string, maturity = DEFAULT_DEMO_MATURITY): CheckOutcome {
+export function demoOutcomeSync(checkId: string, maturity = DEFAULT_DEMO_MATURITY, opts: Pick<DemoOptions, 'awsAccount'> = {}): CheckOutcome {
+  const o = baseOutcome(checkId, maturity);
+  const account = opts.awsAccount;
+  // Another simulated AWS environment: the same scenario, with ARNs and console links in its own account.
+  if (account && /^\d{12}$/.test(account) && account !== ACC && CHECKS_BY_ID[checkId]?.provider === 'aws') return JSON.parse(JSON.stringify(o).replaceAll(ACC, account));
+  return o;
+}
+
+function baseOutcome(checkId: string, maturity: number): CheckOutcome {
   const meta = CHECKS_BY_ID[checkId];
   const s = SCENARIOS[checkId];
   const difficulty = rng(`noordkust:${checkId}`)();
@@ -702,7 +712,7 @@ export function demoOutcomeSync(checkId: string, maturity = DEFAULT_DEMO_MATURIT
 
 export async function demoOutcome(systemId: string, checkId: string, opts: DemoOptions = {}): Promise<CheckOutcome> {
   if (opts.delay !== false) await sleep(400 + rng(`${systemId}:${checkId}`)() * 1600);
-  return demoOutcomeSync(checkId, opts.maturity ?? DEFAULT_DEMO_MATURITY);
+  return demoOutcomeSync(checkId, opts.maturity ?? DEFAULT_DEMO_MATURITY, opts);
 }
 
 export const DEMO_SCENARIO_IDS = Object.keys(SCENARIOS);

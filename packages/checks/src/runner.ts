@@ -90,7 +90,10 @@ export async function runSystem(input: RunSystemInput): Promise<void> {
     try {
       const impl = mod.checks[checkId];
       outcome = demo
-        ? await demoOutcome(input.systemId, checkId, { maturity: typeof input.config?.demoMaturity === 'number' ? input.config.demoMaturity : undefined })
+        ? await demoOutcome(input.systemId, checkId, {
+            maturity: typeof input.config?.demoMaturity === 'number' ? input.config.demoMaturity : undefined,
+            awsAccount: typeof input.config?.accountId === 'string' ? input.config.accountId : undefined,
+          })
         : impl
           ? await withTimeout(impl({ ...(ctx as object), signal: abort.signal }), CHECK_TIMEOUT_MS, checkId)
           : { status: 'error' as const, summary: 'Check not implemented.' };

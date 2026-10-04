@@ -28,30 +28,45 @@ const TRIAGE = [
   },
 ];
 
+/** Second AWS environment of the demo company (a documentation account ID, like the production one). */
+export const DEMO_AWS_ACCEPTANCE = '444455556666';
+
+/** Demo systems: production everywhere, plus an AWS acceptance account that is somewhat behind production. */
 function systemsFor(maturity: number) {
   const base = { authMode: 'demo', demoMaturity: maturity };
-  const sys: { provider: Provider; label: string; config: Record<string, unknown>; details: Record<string, unknown> }[] = [
+  const sys: { provider: Provider; label: string; environment: string; config: Record<string, unknown>; details: Record<string, unknown> }[] = [
     {
       provider: 'm365',
       label: 'Noordkust Microsoft 365',
+      environment: 'production',
       config: { ...base, tenantId: DEMO_COMPANY.tenantId, subscriptionIds: [] },
       details: { tenantId: DEMO_COMPANY.tenantId, displayName: DEMO_COMPANY.name },
     },
     {
       provider: 'azure',
       label: 'Noordkust Azure',
+      environment: 'production',
       config: { ...base, tenantId: DEMO_COMPANY.tenantId, subscriptionIds: [] },
       details: { subscriptions: [{ id: 'noordkust-prod', name: 'noordkust-prod' }, { id: 'noordkust-dev', name: 'noordkust-dev' }] },
     },
     {
       provider: 'aws',
       label: 'AWS production',
+      environment: 'production',
       config: { ...base, accountId: DEMO_COMPANY.awsAccount, regions: [], externalId: `qs-${randomToken(18)}` },
       details: { accountId: DEMO_COMPANY.awsAccount, arn: `arn:aws:sts::${DEMO_COMPANY.awsAccount}:assumed-role/SecurityQuickScanReadOnly/demo` },
     },
     {
+      provider: 'aws',
+      label: 'AWS acceptance',
+      environment: 'acceptance',
+      config: { ...base, demoMaturity: Math.max(0.1, maturity - 0.15), accountId: DEMO_AWS_ACCEPTANCE, regions: [], externalId: `qs-${randomToken(18)}` },
+      details: { accountId: DEMO_AWS_ACCEPTANCE, arn: `arn:aws:sts::${DEMO_AWS_ACCEPTANCE}:assumed-role/SecurityQuickScanReadOnly/demo` },
+    },
+    {
       provider: 'github',
       label: 'GitHub organisation',
+      environment: 'production',
       config: { ...base, org: DEMO_COMPANY.githubOrg },
       details: { org: DEMO_COMPANY.githubOrg, ownerView: true },
     },
@@ -89,25 +104,29 @@ async function createScan(
 
   const systems = systemsFor(opts.maturity);
 
-  for (const s of systems) {
+  for (const [n, s] of systems.entries()) {
+    // One millisecond apart, so the systems keep this order wherever they are listed by creation.
+    const created = new Date((startedAt ?? new Date()).getTime() + n);
     const [row] = await tx
       .insert(scanSystems)
       .values({
         scanId: scan.id,
         provider: s.provider,
         label: s.label,
+        environment: s.environment,
         config: s.config,
         connectionOk: true,
         connectionMessage: 'Demo system: no real connection is made.',
         connectionDetails: s.details,
         connectionCheckedAt: startedAt ?? new Date(),
-        createdAt: startedAt ?? new Date(),
+        createdAt: created,
       })
       .returning();
     if (opts.draft || !startedAt) continue;
     await tx.insert(checkResults).values(
       checksFor(s.provider).map((c, i) => {
-        const o = demoOutcomeSync(c.id, opts.maturity);
+        const cfg = s.config as { demoMaturity: number; accountId?: string };
+        const o = demoOutcomeSync(c.id, cfg.demoMaturity, { awsAccount: cfg.accountId });
         const t = new Date(startedAt.getTime() + (i + 1) * 4000);
         return {
           scanId: scan.id,

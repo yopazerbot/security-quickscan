@@ -1,4 +1,4 @@
-import { PROVIDER_LABELS, systemKey, type Provider } from '@qs/shared';
+import { environmentKey, normalizeEnvironment, PROVIDER_LABELS, systemKey, type Provider } from '@qs/shared';
 
 /** Up to four names, then "and N more". */
 const listNames = (xs: string[], max = 4) => (xs.length > max ? `${xs.slice(0, max).join(', ')} and ${xs.length - max} more` : xs.join(', '));
@@ -37,6 +37,7 @@ export interface SystemRef {
   provider: Provider;
   label: string;
   identity?: string | null;
+  environment?: string | null;
   systemKey?: string;
 }
 
@@ -45,11 +46,45 @@ export function keyOfScanSystem(s: { provider: Provider; label: string; config?:
   return systemKey(s.provider, s.config ?? {}, s.connection?.details ?? null, s.label);
 }
 
-/** "aws:123456789012" to a provider and a readable id, for triage rows whose system is not in a loaded scan. */
+/**
+ * "aws:123456789012" to a provider and a readable id, for triage rows whose system is not in a loaded scan.
+ * Azure keys scoped to subscriptions ("azure:<tenant>/<sub>,<sub>") read as "<tenant>; subscriptions: <sub>, <sub>";
+ * a tenant-only Azure key reads as "<tenant>; all subscriptions".
+ */
 export function parseSystemKey(key: string): { provider: Provider | null; id: string } {
   const i = key.indexOf(':');
   const p = i > 0 ? key.slice(0, i) : '';
   const provider = p in PROVIDER_LABELS ? (p as Provider) : null;
   const rest = i > 0 ? key.slice(i + 1) : key;
-  return { provider, id: rest.startsWith('label:') ? rest.slice(6) : rest };
+  if (rest.startsWith('label:')) return { provider, id: rest.slice(6) };
+  const slash = provider === 'azure' ? rest.indexOf('/') : -1;
+  if (slash > 0) {
+    const subs = rest.slice(slash + 1).split(',').filter(Boolean);
+    return { provider, id: `${rest.slice(0, slash)}; ${subs.length === 1 ? 'subscription' : 'subscriptions'}: ${listNames(subs)}` };
+  }
+  // A tenant-only Azure key also applies to systems scoped to subscriptions in that tenant.
+  return { provider, id: provider === 'azure' ? `${rest}; all subscriptions` : rest };
+}
+
+/** Systems grouped by environment (case-insensitive), as the report model sends them or derived from the systems. */
+export interface EnvironmentGroup {
+  /** Lower-case environment, '' for systems without one. */
+  key: string;
+  name: string | null;
+  systemIds: string[];
+  summary?: { score?: number | null; grade?: string | null; partial?: boolean; counts?: Partial<Record<string, number>> } | null;
+}
+
+/** Environment groups in system order, systems without an environment last. Uses the report model's summaries when present. */
+export function environmentGroups(systems: { id: string; environment?: string | null }[], fromModel?: EnvironmentGroup[] | null): EnvironmentGroup[] {
+  if (Array.isArray(fromModel) && fromModel.length) return fromModel;
+  const groups = new Map<string, EnvironmentGroup>();
+  for (const s of systems) {
+    const name = normalizeEnvironment(s.environment);
+    const key = environmentKey(name);
+    const g = groups.get(key) ?? { key, name, systemIds: [] };
+    g.systemIds.push(s.id);
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => (a.key === '' ? 1 : 0) - (b.key === '' ? 1 : 0));
 }

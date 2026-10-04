@@ -3,6 +3,7 @@ import { CircleDashed, FlaskConical, Rocket, ShieldCheck, XCircle } from 'lucide
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ProviderIcon } from '../../components/ProviderIcon';
+import { EnvironmentChip } from '../../components/SystemBadge';
 import { useAction } from '../../components/feedback';
 import { Alert, Card } from '../../components/ui';
 import { post } from '../../lib/api';
@@ -54,7 +55,10 @@ export function StepLaunch({ scan, back, navigating }: StepProps) {
               <li key={s.id} className="flex items-center gap-3">
                 <ProviderIcon provider={s.provider} className="size-6" decorative />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-800">{s.label}</div>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-slate-800">{s.label}</span>
+                    <EnvironmentChip environment={s.environment} />
+                  </div>
                   <div className="text-xs text-slate-500">
                     {PROVIDER_LABELS[s.provider]} · {plural(checksPerProvider(s.provider))}
                   </div>

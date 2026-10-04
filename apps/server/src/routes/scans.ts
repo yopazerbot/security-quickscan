@@ -3,10 +3,14 @@ import {
   awsSecretSchema,
   CHECKS,
   githubSecretSchema,
+  isIdentityKey,
   msSecretSchema,
+  normalizeEnvironment,
+  PROVIDER_SHORT,
   PROVIDERS,
   retentionSchema,
   systemInputSchema,
+  systemKey,
   type Provider,
 } from '@qs/shared';
 import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm';
@@ -101,12 +105,41 @@ export function checksFor(providers: Iterable<Provider>) {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+type KeyedSystem = { id: string; provider: Provider; label: string; config: unknown; connectionDetails?: unknown };
+const keyOf = (s: KeyedSystem) => systemKey(s.provider, s.config as Record<string, any>, (s.connectionDetails ?? null) as Record<string, any> | null, s.label);
+
+/**
+ * Why `candidate` cannot be in the same scan as `others`, or null. Two systems with the same system key would be the
+ * same environment scanned twice and make triage and comparisons ambiguous. While adding or editing (`final` false)
+ * only a known identity counts, or the display name of a simulated system (its identity); at start every key counts,
+ * including identities that only the connection test revealed.
+ */
+export function duplicateSystemProblem(others: KeyedSystem[], candidate: KeyedSystem, final = false): string | null {
+  const key = keyOf(candidate);
+  if (!final && !isIdentityKey(key) && (candidate.config as any)?.authMode !== 'demo') return null;
+  const other = others.find((o) => o.id !== candidate.id && keyOf(o) === key);
+  if (!other) return null;
+  if (!isIdentityKey(key)) return `This scan already includes a ${PROVIDER_SHORT[candidate.provider]} system named ${other.label}. Give each system its own display name.`;
+  const what =
+    candidate.provider === 'aws'
+      ? 'AWS account'
+      : candidate.provider === 'github'
+        ? 'GitHub organisation'
+        : candidate.provider === 'azure'
+          ? key.includes('/')
+            ? 'Microsoft tenant and subscriptions'
+            : 'Microsoft tenant (all subscriptions)'
+          : 'Microsoft tenant';
+  return `This scan already includes ${other.label} for the same ${what}. Each environment needs its own ${candidate.provider === 'azure' ? 'subscriptions' : what}; remove the duplicate or change it.`;
+}
+
 function systemView(s: SystemRow, cred?: { hint: string; expiresAt: Date | null; createdAt: Date }) {
   const mode = (s.config as any).authMode as string;
   return {
     id: s.id,
     provider: s.provider,
     label: s.label,
+    environment: s.environment ?? null,
     config: s.config,
     needsSecret: needsSecret(s.provider, mode),
     credential: cred ? { hint: cred.hint, expiresAt: cred.expiresAt, createdAt: cred.createdAt } : null,
@@ -280,10 +313,13 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (body.provider === 'aws') cfg.externalId = `qs-${randomToken(18)}`;
     const s = await withDraftLock(ctx, scan.id, async (tx) => {
       const count = (await tx.select({ id: scanSystems.id }).from(scanSystems).where(eq(scanSystems.scanId, scan.id))).length;
-      if (count >= 20) throw badRequest('Too many systems in one scan');
-      return (await tx.insert(scanSystems).values({ scanId: scan.id, provider: body.provider, label: body.label, config: cfg }).returning())[0];
+      const all = await tx.select().from(scanSystems).where(eq(scanSystems.scanId, scan.id));
+      if (all.length >= 20) throw badRequest('Too many systems in one scan');
+      const dup = duplicateSystemProblem(all, { id: '', provider: body.provider, label: body.label, config: cfg });
+      if (dup) throw badRequest(dup);
+      return (await tx.insert(scanSystems).values({ scanId: scan.id, provider: body.provider, label: body.label, environment: normalizeEnvironment(body.environment), config: cfg }).returning())[0];
     });
-    await audit(ctx, req, 'system.create', { type: 'system', id: s.id }, { scanId: scan.id, provider: body.provider });
+    await audit(ctx, req, 'system.create', { type: 'system', id: s.id }, { scanId: scan.id, provider: body.provider, environment: s.environment });
     return systemView(s);
   });
 
@@ -305,9 +341,14 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
       const targetChanged = stableJson(before) !== stableJson(after);
       // A label-only edit keeps the connection test; any other change needs a new test.
       const connectionChanged = stableJson(prev) !== stableJson(cfg);
+      // Leaving the environment out keeps it; an empty value clears it.
+      const environment = body.environment === undefined ? s.environment : normalizeEnvironment(body.environment);
+      const all = await tx.select().from(scanSystems).where(eq(scanSystems.scanId, scan.id));
+      const dup = duplicateSystemProblem(all, { id: s.id, provider: s.provider, label: body.label, config: cfg, connectionDetails: connectionChanged ? null : s.connectionDetails });
+      if (dup) throw badRequest(dup);
       await tx
         .update(scanSystems)
-        .set({ label: body.label, config: cfg, ...(connectionChanged ? { connectionOk: null, connectionMessage: null, connectionDetails: null, connectionCheckedAt: null } : {}) })
+        .set({ label: body.label, environment, config: cfg, ...(connectionChanged ? { connectionOk: null, connectionMessage: null, connectionDetails: null, connectionCheckedAt: null } : {}) })
         .where(eq(scanSystems.id, s.id));
       // A stored secret belongs to one access method and one target: never point it at another account.
       const purged = modeChanged || targetChanged ? (await tx.delete(credentials).where(eq(credentials.systemId, s.id)).returning({ id: credentials.systemId })).length > 0 : false;
@@ -528,6 +569,11 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
         await assertTenantBound(scan, s, req, 'start');
         if (!s.connectionOk) throw badRequest(`Run a successful connection test for ${s.label} first`);
       }
+      // Identities can become known only with the connection test (e.g. the account behind access keys).
+      for (const s of sys) {
+        const dup = duplicateSystemProblem(sys, s, true);
+        if (dup) throw badRequest(`${s.label}: ${dup}`);
+      }
       const included = checksFor(sys.map((s) => s.provider));
       if (!included.length) throw badRequest('No checks are available for the systems in this scan');
 
@@ -596,7 +642,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
         .returning();
       const sys = await tx.select().from(scanSystems).where(eq(scanSystems.scanId, scan.id));
       for (const s of sys) {
-        const [ns] = await tx.insert(scanSystems).values({ scanId: n.id, provider: s.provider, label: s.label, config: s.config }).returning();
+        const [ns] = await tx.insert(scanSystems).values({ scanId: n.id, provider: s.provider, label: s.label, environment: s.environment, config: s.config }).returning();
         const cred = (await tx.select().from(credentials).where(eq(credentials.systemId, s.id)).limit(1))[0];
         let plain: Buffer | null = null;
         try {

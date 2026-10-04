@@ -1,9 +1,10 @@
-import { GITHUB_ORG_HINT, GITHUB_ORG_RE, PROVIDER_LABELS, type Provider } from '@qs/shared';
+import { ENVIRONMENT_MAX, GITHUB_ORG_HINT, GITHUB_ORG_RE, PROVIDER_LABELS, PROVIDER_SHORT, type Provider } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useId, useState } from 'react';
 import { ProviderIcon } from '../../components/ProviderIcon';
+import { EnvironmentChip } from '../../components/SystemBadge';
 import { AsyncButton, useToast } from '../../components/feedback';
 import { Alert, Button, Card, Field, Input, Modal } from '../../components/ui';
 import { del, get, patch, post } from '../../lib/api';
@@ -45,15 +46,46 @@ export function authModes(provider: Provider, p?: Platform): Mode[] {
   ];
 }
 
-function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: Provider; system?: WizardSystem; scanId: string; onClose(): void; onSaved(): void }) {
+/** Environments already used in this organisation's scans (most recent first), for suggestions. */
+const useEnvironments = (customerId: string) =>
+  useQuery({ queryKey: ['customer', customerId], queryFn: () => get<{ environments?: string[] }>(`/api/customers/${customerId}`), staleTime: 60_000, select: (c) => c.environments ?? [] });
+
+function SystemForm({
+  provider,
+  system,
+  scanId,
+  customerId,
+  onClose,
+  onSaved,
+}: {
+  provider: Provider;
+  system?: WizardSystem;
+  scanId: string;
+  customerId: string;
+  onClose(): void;
+  onSaved(): void;
+}) {
   const platform = usePlatform();
+  const environments = useEnvironments(customerId);
+  const envListId = useId();
   const { me } = useAuth();
   const toast = useToast();
   const methodName = useId();
   const modes = authModes(provider, platform.data).map((m) => (me?.user.isDemo && m.id !== 'demo' ? { ...m, available: false, why: 'Not available in a demo session' } : m));
   const firstAvail = modes.find((m) => m.available && m.recommended)?.id ?? modes.find((m) => m.available)?.id ?? modes[0].id;
   const c = system?.config ?? {};
-  const [label, setLabel] = useState(system?.label ?? PROVIDER_LABELS[provider]);
+  const [label, setLabelRaw] = useState(system?.label ?? PROVIDER_LABELS[provider]);
+  const [labelTouched, setLabelTouched] = useState(Boolean(system));
+  const setLabel = (v: string) => {
+    setLabelTouched(true);
+    setLabelRaw(v);
+  };
+  const [environment, setEnvironmentRaw] = useState(system?.environment ?? '');
+  // A new system's default name follows the environment ("AWS production") until the name is edited.
+  const setEnvironment = (v: string) => {
+    setEnvironmentRaw(v);
+    if (!labelTouched) setLabelRaw(v.trim() ? `${PROVIDER_SHORT[provider]} ${v.trim()}` : PROVIDER_LABELS[provider]);
+  };
   const [mode, setMode] = useState<string>(c.authMode ?? firstAvail);
   const [tenantId, setTenantId] = useState(c.tenantId ?? '');
   const [subs, setSubs] = useState((c.subscriptionIds ?? []).join(', '));
@@ -90,11 +122,11 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
     if (provider === 'github') config = { ...config, org: org.trim() };
     try {
       if (system) {
-        const r = await patch<{ ok: boolean; connectionReset?: boolean; credentialsPurged?: boolean }>(`/api/scans/${scanId}/systems/${system.id}`, { label, config });
+        const r = await patch<{ ok: boolean; connectionReset?: boolean; credentialsPurged?: boolean }>(`/api/scans/${scanId}/systems/${system.id}`, { label, environment: environment.trim() || null, config });
         if (r.credentialsPurged) toast.success(`${label} saved. The stored secret was deleted: enter it again in the Access step.`);
         else if (r.connectionReset && system.connection) toast.success(`${label} saved. Test the connection again in the Access step.`);
         else toast.success(`${label} saved.`);
-      } else await post(`/api/scans/${scanId}/systems`, { provider, label, config });
+      } else await post(`/api/scans/${scanId}/systems`, { provider, label, environment: environment.trim() || null, config });
       onSaved();
     } catch (e: any) {
       setErr(e.message);
@@ -121,16 +153,35 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
       }
     >
       <div className="space-y-5">
-        <Field label="Display name" hint="Used in the report, e.g. 'Production AWS' or 'Contoso tenant'.">
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={100} />
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Display name" hint="Used in the report, e.g. 'Production AWS' or 'Contoso tenant'.">
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={100} />
+          </Field>
+          <Field label="Environment (optional)" hint="Free text. Tag each environment of the same platform, so the report can compare them.">
+            <Input
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value)}
+              maxLength={ENVIRONMENT_MAX}
+              placeholder="e.g. production, acceptance, test"
+              list={environments.data?.length ? envListId : undefined}
+              autoComplete="off"
+            />
+          </Field>
+          {Boolean(environments.data?.length) && (
+            <datalist id={envListId}>
+              {environments.data!.map((e) => (
+                <option key={e} value={e} />
+              ))}
+            </datalist>
+          )}
+        </div>
         {(provider === 'm365' || provider === 'azure') && mode !== 'demo' && (
           <Field label="Tenant ID or primary domain" hint="e.g. contoso.onmicrosoft.com or the tenant GUID">
             <Input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
           </Field>
         )}
         {provider === 'azure' && mode !== 'demo' && (
-          <Field label="Subscription IDs (optional)" hint="Leave empty to scan all subscriptions the scanner can read.">
+          <Field label="Subscription IDs (optional)" hint="Leave empty to scan all subscriptions the scanner can read. To report environments separately, add an Azure system per environment with its subscriptions.">
             <Input value={subs} onChange={(e) => setSubs(e.target.value)} placeholder="comma separated GUIDs" />
           </Field>
         )}
@@ -208,7 +259,10 @@ export function StepScope({ scan, refresh, next, navigating }: StepProps) {
 
   return (
     <>
-      <Card title="Which systems are in scope?" subtitle="Add one or more environments. You can add the same platform more than once (e.g. several AWS accounts).">
+      <Card
+        title="Which systems are in scope?"
+        subtitle="Add one or more systems. Add the same platform more than once for each environment, e.g. AWS production and AWS acceptance accounts, or Azure subscriptions per environment."
+      >
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {(Object.keys(PROVIDER_INFO) as Provider[]).map((p) => {
             const count = scan.systems.filter((s) => s.provider === p).length;
@@ -247,7 +301,10 @@ export function StepScope({ scan, refresh, next, navigating }: StepProps) {
               <li key={s.id} className="flex items-center gap-4 px-6 py-3.5">
                 <ProviderIcon provider={s.provider} className="size-7" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-slate-900">{s.label}</div>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-slate-900">{s.label}</span>
+                    <EnvironmentChip environment={s.environment} />
+                  </div>
                   <div className="truncate text-xs text-slate-500">
                     {[s.config.tenantId, s.config.accountId, s.config.org, authModes(s.provider).find((m) => m.id === s.config.authMode)?.label].filter(Boolean).join(' · ')}
                   </div>
@@ -279,8 +336,8 @@ export function StepScope({ scan, refresh, next, navigating }: StepProps) {
         </Card>
       )}
 
-      {adding && <SystemForm provider={adding} scanId={scan.id} onClose={() => setAdding(null)} onSaved={async () => { setAdding(null); await refresh(); }} />}
-      {editing && <SystemForm provider={editing.provider} system={editing} scanId={scan.id} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} />}
+      {adding && <SystemForm provider={adding} scanId={scan.id} customerId={scan.customer.id} onClose={() => setAdding(null)} onSaved={async () => { setAdding(null); await refresh(); }} />}
+      {editing && <SystemForm provider={editing.provider} system={editing} scanId={scan.id} customerId={scan.customer.id} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} />}
       <WizardFooter
         onNext={next}
         loading={navigating}

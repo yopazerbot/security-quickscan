@@ -33,6 +33,23 @@ test('admin sees the seeded demo organisation with history and reports', async (
   for (const text of await findings.allInnerTexts()) expect(text).toContain(system);
   await card.click();
   await expect(card).toHaveAttribute('aria-pressed', 'false');
+
+  // The demo scans AWS production and AWS acceptance: systems are grouped per environment with a summary each,
+  // and the findings can be filtered by environment.
+  const groups = page.getByTestId('environment-group');
+  await expect(groups).toHaveCount(2);
+  await expect(groups.first().getByRole('heading', { name: /production/ })).toBeVisible();
+  await expect(groups.nth(1).getByRole('heading', { name: /acceptance/ })).toBeVisible();
+  await expect(groups.nth(1).getByTestId('system-card-label')).toHaveText(['AWS acceptance']);
+  const envFilter = page.getByLabel('Filter by environment');
+  await expect(envFilter.locator('option')).toHaveText(['All environments', 'production', 'acceptance']);
+  await envFilter.selectOption({ label: 'acceptance' });
+  await expect(page.getByText(/shown in acceptance/)).toBeVisible();
+  await expect(findings.first()).toBeVisible();
+  for (const text of await findings.allInnerTexts()) expect(text).toContain('AWS acceptance');
+  await expect(findings.first().getByTestId('environment-chip').first()).toHaveText(/acceptance/);
+  await page.getByRole('button', { name: 'Clear filters' }).first().click();
+  await expect(envFilter).toHaveValue('all');
 });
 
 test('run the prepared draft scan end to end and download the exports', async ({ page }) => {
@@ -86,10 +103,16 @@ test('new organisation through the full wizard with demo systems', async ({ page
     // The access methods are radio buttons; click the visible label like a user would.
     await page.getByRole('dialog').getByText('Demo (simulated)', { exact: true }).click();
     await expect(page.getByRole('radio', { name: /Demo \(simulated\)/ })).toBeChecked();
+    // Environment is optional free text; the default display name follows it.
+    if (p === 'GitHub') {
+      await page.getByRole('dialog').getByLabel('Environment (optional)').fill('test');
+      await expect(page.getByRole('dialog').getByLabel('Display name')).toHaveValue('GitHub test');
+    }
     // GitHub demo systems need no organisation (regression test).
     await page.getByRole('button', { name: 'Add system' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();
   }
+  await expect(page.getByTestId('environment-chip')).toHaveText(['Environment: test']);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Credential retention')).toBeVisible();
   await page.getByRole('button', { name: 'Continue' }).click();

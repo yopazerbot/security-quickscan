@@ -1,6 +1,8 @@
 import {
   CHECKS_BY_ID,
   computeScore,
+  environmentKey,
+  normalizeEnvironment,
   PROVIDER_LABELS,
   SEVERITIES,
   type Branding,
@@ -11,12 +13,12 @@ import {
   type ScoreSummary,
   type Severity,
 } from '@qs/shared';
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { AppCtx } from '../context.js';
 import { checkResults, credentials, customers, findingTriage, scanCriteria, scans, scanSystems } from '../db/schema.js';
 import { getBranding } from '../routes/admin.js';
 import { frozenSummary, scanSystemKey, scoreScan, triageKey, type TriageDecision } from '../scoring.js';
-import { triageLookup } from '../triage.js';
+import { frozenTriageFor, triageLookup } from '../triage.js';
 
 
 export interface ReportItem {
@@ -43,6 +45,8 @@ export interface ReportItem {
   providerLabel: string;
   /** Human readable account, tenant or organisation of the system, e.g. 'AWS account 111122223333'. */
   systemIdentity: string | null;
+  /** Free-text environment of the system (production, acceptance...), null when none was given. A label only: not part of the system key. */
+  systemEnvironment: string | null;
   /** Stable identity of the system (provider plus account, tenant or org); triage is stored per (checkId, systemKey). */
   systemKey: string;
   /** Triage in effect for this report (frozen with the score once the scan finished). */
@@ -90,6 +94,7 @@ export interface ReportModel {
     label: string;
     systemKey: string;
     identity: string | null;
+    environment: string | null;
     credentialsStored: boolean;
     /** When the stored secret is deleted automatically; null when not stored or kept until deleted manually. */
     credentialsExpireAt: Date | null;
@@ -97,6 +102,11 @@ export interface ReportModel {
     /** Score, grade, coverage and counts over this system's results only. */
     summary: ScoreSummary;
   }[];
+  /**
+   * One entry per distinct environment (case-insensitive) in system order, systems without one last (name null).
+   * The summary is scored over that environment's results with the same coverage rules as per-system summaries.
+   */
+  environments: { key: string; name: string | null; systemIds: string[]; summary: ScoreSummary }[];
   summary: ScoreSummary;
   findings: ReportItem[];
   passed: ReportItem[];
@@ -141,13 +151,36 @@ export function systemIdentity(provider: Provider, config: unknown, details: unk
   return [tenant, subText].filter(Boolean).join('; ') || null;
 }
 
+/** Environments of a scan in system order, without an environment last; display name from the first system that has it. */
+function environmentSummaries(
+  systems: { id: string }[],
+  envOf: Map<string, string | null>,
+  items: ReportItem[],
+  toInput: (i: ReportItem) => ScoreInput,
+): ReportModel['environments'] {
+  const groups = new Map<string, { name: string | null; systemIds: string[] }>();
+  for (const s of systems) {
+    const name = envOf.get(s.id) ?? null;
+    const key = environmentKey(name);
+    const g = groups.get(key) ?? { name, systemIds: [] };
+    g.systemIds.push(s.id);
+    groups.set(key, g);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0))
+    .map(([key, g]) => {
+      const ids = new Set(g.systemIds);
+      return { key, name: g.name, systemIds: g.systemIds, summary: computeScore(items.filter((i) => ids.has(i.systemId)).map(toInput), CHECKS_BY_ID) };
+    });
+}
+
 const failing = (status: string) => status === 'fail' || status === 'warn';
 
 export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportModel> {
   const { db } = ctx;
   const scan = (await db.select().from(scans).where(eq(scans.id, scanId)).limit(1))[0];
   const customer = (await db.select().from(customers).where(eq(customers.id, scan.customerId)).limit(1))[0];
-  const systems = await db.select().from(scanSystems).where(eq(scanSystems.scanId, scanId));
+  const systems = await db.select().from(scanSystems).where(eq(scanSystems.scanId, scanId)).orderBy(asc(scanSystems.createdAt));
   const creds = systems.length
     ? await db.select({ id: credentials.systemId, expiresAt: credentials.expiresAt }).from(credentials).where(inArray(credentials.systemId, systems.map((s) => s.id)))
     : [];
@@ -156,6 +189,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
   const criteria = await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, scanId));
   const lookup = triageLookup(triage);
   const sysLabel = new Map(systems.map((s) => [s.id, s.label]));
+  const sysEnv = new Map(systems.map((s) => [s.id, normalizeEnvironment(s.environment)]));
   const sysIdentity = new Map(systems.map((s) => [s.id, systemIdentity(s.provider, s.startedConfig ?? s.config, s.connectionDetails)]));
   const sysKey = new Map(systems.map((s) => [s.id, scanSystemKey(s)]));
   const myKeys = new Set(sysKey.values());
@@ -203,7 +237,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
       const t = lookup(r.checkId, key);
       const current = t ? { status: t.status, note: t.note } : null;
       // In a frozen report the triage is what the score was computed with; otherwise it is the current decision.
-      const effective = frozen?.triage ? (frozen.triage[triageKey(key, r.checkId)] ?? null) : current;
+      const effective = frozen?.triage ? frozenTriageFor(frozen.triage, key, r.checkId) : current;
       // A finished scan has no running checks: anything left pending or running was not assessed.
       const unfinished = r.status === 'pending' || r.status === 'running';
       return {
@@ -228,6 +262,7 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         systemLabel: sysLabel.get(r.systemId) ?? '',
         providerLabel: PROVIDER_LABELS[m.provider],
         systemIdentity: sysIdentity.get(r.systemId) ?? null,
+        systemEnvironment: sysEnv.get(r.systemId) ?? null,
         systemKey: key,
         triage: effective,
         currentTriage: current,
@@ -285,12 +320,14 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
         label: s.label,
         systemKey: sysKey.get(s.id) ?? '',
         identity,
+        environment: sysEnv.get(s.id) ?? null,
         credentialsStored: Boolean(cred),
         credentialsExpireAt: cred?.expiresAt ?? null,
         authMode: (s.config as any).authMode,
         summary: computeScore(items.filter((i) => i.systemId === s.id).map(toInput), CHECKS_BY_ID),
       };
     }),
+    environments: environmentSummaries(systems, sysEnv, items, toInput),
     summary,
     findings,
     passed: items.filter((i) => i.status === 'pass').sort(bySeverity),

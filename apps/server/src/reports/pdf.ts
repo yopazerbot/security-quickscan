@@ -14,6 +14,7 @@ import {
   executiveSummarySentences,
   gradeFor,
   partialLabel,
+  systemDisplayName,
   type ControlVerdict,
   type EvidenceStrength,
   type Provider,
@@ -192,7 +193,7 @@ export function cover(doc: Doc, m: ReportModel, logo: Buffer | null) {
     for (const s of shown) {
       const y = doc.y + 2;
       drawProviderIcon(doc, s.provider, M, y, 11);
-      doc.font('Helvetica').fontSize(11).fillColor(C.ink).text(s.label, M + 16, y, { width: tw - 16, height: 13, ellipsis: true, lineBreak: false });
+      doc.font('Helvetica').fontSize(11).fillColor(C.ink).text(systemDisplayName(s.label, s.environment), M + 16, y, { width: tw - 16, height: 13, ellipsis: true, lineBreak: false });
       doc.y = y + 13;
     }
     if (shown.length < m.systems.length) doc.fillColor(C.muted).fontSize(10).text(`and ${m.systems.length - shown.length} more system(s)`, M + 16, doc.y + 2, { width: tw - 16 });
@@ -263,6 +264,7 @@ function summaryPage(doc: Doc, m: ReportModel) {
   doc.x = M;
 
   if (m.systems.length) systemsTable(doc, m);
+  if (m.environments.length > 1) environmentsTable(doc, m);
 
   h2(doc, 'Findings by severity');
   const sevs: Severity[] = ['critical', 'high', 'medium', 'low'];
@@ -295,16 +297,21 @@ function summaryPage(doc: Doc, m: ReportModel) {
   }
 }
 
-/** Per-system summary: icon, system, identity, grade (or Not assessed / Partial), failed and warnings. */
+/** Per-system summary: icon, system, environment (when any system has one), identity, grade (or Not assessed / Partial), failed and warnings. */
 export function systemsTable(doc: Doc, m: ReportModel) {
   h2(doc, 'Results per system');
   const W = doc.page.width - 2 * M;
-  const cols = { icon: M + 4, system: M + 22, identity: M + 150, grade: M + 335, failed: M + 405, warn: M + 445 };
+  const withEnv = m.systems.some((s) => s.environment);
+  const cols = withEnv
+    ? { icon: M + 4, system: M + 22, env: M + 124, identity: M + 196, grade: M + 335, failed: M + 405, warn: M + 445 }
+    : { icon: M + 4, system: M + 22, env: 0, identity: M + 150, grade: M + 335, failed: M + 405, warn: M + 445 };
+  const width = { system: (withEnv ? cols.env : cols.identity) - cols.system - 4, env: cols.identity - cols.env - 4, identity: cols.grade - cols.identity - 5 };
   const head = () => {
     const y = doc.y;
     doc.rect(M, y, W, 18).fill(C.ink);
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
     doc.text('System', cols.system, y + 5, { lineBreak: false });
+    if (withEnv) doc.text('Environment', cols.env, y + 5, { lineBreak: false });
     doc.text('Identity', cols.identity, y + 5, { lineBreak: false });
     doc.text('Grade', cols.grade, y + 5, { lineBreak: false });
     doc.text('Failed', cols.failed, y + 5, { lineBreak: false });
@@ -320,12 +327,51 @@ export function systemsTable(doc: Doc, m: ReportModel) {
     const y = doc.y;
     if (i % 2 === 0) doc.rect(M, y - 3, W, 20).fill(C.soft);
     drawProviderIcon(doc, s.provider, cols.icon, y, 12);
-    doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(s.label, cols.system, y + 2, { width: 124, height: 12, ellipsis: true, lineBreak: false });
-    doc.fillColor(C.body).font('Helvetica').fontSize(8.5).text(s.identity ?? s.providerLabel, cols.identity, y + 2, { width: 180, height: 12, ellipsis: true, lineBreak: false });
-    const sum = s.summary;
-    doc.fillColor(sum?.grade ? (GRADE[sum.grade] ?? C.ink) : C.muted).font('Helvetica-Bold').fontSize(9).text(sum ? gradeText(sum) : '-', cols.grade, y + 2, { width: 68, lineBreak: false });
-    doc.fillColor(sum?.counts.fail ? C.fail : C.body).text(String(sum?.counts.fail ?? 0), cols.failed, y + 2, { width: 36, lineBreak: false });
-    doc.fillColor(sum?.counts.warn ? C.warn : C.body).text(String(sum?.counts.warn ?? 0), cols.warn, y + 2, { width: 48, lineBreak: false });
+    doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(s.label, cols.system, y + 2, { width: width.system, height: 12, ellipsis: true, lineBreak: false });
+    if (withEnv) doc.fillColor(s.environment ? C.body : C.muted).font('Helvetica').fontSize(8.5).text(s.environment ?? '-', cols.env, y + 2, { width: width.env, height: 12, ellipsis: true, lineBreak: false });
+    doc.fillColor(C.body).font('Helvetica').fontSize(8.5).text(s.identity ?? s.providerLabel, cols.identity, y + 2, { width: width.identity, height: 12, ellipsis: true, lineBreak: false });
+    gradeCells(doc, s.summary, cols, y);
+    doc.y = y + 20;
+  });
+  doc.x = M;
+  doc.moveDown(0.6);
+}
+
+/** Grade, failed and warnings cells of a summary row. */
+function gradeCells(doc: Doc, sum: ReportModel['summary'] | undefined, cols: { grade: number; failed: number; warn: number }, y: number) {
+  doc.fillColor(sum?.grade ? (GRADE[sum.grade] ?? C.ink) : C.muted).font('Helvetica-Bold').fontSize(9).text(sum ? gradeText(sum) : '-', cols.grade, y + 2, { width: 68, lineBreak: false });
+  doc.fillColor(sum?.counts.fail ? C.fail : C.body).text(String(sum?.counts.fail ?? 0), cols.failed, y + 2, { width: 36, lineBreak: false });
+  doc.fillColor(sum?.counts.warn ? C.warn : C.body).text(String(sum?.counts.warn ?? 0), cols.warn, y + 2, { width: 48, lineBreak: false });
+}
+
+/** Per-environment summary when the scan covers two or more environments (systems without one grouped as "No environment"). */
+export function environmentsTable(doc: Doc, m: ReportModel) {
+  h2(doc, 'Results per environment');
+  const W = doc.page.width - 2 * M;
+  const cols = { env: M + 6, systems: M + 130, grade: M + 335, failed: M + 405, warn: M + 445 };
+  const label = new Map(m.systems.map((s) => [s.id, s.label]));
+  const head = () => {
+    const y = doc.y;
+    doc.rect(M, y, W, 18).fill(C.ink);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
+    doc.text('Environment', cols.env, y + 5, { lineBreak: false });
+    doc.text('Systems', cols.systems, y + 5, { lineBreak: false });
+    doc.text('Grade', cols.grade, y + 5, { lineBreak: false });
+    doc.text('Failed', cols.failed, y + 5, { lineBreak: false });
+    doc.text('Warnings', cols.warn, y + 5, { lineBreak: false });
+    doc.y = y + 22;
+  };
+  head();
+  m.environments.forEach((e, i) => {
+    if (doc.y > doc.page.height - M - 60) {
+      doc.addPage();
+      head();
+    }
+    const y = doc.y;
+    if (i % 2 === 0) doc.rect(M, y - 3, W, 20).fill(C.soft);
+    doc.fillColor(e.name ? C.ink : C.muted).font('Helvetica-Bold').fontSize(9).text(e.name ?? 'No environment', cols.env, y + 2, { width: cols.systems - cols.env - 6, height: 12, ellipsis: true, lineBreak: false });
+    doc.fillColor(C.body).font('Helvetica').fontSize(8.5).text(e.systemIds.map((id) => label.get(id) ?? id).join(', '), cols.systems, y + 2, { width: cols.grade - cols.systems - 6, height: 12, ellipsis: true, lineBreak: false });
+    gradeCells(doc, e.summary, cols, y);
     doc.y = y + 20;
   });
   doc.x = M;
@@ -334,7 +380,7 @@ export function systemsTable(doc: Doc, m: ReportModel) {
 
 /** Systems whose (untriaged) failures or warnings fed the control, by label. */
 function failingSystems(m: ReportModel, checks: ReportModel['summary']['controls'][number]['checks']): string[] {
-  const label = new Map(m.systems.map((s) => [s.id, s.label]));
+  const label = new Map(m.systems.map((s) => [s.id, systemDisplayName(s.label, s.environment)]));
   const ids = new Set(checks.filter((x) => (x.status === 'fail' || x.status === 'warn') && x.triage !== 'false_positive' && x.systemId).map((x) => x.systemId!));
   return [...ids].map((id) => label.get(id) ?? id);
 }
@@ -443,7 +489,7 @@ function itemList(doc: Doc, title: string, items: ReportItem[]) {
     pill(doc, M, y, f.severity.toUpperCase(), SEV[f.severity], 58);
     doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9.5).text(f.title, M + 66, y + 2, { width: 280, continued: false });
     const after = doc.y;
-    const right = `${f.systemLabel}  |  A.${f.iso[0]}`;
+    const right = `${systemDisplayName(f.systemLabel, f.systemEnvironment)}  |  A.${f.iso[0]}`;
     doc.font('Helvetica').fontSize(8.5);
     const rw = Math.min(doc.widthOfString(right), doc.page.width - 2 * M - 365);
     drawProviderIcon(doc, f.provider, doc.page.width - M - rw - 14, y + 2, 10);
@@ -467,10 +513,11 @@ function findingDetail(doc: Doc, f: ReportItem, accent: string) {
   if (f.isNew) pill(doc, x, yy, 'NEW', accent);
   doc.y = yy + 20;
   doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(12).text(f.title, M, doc.y, { width: W });
-  // System line: provider icon, system label and identity (account, tenant or organisation).
+  // System line: provider icon, system label with its environment, and identity (account, tenant or organisation).
   const sy = doc.y + 2;
   drawProviderIcon(doc, f.provider, M, sy, 11);
-  doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(f.systemLabel || (f.providerLabel ?? PROVIDER_LABELS[f.provider]), M + 16, sy + 1.5, { continued: Boolean(f.systemIdentity), width: W - 16 });
+  const sysName = systemDisplayName(f.systemLabel || (f.providerLabel ?? PROVIDER_LABELS[f.provider]), f.systemEnvironment);
+  doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(sysName, M + 16, sy + 1.5, { continued: Boolean(f.systemIdentity), width: W - 16 });
   if (f.systemIdentity) doc.fillColor(C.muted).font('Helvetica').text(`  ${f.systemIdentity}`);
   doc.y = Math.max(doc.y, sy + 13);
   doc.x = M;
@@ -515,7 +562,7 @@ function appendix(doc: Doc, m: ReportModel) {
     ensure(doc, 16);
     const y = doc.y;
     drawProviderIcon(doc, s.provider, M, y, 11);
-    doc.fillColor(C.body).font('Helvetica').fontSize(10).text(`${s.label}  -  ${s.providerLabel}${s.identity ? `  -  ${s.identity}` : ''}`, M + 16, y, { width: doc.page.width - 2 * M - 16, lineGap: 2 });
+    doc.fillColor(C.body).font('Helvetica').fontSize(10).text(`${s.label}  -  ${s.providerLabel}${s.environment ? `  -  environment: ${s.environment}` : ''}${s.identity ? `  -  ${s.identity}` : ''}`, M + 16, y, { width: doc.page.width - 2 * M - 16, lineGap: 2 });
     doc.y = Math.max(doc.y, y + 14);
   }
   doc.x = M;
@@ -542,7 +589,7 @@ function appendix(doc: Doc, m: ReportModel) {
     h2(doc, 'Checks not assessed');
     for (const i of m.notAssessed) {
       ensure(doc, 26);
-      doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(`${i.title}  (${i.systemLabel})`, M);
+      doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(`${i.title}  (${systemDisplayName(i.systemLabel, i.systemEnvironment)})`, M);
       doc.fillColor(C.muted).font('Helvetica').fontSize(8.5).text(i.summary, { width: doc.page.width - 2 * M });
       doc.moveDown(0.2);
     }
@@ -555,7 +602,7 @@ function appendix(doc: Doc, m: ReportModel) {
     h2(doc, 'Passed checks');
     for (const p of m.passed) {
       ensure(doc, 14);
-      doc.fillColor(C.pass).font('Helvetica-Bold').fontSize(9).text('PASS  ', M, doc.y, { continued: true }).fillColor(C.body).font('Helvetica').text(`${p.title}  (${p.systemLabel}, A.${p.iso[0]})`);
+      doc.fillColor(C.pass).font('Helvetica-Bold').fontSize(9).text('PASS  ', M, doc.y, { continued: true }).fillColor(C.body).font('Helvetica').text(`${p.title}  (${systemDisplayName(p.systemLabel, p.systemEnvironment)}, A.${p.iso[0]})`);
     }
   }
   if (m.branding.disclaimer) {

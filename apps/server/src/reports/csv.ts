@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, DOMAIN_LABELS, EVIDENCE_LABELS, ISO_BY_ID, PROVIDER_LABELS, VERDICT_LABELS, type ResultStatus } from '@qs/shared';
+import { CHECKS_BY_ID, DOMAIN_LABELS, EVIDENCE_LABELS, ISO_BY_ID, PROVIDER_LABELS, systemDisplayName, VERDICT_LABELS, type ResultStatus } from '@qs/shared';
 import type { ReportItem, ReportModel } from './model.js';
 
 /** Quote a CSV cell and neutralise spreadsheet formula injection. */
@@ -22,13 +22,13 @@ export function statusText(status: ResultStatus, triage: ReportItem['triage']): 
 
 export function findingsCsv(m: ReportModel): string {
   const header = [
-    'Status', 'Severity', 'ISO 27001 primary control', 'ISO 27001 controls', 'Check', 'Platform', 'System', 'Identity', 'System key', 'Domain',
+    'Status', 'Severity', 'ISO 27001 primary control', 'ISO 27001 controls', 'Check', 'Platform', 'System', 'Environment', 'Identity', 'System key', 'Domain',
     'Result', 'Affected resources', 'Resource URLs', 'Remediation', 'Effort', 'Triage', 'Triage note', 'CIS', 'NIS2', 'Check ID',
   ];
   const all = [...m.findings, ...m.passed, ...m.notAssessed];
   const lines = all.map((i) =>
     row([
-      statusText(i.status, i.triage), i.severity, i.iso[0], i.iso.join(' '), i.title, PROVIDER_LABELS[i.provider], i.systemLabel, i.systemIdentity ?? '', i.systemKey,
+      statusText(i.status, i.triage), i.severity, i.iso[0], i.iso.join(' '), i.title, PROVIDER_LABELS[i.provider], i.systemLabel, i.systemEnvironment ?? '', i.systemIdentity ?? '', i.systemKey,
       DOMAIN_LABELS[i.domain as keyof typeof DOMAIN_LABELS] ?? i.domain, i.summary,
       i.resources.map((r) => [r.name ?? r.id, r.detail].filter(Boolean).join(' - ')).join('; '),
       i.resources.map((r) => r.url).filter(Boolean).join(' '),
@@ -56,9 +56,9 @@ export function controlsCsv(m: ReportModel): string {
     const statuses = [...new Set(byCheck.get(checkId) ?? [])].join(', ') || 'not assessed';
     return `${CHECKS_BY_ID[checkId]?.title ?? checkId} [${checkId}]${primary ? '' : ' (secondary)'}: ${statuses}`;
   };
-  const labelOf = new Map(m.systems.map((s) => [s.id, s.label]));
+  const labelOf = new Map(m.systems.map((s) => [s.id, systemDisplayName(s.label, s.environment)]));
   const itemOf = new Map(all.map((i) => [`${i.systemId}|${i.checkId}`, i]));
-  /** "AWS production: fail; AWS sandbox: pass": the worst result per system that fed the control. */
+  /** "AWS production: fail; AWS (acceptance): pass": the worst result per system (with its environment) that fed the control. */
   const perSystem = (checks: ReportModel['summary']['controls'][number]['checks']) => {
     const worst = new Map<string, { rank: number; text: string }>();
     for (const x of checks) {

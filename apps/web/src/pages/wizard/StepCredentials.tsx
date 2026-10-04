@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { BookOpen, CheckCircle2, ChevronDown, ExternalLink, KeyRound, Link2, Lock, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { ProviderIcon } from '../../components/ProviderIcon';
+import { EnvironmentChip } from '../../components/SystemBadge';
 import { AsyncButton, useAction, useToast } from '../../components/feedback';
 import { Alert, Button, Card, CopyButton, Field, Input } from '../../components/ui';
 import { del, patch, post, put } from '../../lib/api';
@@ -247,7 +248,10 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
         <ProviderIcon provider={s.provider} className="size-8" decorative />
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold text-slate-900">{s.label}</div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[15px] font-semibold text-slate-900">{s.label}</span>
+            <EnvironmentChip environment={s.environment} />
+          </div>
           <div className="text-xs text-slate-500">
             {PROVIDER_LABELS[s.provider]} · {authModes(s.provider).find((m) => m.id === mode)?.label}
           </div>

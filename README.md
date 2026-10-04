@@ -97,6 +97,8 @@ Every check for the platforms in scope runs; there is no criteria step. When a f
 
 Rescan later with one click: scope and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
 
+A scan can include several environments of the same platform, for example a production and an acceptance AWS account, or the production and acceptance subscriptions of one Azure tenant (each added as its own Azure system scoped to those subscriptions). Tag each system with a free-text **environment** (production, acceptance, uat or anything else; earlier names are suggested). The report groups the systems per environment with a score each, filters findings by environment, and the PDF and CSV exports show it too. Triage and comparisons with earlier scans stay per system: the same account, tenant scope or organisation cannot be added twice to one scan.
+
 ## What it checks
 
 | Platform | Checks | Examples |
@@ -260,7 +262,7 @@ Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
 ## Demo mode
 
 With demo mode turned on (Settings > Demo) the app adds simulated systems to the wizard and, on startup, seeds the fictional organisation **Noordkust Logistics NV**. It uses only reserved example domains and documentation account IDs. The seed contains:
-- two completed scans with an improving trend;
+- two completed scans with an improving trend, covering Microsoft 365, Azure, GitHub and two AWS environments (production and a somewhat weaker acceptance account);
 - triaged findings;
 - a draft scan ready to run.
 
@@ -357,6 +359,7 @@ The end-to-end suite starts the app in demo mode and covers:
 
 - **From versions before need-to-know sharing:** the former "access to all organisations" option no longer exists. Users who relied on it only see organisations they own or that are shared with them. To find them, look in the audit log for `user.update` or `user.create` entries with `allCustomers: true`, then share the relevant organisations with them.
 - **Triage** decisions made before per-system triage keep applying to every system of the organisation. New decisions apply to one system.
+- **Azure systems scoped to subscriptions** are now identified by tenant and subscriptions instead of by tenant only, so production and acceptance subscriptions in one tenant are separate systems. Triage stored under the tenant key keeps applying to every Azure system in that tenant; a new decision applies to the exact subscription scope and takes precedence. Reports of finished scans keep the triage they were issued with. Comparing such a scan with one from before the upgrade works as before, since both are identified the same way now. A scan that contains the same account, tenant scope or organisation twice can no longer be started; remove the duplicate or scope each copy to its own subscriptions.
 - **Configuration in Settings:** sign-in, scanner identities, timeouts, retention and demo mode moved from environment variables to Settings. The old variables keep working as fallbacks; see [Configuration](#configuration) to import them.
 - **Risk profiles and evaluation criteria** are gone: every check runs, scored by severity only. Organisation context saved by earlier versions stays in the database but is no longer used, and reports of earlier scans still list the checks that were excluded then.
 - Database migrations run automatically at startup.
