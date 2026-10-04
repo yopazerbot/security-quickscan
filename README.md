@@ -7,15 +7,17 @@
 
 Security QuickScan is a self-hostable web application for internal IT and security teams, MSPs and consultants, and auditors who need a fast, repeatable and well-documented view of an organisation's cloud security posture. It is a pure best-practice and compliance scan, not a risk assessment, and asks for as little input as possible: name the organisation, choose the systems in scope, connect with read-only access, watch every check run live, and share a branded PDF.
 
-Run it on your laptop with one Docker command (no login, nothing leaves your machine), or host it for a team with Microsoft Entra ID single sign-on.
+Run it on your laptop with one Docker command (no login, nothing leaves your machine), or host it for a team, with email and password or Microsoft Entra ID single sign-on, configured in the app.
 
 **[Watch the 15-second product video](docs/video/quickscan-product-video.mp4)** (MP4, 1080p). The video is generated from code; see [docs/video/source](docs/video/source).
 
 ## Highlights
 
 - **84 automated, read-only checks** across Microsoft 365 / Entra ID (23), Azure (13), AWS (28) and GitHub (20). See the [check catalogue](docs/CHECKS.md).
-- **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control, and results roll up into a per-control verdict (effective, no issues found with limited evidence, partially effective, not effective or not assessed) with an evidence strength, and every finding links back to the system and console page it came from. CIS and NIS2 references are included as secondary mappings.
+- **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control. Results roll up into a per-control verdict (effective, no issues found with limited evidence, partially effective, not effective or not assessed) with an evidence strength, and controls no check covers are listed. CIS and NIS2 references are included as secondary mappings.
+- **Every finding linked to its system**, with the platform icon, the account, tenant or organisation, and links to the console page of each affected resource.
 - **Best practice, not risk based.** An organisation is just a name. Every scan runs every check for the platforms in scope, with no questionnaire, criteria selection or weighting; findings that do not apply are marked not applicable afterwards.
+- **Several environments per platform.** Scan production, acceptance, test or any other environment of the same platform side by side; the report scores and filters per environment.
 - **Guided, least-privilege access.** Step-by-step instructions per platform, including a ready-made AWS CloudFormation role with external ID and a Microsoft admin-consent flow, so no long-lived secrets need to be shared. A connection test checks access before scanning.
 - **You choose how long credentials are kept** per scan: deleted right after the scan, kept for N days, or kept until you delete them. Secrets are always envelope-encrypted (AES-256-GCM) and never shown again.
 - **Live scan progress** with per-system lanes, a live score and an ETA.
@@ -25,8 +27,26 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
   - CSV exports of findings and of the Annex A control assessment.
 - **Triage that sticks.** Mark a finding on a specific system as risk accepted or as not applicable / false positive with a note; the decision carries over to later scans of that system and is reflected in their score. Finished reports never change afterwards.
 - **Portable history.** Export one organisation or all of them to an encrypted file and import it into a new installation: every finished scan, result, system, environment and triage decision comes along, so new scans keep comparing with the old ones.
+- **Sign-in your way** (hosted mode): email and password, Microsoft Entra ID single sign-on, or both, switched on and configured by an administrator in Settings. A one-time setup link creates the first administrator; environment variables only cover infrastructure.
 - **Private by default** (hosted mode): each user sees only the organisations they own; the owner shares an organisation with specific colleagues as view or edit, on a need-to-know basis. Admin, analyst and viewer roles and an append-only audit log.
 - **Demo mode** with a realistic fictional organisation, for trying the tool or giving others a tour, plus an optional PIN login for demo visitors.
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [Quick start: run it locally with Docker](#quick-start-run-it-locally-with-docker)
+- [How a scan works](#how-a-scan-works)
+- [What it checks](#what-it-checks)
+- [The ISO 27001 approach](#the-iso-27001-approach)
+- [Access methods and required permissions](#access-methods-and-required-permissions)
+- [Hosted setup (team use)](#hosted-setup-team-use)
+- [Export, import and moving to a new deployment](#export-import-and-moving-to-a-new-deployment)
+- [Security model](#security-model)
+- [Demo mode](#demo-mode)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Limitations](#limitations)
+- [Upgrading](#upgrading)
 
 ## Screenshots
 
@@ -35,6 +55,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
 | ![Dashboard](docs/screenshots/dashboard.png) **Dashboard** | ![Organisation](docs/screenshots/customer.png) **Organisation history and trend** |
 | ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** | ![Progress](docs/screenshots/progress.png) **Live scan progress** |
 | ![Finding](docs/screenshots/finding.png) **Findings with evidence and remediation** | ![PDF](docs/screenshots/pdf-report.png) **Branded PDF report** |
+| ![Report](docs/screenshots/report.png) **Report per system and environment** | ![Export](docs/screenshots/export.png) **Encrypted export and import** |
 
 All screenshots show the built-in fictional demo organisation.
 
@@ -61,6 +82,8 @@ To explore with the fictional demo organisation and simulated systems:
 ```bash
 DEMO_MODE=true docker compose up -d --build
 ```
+
+Demo mode can also be switched on or off later under **Settings > Demo**.
 
 Useful commands:
 
@@ -96,7 +119,7 @@ Create the organisation once: it only needs a name. Then a scan takes three step
 
 Every check for the platforms in scope runs; there is no criteria step. When a finding does not apply to the organisation, mark it as **Not applicable / false positive** in the report's triage: it is left out of the score of every scan of that system that finishes from then on.
 
-Rescan later with one click: scope and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
+Rescan later with one click: scope, environments and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
 
 A scan can include several environments of the same platform, for example a production and an acceptance AWS account, or the production and acceptance subscriptions of one Azure tenant (each added as its own Azure system scoped to those subscriptions). Tag each system with a free-text **environment** (production, acceptance, uat or anything else; earlier names are suggested). The report groups the systems per environment with a score each, filters findings by environment, and the PDF and CSV exports show it too. Triage and comparisons with earlier scans stay per system: the same account, tenant scope or organisation cannot be added twice to one scan.
 
@@ -149,8 +172,6 @@ All access is read-only. The wizard shows these steps in context, with copy butt
 | GitHub | Fine-grained personal access token with read-only permissions, created by an organisation owner | Classic token |
 
 Some Microsoft checks need Entra ID P1/P2 licences; without them they are reported as not applicable rather than failed.
-
-**Upgrading from an earlier version:** the AWS role now needs 46 read actions (previously 24), for checks such as administrators through groups and roles, S3 ACLs, public snapshots, VPC flow logs, AWS Backup and Inspector. Update the CloudFormation stack with the template from the wizard. Until then, the checks that need the new actions report "could not be evaluated" rather than failing.
 
 ## Hosted setup (team use)
 
@@ -295,7 +316,7 @@ node apps/server/dist/cli.js import backup.qsx --as admin@example.com
   - secrets, cookies and OAuth codes redacted from logs;
   - CSV formula-injection protection and PNG/JPEG-only logo upload.
 - **Microsoft tenant links:** a Microsoft tenant can be linked to only one organisation, and only after Microsoft confirms that the admin consent was granted through that organisation's consent link. Links survive deletion of the organisation until an admin releases them under Settings.
-- **Audit:** an append-only audit log of logins, break-glass and demo access, sharing and ownership changes, credential storage, use and purge, scans, report views and exports, and admin changes. A database trigger blocks updates and deletes; the only way to remove entries is the retention job (Settings > Sessions and retention).
+- **Audit:** an append-only audit log of sign-ins, password changes and resets, break-glass and demo access, sharing and ownership changes, credential storage, use and purge, scans, report views and downloads, exports and imports, settings changes and other admin changes. A database trigger blocks updates and deletes; the only way to remove entries is the retention job (Settings > Sessions and retention).
 - **Supply chain:** lockfile, Dependabot, and CI with typecheck, unit and integration tests, end-to-end tests, `npm audit` and gitleaks, plus CodeQL code scanning.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
@@ -320,13 +341,14 @@ For hosted demos, an administrator can enable a **demo PIN login** in the same p
 ```mermaid
 flowchart TB
   SPA["Browser<br/>React single-page app"]
-  IDP["Microsoft Entra ID<br/>single sign-on (OIDC)"]
+  IDP["Microsoft Entra ID<br/>optional single sign-on (OIDC)"]
   subgraph Container["Docker container (Node.js)"]
     direction LR
     API["Fastify API<br/>sessions, CSRF, roles, audit log,<br/>PDF and CSV reports"]
     WRK["Scan worker<br/>84 read-only checks,<br/>up to 3 scans in parallel"]
   end
   DB[("PostgreSQL<br/>data, sessions, job queue,<br/>encrypted secrets, uploads")]
+  FILE["Encrypted export<br/>(.qsx file)"]
   subgraph Scanned["Scanned environments (read-only access)"]
     direction LR
     GRAPH["Microsoft Graph<br/>M365 and Entra ID"]
@@ -337,6 +359,7 @@ flowchart TB
   SPA -- "HTTPS, session cookie,<br/>live progress (SSE)" --> API
   SPA -. "sign-in" .-> IDP
   API --> DB
+  API -. "export / import" .-> FILE
   WRK -- "claims queued scans" --> DB
   WRK --> Scanned
 ```
@@ -353,7 +376,7 @@ infra            AWS CloudFormation role and scanner policy
 ```
 
 - One Docker image. By default the API, the built web app and the scan worker run in one process; set `MODE=api` and `MODE=worker` to split them.
-- Postgres is the only state: application data, sessions, the job queue (`FOR UPDATE SKIP LOCKED`), encrypted secrets and uploads.
+- Postgres is the only state: application data, sessions, the job queue (`FOR UPDATE SKIP LOCKED`), encrypted secrets and uploads. The complete scan history can be exported to and imported from an encrypted file, so a deployment can be rebuilt from scratch.
 - Each stored secret is encrypted (AES-256-GCM) with its own key, which is wrapped by the master key from `MASTER_KEY` (or a generated key file in local mode). The database alone cannot decrypt anything.
 - Scan progress streams to the browser with Server-Sent Events.
 
@@ -377,10 +400,11 @@ DATABASE_URL=postgres://localhost/quickscan_e2e scripts/e2e-local.sh   # Playwri
 ```
 
 The end-to-end suite starts the app in demo mode and covers:
-- the seeded organisation and its reports;
-- running a scan to completion;
-- PDF and CSV downloads, and triage;
-- a new organisation through the full wizard;
+- the seeded organisation and its reports, including the environment filter and grouping;
+- running a scan to completion, PDF and CSV downloads, and triage;
+- a new organisation through the three-step wizard;
+- sortable and paged admin tables and the audit log;
+- encrypted export and import, including a wrong passphrase and a merge preview;
 - demo reset, demo PIN login and sign out.
 
 ### Adding a check
@@ -398,6 +422,7 @@ The end-to-end suite starts the app in demo mode and covers:
 
 ## Upgrading
 
+- **AWS role permissions:** the role now needs 46 read actions (previously 24), for checks such as administrators through groups and roles, S3 ACLs, public snapshots, VPC flow logs, AWS Backup and Inspector. Update the CloudFormation stack with the template from the wizard. Until then, the checks that need the new actions report "could not be evaluated" rather than failing.
 - **From versions before need-to-know sharing:** the former "access to all organisations" option no longer exists. Users who relied on it only see organisations they own or that are shared with them. To find them, look in the audit log for `user.update` or `user.create` entries with `allCustomers: true`, then share the relevant organisations with them.
 - **Triage** decisions made before per-system triage keep applying to every system of the organisation. New decisions apply to one system.
 - **Azure systems scoped to subscriptions** are now identified by tenant and subscriptions instead of by tenant only, so production and acceptance subscriptions in one tenant are separate systems. Triage stored under the tenant key keeps applying to every Azure system in that tenant; a new decision applies to the exact subscription scope and takes precedence. Reports of finished scans keep the triage they were issued with. Comparing such a scan with one from before the upgrade works as before, since both are identified the same way now. A scan that contains the same account, tenant scope or organisation twice can no longer be started; remove the duplicate or scope each copy to its own subscriptions.
