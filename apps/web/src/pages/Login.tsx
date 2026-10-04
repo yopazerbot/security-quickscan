@@ -179,7 +179,7 @@ export function Login() {
           <div className="max-w-md">
             <p className="text-4xl font-semibold leading-tight tracking-tight text-white">Cloud security posture, mapped to ISO 27001.</p>
             <p className="mt-4 text-base leading-relaxed text-slate-300">
-              Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Risk-based criteria, live progress and shareable reports.
+              Read-only quick scans of Microsoft 365, Entra ID, Azure, AWS and GitHub. Best-practice checks mapped to ISO 27001, live progress and shareable reports.
             </p>
           </div>
           <p className="text-xs text-slate-500">Authorised use only. All activity is logged.</p>
