@@ -24,6 +24,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
   - a branded [PDF report](docs/sample-report.pdf);
   - CSV exports of findings and of the Annex A control assessment.
 - **Triage that sticks.** Mark a finding on a specific system as risk accepted or as not applicable / false positive with a note; the decision carries over to later scans of that system and is reflected in their score. Finished reports never change afterwards.
+- **Portable history.** Export one organisation or all of them to an encrypted file and import it into a new installation: every finished scan, result, system, environment and triage decision comes along, so new scans keep comparing with the old ones.
 - **Private by default** (hosted mode): each user sees only the organisations they own; the owner shares an organisation with specific colleagues as view or edit, on a need-to-know basis. Admin, analyst and viewer roles and an append-only audit log.
 - **Demo mode** with a realistic fictional organisation, for trying the tool or giving others a tour, plus an optional PIN login for demo visitors.
 
@@ -239,12 +240,52 @@ Rotate the master key without downtime:
 2. While the app is running, run `node apps/server/dist/cli.js rotate-master-key` against the same database to re-encrypt stored credentials with the new key.
 3. Remove `MASTER_KEY_PREVIOUS` and deploy again.
 
+## Export, import and moving to a new deployment
+
+The database is the working store, but you do not have to depend on it: the complete history can be exported and imported again, into the same or another installation.
+
+**Export.** On an organisation page choose **Export**, or **Export all** on the organisations list for everything you can see (administrators: every organisation; demo organisations are never included). The file (`quickscan-<organisation>-<date>.qsx`) holds:
+
+- every finished scan (completed, failed or cancelled) with its score, grade, frozen summary and all check results with their evidence and resources;
+- the scanned systems with their non-secret configuration, environment and connection test details;
+- triage decisions per check and system, and checks that older scans excluded;
+- for organisations you manage: the owner and the people it is shared with, by email address.
+
+It never contains stored credentials or their hints, application settings and their secrets, accounts, passwords, sessions or the audit log. Drafts and running scans are left out.
+
+**Passphrase.** Every export is encrypted with a passphrase you choose (at least 12 characters, not a common password) or let the app generate. The key is derived with Argon2id and the data is encrypted and authenticated with AES-256-GCM, so a changed file is refused just like a wrong passphrase. The passphrase is never stored: keep it in a password manager, because without it the file cannot be opened. The format is described in [docs/EXPORT-FORMAT.md](docs/EXPORT-FORMAT.md).
+
+**Import.** Administrators and analysts choose **Import** on the organisations list, pick the file and enter the passphrase. A preview shows per organisation whether it is merged or created, how many scans are new and how many are already present, before anything changes. Importing merges:
+
+- an organisation is matched by its original identity when you may edit it; otherwise a new one is created, owned by you;
+- scans already present are skipped, so importing the same file twice changes nothing, also after exporting an imported organisation again;
+- the newer triage decision per check and system wins;
+- imported scans keep their original dates and are kept until deleted by hand. They are marked **Imported** in the scan list and the report, and new scans compare with them as with any earlier scan;
+- only administrators restore the original owner and shares, and only for accounts that exist in the new installation (viewer accounts stay read-only).
+
+Nothing is deleted automatically: the history stays in the database until you delete it.
+
+**Moving to a new deployment.** Export all organisations before you take the old installation down, deploy the new one, create the administrator account and import the file. Then note:
+
+- stored credentials are not carried over: store them again, or use the secret-less access methods;
+- Microsoft systems that used admin consent need consent again in the new installation before they can be scanned, because the link between a tenant and an organisation is not imported;
+- AWS role systems get a new external ID on import: update the role's trust policy (or deploy the CloudFormation template again) before scanning them.
+
+For scripted backups the same export and import are available on the command line, acting as an existing administrator. The passphrase is read from `QS_EXPORT_PASSPHRASE`, or from the terminal:
+
+```bash
+node apps/server/dist/cli.js export --as admin@example.com --out backup.qsx
+node apps/server/dist/cli.js import backup.qsx --as admin@example.com --dry-run
+node apps/server/dist/cli.js import backup.qsx --as admin@example.com
+```
+
 ## Security model
 
 - **Authentication (hosted):** email and password (Argon2id, common-password list, temporary passwords that must be changed, lockout per account and per address) and/or Microsoft Entra ID OpenID Connect with authorization code, PKCE, state and nonce, single tenant, tenant ID validated. Administrators choose the methods in Settings, guarded against locking everyone out; break-glass from the environment stays available for recovery. Tokens stay on the server; the browser only holds a random session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` prefix) whose hash is stored in Postgres. Sessions expire after an idle and an absolute timeout (default 30 minutes and 8 hours), rotate at login and password change, and sensitive settings need a sign-in in the last 15 minutes.
 - **Access control (need-to-know):** invite-only users with roles admin, analyst and viewer. Every organisation has an owner, who decides who else may view or edit it (when an admin deletes, deactivates or demotes an owner, they must pick a new owner in the same step); other users get 404, not 403, so they cannot even tell it exists. Shares go to existing accounts by email (no user directory is exposed), viewer accounts always stay read-only, and admins can see and manage all organisations. Access is checked on every request and re-checked on live progress streams.
 - **CSRF:** SameSite=Strict cookies, a per-session CSRF token header, and Origin / `Sec-Fetch-Site` checks on every state-changing request.
 - **Stored credentials and secret settings:** envelope encryption: a fresh AES-256-GCM data key per secret, wrapped by the master key, with authenticated data binding each ciphertext to its scan and system, or to its setting. Secrets are write-only in the API, decrypted only in memory during a connection test or scan, and purged according to the retention you choose.
+- **Exports:** always encrypted with a passphrase (Argon2id key derivation, AES-256-GCM with the file header authenticated), never containing credentials or settings secrets. Exporting needs view access to the organisation, importing needs the analyst or admin role, and both are rate limited and audited without the passphrase. Imports are validated and size limited before anything is written, and never create Microsoft tenant links.
 - **Least privilege:** read-only permissions only. The preferred methods (AWS role with external ID, Microsoft admin consent) avoid exchanging secrets at all.
 - **Hardening:**
   - strict Content Security Policy (no inline scripts), HSTS, `frame-ancestors 'none'`, no-referrer, Permissions-Policy;
@@ -362,6 +403,7 @@ The end-to-end suite starts the app in demo mode and covers:
 - **Azure systems scoped to subscriptions** are now identified by tenant and subscriptions instead of by tenant only, so production and acceptance subscriptions in one tenant are separate systems. Triage stored under the tenant key keeps applying to every Azure system in that tenant; a new decision applies to the exact subscription scope and takes precedence. Reports of finished scans keep the triage they were issued with. Comparing such a scan with one from before the upgrade works as before, since both are identified the same way now. A scan that contains the same account, tenant scope or organisation twice can no longer be started; remove the duplicate or scope each copy to its own subscriptions.
 - **Configuration in Settings:** sign-in, scanner identities, timeouts, retention and demo mode moved from environment variables to Settings. The old variables keep working as fallbacks; see [Configuration](#configuration) to import them.
 - **Risk profiles and evaluation criteria** are gone: every check runs, scored by severity only. Organisation context saved by earlier versions stays in the database but is no longer used, and reports of earlier scans still list the checks that were excluded then.
+- **Organisation export:** the former JSON "Export data" download is replaced by the encrypted export described in [Export, import and moving to a new deployment](#export-import-and-moving-to-a-new-deployment). Use it before moving to a new deployment.
 - Database migrations run automatically at startup.
 
 ## Contributing

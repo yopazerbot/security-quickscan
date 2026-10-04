@@ -122,6 +122,70 @@ test('new organisation through the full wizard with demo systems', async ({ page
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
 });
 
+test('export an organisation and import it into a new one with its history', async ({ page }) => {
+  await page.goto('/');
+  await openDemoOrganisation(page);
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: `Export ${DEMO}` })).toBeVisible();
+  // The passphrase is required and checked before anything is sent.
+  await dialog.getByRole('textbox', { name: 'Passphrase', exact: true }).fill('too short');
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(dialog.getByText('Use at least 12 characters.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Generate' }).click();
+  const passphrase = (await dialog.locator('code').innerText()).trim();
+  expect(passphrase).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){4}$/);
+  const dl = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click();
+  const download = await dl;
+  expect(download.suggestedFilename()).toMatch(/^quickscan-noordkust-logistics-nv-\d{4}-\d{2}-\d{2}\.qsx$/);
+  const file = test.info().outputPath('export.qsx');
+  await download.saveAs(file);
+  await expect(dialog).toBeHidden();
+
+  // Import into a new organisation: demo organisations are never merged into.
+  await page.goto('/organisations');
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Export file').setInputFiles(file);
+  await dialog.getByRole('textbox', { name: 'Passphrase', exact: true }).fill(`${passphrase}x`);
+  await dialog.getByRole('button', { name: 'Preview' }).click();
+  await expect(dialog.getByText('The passphrase is wrong or the file was modified')).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Passphrase', exact: true }).fill(passphrase);
+  await dialog.getByRole('button', { name: 'Preview' }).click();
+  await expect(dialog.getByText('New organisation', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Import', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Import finished' })).toBeVisible();
+  await dialog.getByRole('link', { name: DEMO }).click();
+  await expect(page.getByRole('heading', { name: DEMO })).toBeVisible();
+  const copyUrl = page.url();
+  // The history came along: the trend, the scans with their import mark, and reports that compare.
+  await expect(page.getByRole('heading', { name: 'Score trend' })).toBeVisible();
+  expect(await page.getByTitle(/^Imported on/).count()).toBeGreaterThanOrEqual(2);
+  await page.getByText('Follow-up quick scan').click();
+  await expect(page.getByRole('heading', { name: 'Cloud Security Quick Scan Report' })).toBeVisible();
+  await expect(page.getByTitle(/^Imported on/)).toBeVisible();
+  await expect(page.getByText(/Since the previous scan/)).toBeVisible();
+
+  // Importing the same file again finds everything already present.
+  await page.goto('/organisations');
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Export file').setInputFiles(file);
+  await dialog.getByRole('textbox', { name: 'Passphrase', exact: true }).fill(passphrase);
+  await dialog.getByRole('button', { name: 'Preview' }).click();
+  await expect(dialog.getByText(`Merge into ${DEMO}`)).toBeVisible();
+  await expect(dialog.getByText(/already here/)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+
+  // Remove the copy again, so the demo organisation is the only one with this name.
+  await page.goto(copyUrl);
+  await page.getByRole('button', { name: 'Delete organisation and all data' }).click();
+  await page.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(page.getByRole('heading', { name: 'Organisations' })).toBeVisible();
+});
+
 test('reset demo data restores the original demo organisation', async ({ page }) => {
   await page.goto('/');
   await page.goto('/admin/settings?tab=demo');

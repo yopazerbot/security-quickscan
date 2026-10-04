@@ -98,9 +98,11 @@ export const customers = pgTable('customers', {
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   /** Need-to-know: only the owner, users it is shared with and admins can see an organisation. */
   ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  /** Original id when the organisation was created by an import, so a later import of the same export merges into it. */
+  originId: uuid('origin_id'),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
-}, (t) => [index('customers_owner_idx').on(t.ownerId)]);
+}, (t) => [index('customers_owner_idx').on(t.ownerId), index('customers_origin_idx').on(t.originId)]);
 
 /** Organisation shares: who else may view or edit an organisation, granted by its owner or an admin. */
 export const customerAssignments = pgTable(
@@ -144,8 +146,14 @@ export const scans = pgTable(
     queuedAt: ts('queued_at'),
     startedAt: ts('started_at'),
     finishedAt: ts('finished_at'),
+    /** Original id of an imported scan (see portability/); importing the same scan again is skipped by it. */
+    originId: uuid('origin_id'),
+    importedAt: ts('imported_at'),
+    importedBy: uuid('imported_by').references(() => users.id, { onDelete: 'set null' }),
+    /** App version that wrote the export an imported scan came from. */
+    importedFromVersion: text('imported_from_version'),
   },
-  (t) => [index('scans_customer_idx').on(t.customerId), index('scans_status_idx').on(t.status)],
+  (t) => [index('scans_customer_idx').on(t.customerId), index('scans_status_idx').on(t.status), index('scans_customer_origin_idx').on(t.customerId, t.originId)],
 );
 
 export const scanSystems = pgTable(

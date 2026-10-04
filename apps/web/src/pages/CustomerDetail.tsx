@@ -9,7 +9,8 @@ import { AsyncButton, useAction, useToast } from '../components/feedback';
 import { DataTable } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { EnvironmentChip, SystemBadge } from '../components/SystemBadge';
-import { AnchorButton, Badge, Button, Card, DemoBadge, EmptyState, ErrorState, Field, GradeBadge, Input, LinkButton, Modal, PageHeader, PageLoader, Select, Spinner } from '../components/ui';
+import { ExportDialog } from '../components/ExportDialog';
+import { Badge, Button, Card, DemoBadge, EmptyState, ErrorState, Field, GradeBadge, ImportedBadge, Input, LinkButton, Modal, PageHeader, PageLoader, Select, Spinner } from '../components/ui';
 import { del, get, patch, post, put } from '../lib/api';
 import { accessCan, useAuth, type CustomerAccess } from '../lib/auth';
 import { fmtDate } from '../lib/format';
@@ -33,6 +34,7 @@ export function CustomerDetail() {
   const qc = useQueryClient();
   const { me } = useAuth();
   const toast = useToast();
+  const [exporting, setExporting] = useState(false);
   const q = useQuery({ queryKey: ['customer', customerId], queryFn: () => get<CustomerData>(`/api/customers/${customerId}`) });
   useDocumentTitle(q.data?.name ?? 'Organisation');
   const newScan = useMutation({
@@ -82,9 +84,9 @@ export function CustomerDetail() {
         }
         actions={
           <>
-            <AnchorButton href={`/api/customers/${c.id}/export`} variant="ghost" icon={<Download className="size-4" aria-hidden />}>
-              Export data
-            </AnchorButton>
+            <Button variant="ghost" icon={<Download className="size-4" aria-hidden />} onClick={() => setExporting(true)}>
+              Export
+            </Button>
             {can.edit && (
               <LinkButton to={`/organisations/${c.id}/edit`} variant="secondary" icon={<Pencil className="size-4" aria-hidden />}>
                 Edit
@@ -98,6 +100,7 @@ export function CustomerDetail() {
           </>
         }
       />
+      {exporting && <ExportDialog organisation={{ id: c.id, name: c.name }} onClose={() => setExporting(false)} />}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           {trend.length > 0 && (
@@ -151,7 +154,7 @@ export function CustomerDetail() {
                   confirmLabel: 'Delete permanently',
                   body: (
                     <>
-                      This permanently deletes <strong>{c.name}</strong> with all scans, results, stored credentials and triage notes. This cannot be undone. Consider exporting the data first.
+                      This permanently deletes <strong>{c.name}</strong> with all scans, results, stored credentials and triage notes. This cannot be undone. Consider exporting it first.
                     </>
                   ),
                 }}
@@ -193,16 +196,20 @@ function ScanTable({ scans, customerId, canEdit }: { scans: ScanSummary[]; custo
           key: 'name',
           header: 'Name',
           sort: (s) => s.name.toLowerCase(),
-          render: (s) =>
-            linked(s) ? (
-              <Link to={scanLink(s)} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
-                {s.name}
-              </Link>
-            ) : (
-              <span className="font-medium text-slate-900" title="Only people with edit access can open a draft.">
-                {s.name}
-              </span>
-            ),
+          render: (s) => (
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {linked(s) ? (
+                <Link to={scanLink(s)} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
+                  {s.name}
+                </Link>
+              ) : (
+                <span className="font-medium text-slate-900" title="Only people with edit access can open a draft.">
+                  {s.name}
+                </span>
+              )}
+              {s.importedAt && <ImportedBadge importedAt={s.importedAt} version={s.importedFromVersion} />}
+            </span>
+          ),
         },
         { key: 'status', header: 'Status', sort: (s) => s.status, render: (s) => <ScanStatusBadge status={s.status} /> },
         {
@@ -454,6 +461,9 @@ interface ScanSummary {
   providers: string[];
   /** Environments of the scan's systems (distinct, may differ only in case). */
   environments?: string[];
+  /** Set for scans that came from an export file. */
+  importedAt?: string | null;
+  importedFromVersion?: string | null;
 }
 
 interface CustomerData {

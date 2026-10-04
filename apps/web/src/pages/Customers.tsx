@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Building2, Plus, Search, SearchX, X } from 'lucide-react';
+import { Building2, Download, Plus, Search, SearchX, Upload, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { DataTable } from '../components/data-table';
+import { ExportDialog } from '../components/ExportDialog';
+import { ImportDialog } from '../components/ImportDialog';
 import { Badge, Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, Input, LinkButton, PageHeader, PageLoader } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
@@ -66,11 +68,21 @@ export function Customers() {
   const { me } = useAuth();
   useDocumentTitle('Organisations');
   const [q, setQ] = useState('');
+  const [dialog, setDialog] = useState<'export' | 'import' | null>(null);
   const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: ['customers'], queryFn: () => get<any[]>('/api/customers') });
   if (isError) return <ErrorState error={error} onRetry={() => refetch()} />;
   if (isLoading) return <PageLoader />;
   const term = q.trim().toLowerCase();
   const rows = (data ?? []).filter((c) => c.name.toLowerCase().includes(term));
+  // Export and import move scan history between installations; the shared demo visitor account does neither.
+  const visitor = Boolean(me?.user.isDemo);
+  const canExportAll = !visitor && (data ?? []).some((c) => !c.isDemo);
+  const canImport = can.write && !visitor;
+  const importButton = canImport && (
+    <Button variant="secondary" icon={<Upload className="size-4" aria-hidden />} onClick={() => setDialog('import')}>
+      Import
+    </Button>
+  );
 
   return (
     <>
@@ -78,13 +90,23 @@ export function Customers() {
         title="Organisations"
         subtitle="Each organisation has its own systems, scan history and triage decisions."
         actions={
-          can.write && (
-            <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
-              New organisation
-            </LinkButton>
-          )
+          <div className="flex flex-wrap gap-2">
+            {canExportAll && (
+              <Button variant="ghost" icon={<Download className="size-4" aria-hidden />} onClick={() => setDialog('export')}>
+                Export all
+              </Button>
+            )}
+            {importButton}
+            {can.write && (
+              <LinkButton to="/organisations/new" icon={<Plus className="size-4" aria-hidden />}>
+                New organisation
+              </LinkButton>
+            )}
+          </div>
         }
       />
+      {dialog === 'export' && <ExportDialog onClose={() => setDialog(null)} />}
+      {dialog === 'import' && <ImportDialog onClose={() => setDialog(null)} />}
       {data && data.length === 0 ? (
         <Card>
           <EmptyState
@@ -99,7 +121,7 @@ export function Customers() {
             }
           >
             {can.write
-              ? 'All you need is a name. Every scan runs all best-practice checks for the systems you add. Only you and admins can see it until you share it.'
+              ? `All you need is a name. Every scan runs all best-practice checks for the systems you add. Only you and admins can see it until you share it.${canImport ? ' Moving from another installation? Import its export file.' : ''}`
               : 'Organisations appear here once someone shares them with you.'}
           </EmptyState>
         </Card>

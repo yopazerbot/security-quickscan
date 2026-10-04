@@ -20,7 +20,7 @@ import { DataTable, Pager, usePaged } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { ResourceList } from '../components/ResourceList';
 import { SystemBadge } from '../components/SystemBadge';
-import { Alert, AnchorButton, Button, Card, EmptyState, ErrorState, Input, PageHeader, PageLoader, Select, SeverityBadge, StatusBadge, Textarea } from '../components/ui';
+import { Alert, AnchorButton, Button, Card, EmptyState, ErrorState, ImportedBadge, Input, PageHeader, PageLoader, Select, SeverityBadge, StatusBadge, Textarea } from '../components/ui';
 import { del, get, post, put } from '../lib/api';
 import { accessCan } from '../lib/auth';
 import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX } from '../lib/format';
@@ -397,7 +397,12 @@ export function Report() {
       <PageHeader
         crumbs={<Link to={`/organisations/${m.customer.id}`} className="hover:text-slate-700">{m.customer.name}</Link>}
         title={REPORT_TITLE}
-        subtitle={`${m.scan.name} · ${m.scan.status === 'failed' ? 'failed' : m.scan.status === 'cancelled' ? 'cancelled' : 'completed'} ${fmtDateTime(m.scan.finishedAt)}`}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {`${m.scan.name} · ${m.scan.status === 'failed' ? 'failed' : m.scan.status === 'cancelled' ? 'cancelled' : 'completed'} ${fmtDateTime(m.scan.finishedAt)}`}
+            {m.scan.importedAt && <ImportedBadge importedAt={m.scan.importedAt} version={m.scan.importedFromVersion} />}
+          </span>
+        }
         actions={
           <div className="no-print flex flex-wrap gap-2">
             {/* The server answers with Content-Disposition: attachment, so these links download instead of navigating. */}

@@ -6,7 +6,7 @@ import { audit } from '../audit.js';
 import { takeAttempt } from '../auth/routes.js';
 import { accessibleCustomerIds, assertCustomerAccess, customerAccess, requireRole, requireUser } from '../auth/session.js';
 import { forbidden, HttpError, notFound, type AppCtx } from '../context.js';
-import { checkResults, customerAssignments, customers, findingTriage, scans, scanSystems, users } from '../db/schema.js';
+import { customerAssignments, customers, findingTriage, scans, scanSystems, users } from '../db/schema.js';
 import { refreshCustomerScores } from '../scoring.js';
 import { parse, uuidParam } from './helpers.js';
 
@@ -120,6 +120,8 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
         startedAt: scans.startedAt,
         finishedAt: scans.finishedAt,
         wizardStep: scans.wizardStep,
+        importedAt: scans.importedAt,
+        importedFromVersion: scans.importedFromVersion,
         // Written out with table names: drizzle renders bare column names inside sql``, which would compare scan_systems.id here.
         providers: sql<string[]>`coalesce((select array_agg(distinct ss.provider::text) from scan_systems ss where ss.scan_id = "scans"."id"), '{}'::text[])`,
         environments: sql<string[]>`coalesce((select array_agg(distinct ss.environment) from scan_systems ss where ss.scan_id = "scans"."id" and ss.environment is not null), '{}'::text[])`,
@@ -327,28 +329,5 @@ export function customerRoutes(app: FastifyInstance, ctx: AppCtx) {
     await audit(ctx, req, 'finding.triage', { type: 'customer', id }, { checkId, systemKey: key, status: body.status });
     await refreshCustomerScores(ctx, id);
     return { ok: true };
-  });
-
-  /** GDPR-style export of everything stored about an organisation (never includes secrets). */
-  app.get('/api/customers/:customerId/export', async (req, reply) => {
-    const id = uuidParam(req, 'customerId');
-    await assertCustomerAccess(ctx, req, id);
-    const c = (await db.select().from(customers).where(eq(customers.id, id)).limit(1))[0];
-    if (!c) throw notFound();
-    const s = await db.select().from(scans).where(eq(scans.customerId, id));
-    const ids = s.map((x) => x.id);
-    const systems = ids.length ? await db.select().from(scanSystems).where(inArray(scanSystems.scanId, ids)) : [];
-    const results = ids.length ? await db.select().from(checkResults).where(inArray(checkResults.scanId, ids)) : [];
-    const triage = await db.select().from(findingTriage).where(eq(findingTriage.customerId, id));
-    await audit(ctx, req, 'customer.export', { type: 'customer', id });
-    reply.header('Content-Disposition', `attachment; filename="organisation-export-${id}.json"`);
-    return {
-      exportedAt: new Date().toISOString(),
-      customer: c,
-      scans: s,
-      systems,
-      results,
-      triage,
-    };
   });
 }

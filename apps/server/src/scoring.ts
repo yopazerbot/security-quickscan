@@ -1,5 +1,5 @@
 import { CHECKS_BY_ID, computeScore, systemKey, type Provider, type ScoreInput, type ScoreSummary } from '@qs/shared';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import type { AppCtx } from './context.js';
 import { checkResults, findingTriage, scans, scanSystems } from './db/schema.js';
 import { triageLookup } from './triage.js';
@@ -35,7 +35,8 @@ export async function scoreScanDetailed(ctx: AppCtx, scanId: string) {
   if (!scan) throw new Error('scan not found');
   const final = isFinalStatus(scan.status);
   const [results, systems, triageRows] = await Promise.all([
-    ctx.db.select().from(checkResults).where(eq(checkResults.scanId, scanId)),
+    // In id order: the stored summary lists results the same way every time (and so does an imported copy).
+    ctx.db.select().from(checkResults).where(eq(checkResults.scanId, scanId)).orderBy(asc(checkResults.id)),
     ctx.db.select().from(scanSystems).where(eq(scanSystems.scanId, scanId)),
     ctx.db.select().from(findingTriage).where(eq(findingTriage.customerId, scan.customerId)),
   ]);

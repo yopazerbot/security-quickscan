@@ -84,6 +84,9 @@ export interface ReportModel {
     retentionDays: number | null;
     /** True when the score was stored when the scan finished and later triage does not change it. */
     frozen: boolean;
+    /** Set for a scan that came from an export file: when it was imported and the app version that wrote the file. */
+    importedAt: Date | null;
+    importedFromVersion: string | null;
   };
   customer: { id: string; name: string };
   branding: Branding;
@@ -184,7 +187,8 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
   const creds = systems.length
     ? await db.select({ id: credentials.systemId, expiresAt: credentials.expiresAt }).from(credentials).where(inArray(credentials.systemId, systems.map((s) => s.id)))
     : [];
-  const results = await db.select().from(checkResults).where(eq(checkResults.scanId, scanId));
+  // In id order, so the report (and an imported copy of the scan, which keeps that order) lists results the same way every time.
+  const results = await db.select().from(checkResults).where(eq(checkResults.scanId, scanId)).orderBy(asc(checkResults.id));
   const triage = await db.select().from(findingTriage).where(eq(findingTriage.customerId, scan.customerId));
   const criteria = await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, scanId));
   const lookup = triageLookup(triage);
@@ -222,7 +226,8 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
     const pr = await db
       .select({ systemId: checkResults.systemId, checkId: checkResults.checkId, status: checkResults.status })
       .from(checkResults)
-      .where(eq(checkResults.scanId, prev.id));
+      .where(eq(checkResults.scanId, prev.id))
+      .orderBy(asc(checkResults.id));
     for (const r of pr) {
       const k = prev.keys.get(r.systemId);
       if (k && shared.has(k) && failing(r.status)) prevFailing.add(triageKey(k, r.checkId));
@@ -307,6 +312,8 @@ export async function buildReport(ctx: AppCtx, scanId: string): Promise<ReportMo
       retentionMode: scan.retentionMode,
       retentionDays: scan.retentionMode === 'days' ? scan.retentionDays : null,
       frozen: Boolean(frozen),
+      importedAt: scan.importedAt,
+      importedFromVersion: scan.importedFromVersion,
     },
     customer: { id: customer.id, name: customer.name },
     branding: await getBranding(ctx),

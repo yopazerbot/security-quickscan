@@ -18,6 +18,7 @@ import type { Db } from './db/index.js';
 import { demoLoginRoutes } from './demo/login.js';
 import { adminRoutes } from './routes/admin.js';
 import { customerRoutes } from './routes/customers.js';
+import { portabilityRoutes } from './routes/portability.js';
 import { reportRoutes } from './routes/reports.js';
 import { scanRoutes } from './routes/scans.js';
 import { settingsRoutes } from './routes/settings.js';
@@ -57,6 +58,9 @@ export function loggerOptions(config: Config) {
         '*.currentPassword',
         '*.newPassword',
         '*.temporaryPassword',
+        // Export and import: the passphrase and the uploaded file.
+        '*.passphrase',
+        '*.file',
       ],
       censor: '[redacted]',
     },
@@ -197,6 +201,7 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
   customerRoutes(app, ctx);
   scanRoutes(app, ctx);
   reportRoutes(app, ctx);
+  portabilityRoutes(app, ctx);
   adminRoutes(app, ctx);
   tenantRoutes(app, ctx);
   demoLoginRoutes(app, ctx);

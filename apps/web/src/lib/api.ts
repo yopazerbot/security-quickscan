@@ -134,3 +134,42 @@ export function fileToBase64(file: File): Promise<string> {
     r.readAsDataURL(file);
   });
 }
+
+/**
+ * POST that answers with a file (e.g. an encrypted export): the browser saves it under the server's file name.
+ * Sensitive input such as a passphrase stays in the request body, never in a URL.
+ */
+export async function postForDownload(path: string, body: unknown): Promise<string> {
+  noteContact();
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { Accept: 'application/octet-stream, application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (res.status === 401 && csrfToken !== '') {
+      markExpired();
+      window.dispatchEvent(new Event('qs:reauth'));
+      throw new ApiError(401, SESSION_EXPIRED_MESSAGE);
+    }
+    throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, undefined, data && typeof data === 'object' ? data : undefined);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'download';
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked after the click has started the download.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return name;
+}

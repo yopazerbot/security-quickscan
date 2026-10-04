@@ -1,10 +1,10 @@
 import type { ResultStatus, Severity } from '@qs/shared';
 import clsx from 'clsx';
-import { AlertTriangle, Check, Copy, Loader2, RotateCw, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, FileInput, Loader2, RotateCw, X } from 'lucide-react';
 import { createContext, useContext, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '../lib/api';
-import { GRADE_HEX, SEVERITY_STYLE, STATUS_STYLE } from '../lib/format';
+import { fmtDate, GRADE_HEX, SEVERITY_STYLE, STATUS_STYLE } from '../lib/format';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
 
@@ -473,4 +473,16 @@ export function Stat({ label, value, tone, sub }: { label: string; value: ReactN
 
 export function DemoBadge() {
   return <Badge className="bg-amber-100 text-amber-800 ring-1 ring-amber-200">Demo</Badge>;
+}
+
+/** Marks a scan that came from an export file; the tooltip (and screen reader text) says when and from which version. */
+export function ImportedBadge({ importedAt, version }: { importedAt: string | Date; version?: string | null }) {
+  const text = `Imported on ${fmtDate(importedAt)}${version ? ` from an export made by version ${version}` : ''}`;
+  return (
+    <span title={text} className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200">
+      <FileInput className="size-3" aria-hidden />
+      Imported
+      <span className="sr-only">: {text}</span>
+    </span>
+  );
 }

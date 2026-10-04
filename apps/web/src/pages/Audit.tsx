@@ -80,6 +80,12 @@ function describe(r: AuditRow): string {
       return `Deleted the organisation ${d.name ?? org} with all its data.`;
     case 'customer.export':
       return `Exported the data of ${org}.`;
+    case 'data.export':
+      return d.scope === 'all'
+        ? `Exported all organisations (${d.organisations ?? 0} organisations, ${d.scans ?? 0} scans) to an encrypted file.`
+        : `Exported ${org} (${d.scans ?? 0} scans) to an encrypted file.`;
+    case 'data.import':
+      return `Imported ${d.scansAdded ?? 0} scans into ${d.organisations ?? 0} organisations (${d.newOrganisations ?? 0} new, ${d.scansSkipped ?? 0} scans already present).`;
     case 'customer.share':
       return `Shared ${org} with ${who}${d.permission ? ` (${d.permission})` : ''}.`;
     case 'customer.share_update':

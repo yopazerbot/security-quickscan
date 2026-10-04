@@ -25,6 +25,7 @@ import { resetDemo } from '../demo/seed.js';
 import { ownerCandidateProblem } from './customers.js';
 import { parse, uuidParam } from './helpers.js';
 import { getRuntime } from '../settings/runtime.js';
+import { APP_VERSION } from '../version.js';
 
 type Tx = Parameters<Parameters<AppCtx['db']['transaction']>[0]>[0];
 const ROLE_RANK: Record<Role, number> = { viewer: 0, consultant: 1, admin: 2 };
@@ -76,6 +77,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
       msClientId: rt.scanner.ms.clientId,
       consentRedirectUri: `${ctx.config.APP_URL}/consent/callback`,
       demo: rt.general.demoMode,
+      version: APP_VERSION,
     };
   });
 

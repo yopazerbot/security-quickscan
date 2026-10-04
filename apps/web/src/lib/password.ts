@@ -34,3 +34,10 @@ export function generatePassword(length = 20): string {
 
 /** Policy hint shown to every user (the configured minimum is only visible to admins). */
 export const PASSWORD_POLICY_HINT = `At least ${PASSWORD_MIN_LENGTH} characters and not a common password. A passphrase of a few words works well.`;
+
+const PASSPHRASE_CHARS = LOWER + DIGITS;
+
+/** A random export passphrase: five groups of five lower-case letters and digits (about 125 bits), easy to type. */
+export function generatePassphrase(): string {
+  return Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => pick(PASSPHRASE_CHARS)).join('')).join('-');
+}

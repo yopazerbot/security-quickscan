@@ -28,7 +28,7 @@ function fakeModel(over: Partial<ReportModel['summary']> = {}): ReportModel {
   } as ReportModel['summary'];
   return {
     generatedAt: new Date().toISOString(),
-    scan: { id: 'x', name: 'Scan', status: 'completed', startedAt: new Date(), finishedAt: new Date(), retentionMode: 'days', retentionDays: 7, frozen: true },
+    scan: { id: 'x', name: 'Scan', status: 'completed', startedAt: new Date(), finishedAt: new Date(), retentionMode: 'days', retentionDays: 7, frozen: true, importedAt: null, importedFromVersion: null },
     customer: { id: 'c', name: 'Acme' },
     branding: brandingSchema.parse({ consultantName: 'A very long consultant name that keeps going', companyName: 'An equally long consultancy company name BV', contactEmail: 'hello@example.com' }),
     systems: [],
