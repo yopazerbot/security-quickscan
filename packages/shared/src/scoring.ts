@@ -1,4 +1,4 @@
-import { ISO_BY_ID, isoSort, type ControlVerdict } from './iso.js';
+import { ISO_ASSESSABLE, ISO_BY_ID, isoSort, type ControlVerdict, type EvidenceStrength } from './iso.js';
 import {
   DOMAIN_LABELS,
   DOMAINS,
@@ -15,14 +15,18 @@ export interface ScoreInput {
   severity: Severity;
   /** Triage carried across scans for the same organisation. */
   triage?: 'open' | 'accepted' | 'false_positive' | null;
+  /** System the result belongs to, so control verdicts can say which system caused them. */
+  systemId?: string;
 }
 
 export interface ControlAssessment {
   id: string;
   title: string;
   verdict: ControlVerdict;
+  evidence: EvidenceStrength;
   score: number | null;
-  checks: { checkId: string; status: ResultStatus; primary: boolean }[];
+  /** Every result that fed the control; status is the raw result, triage says how it was treated. */
+  checks: { checkId: string; systemId?: string; status: ResultStatus; primary: boolean; triage: 'accepted' | 'false_positive' | null }[];
   failed: number;
   passed: number;
 }
@@ -49,6 +53,8 @@ export interface ScoreSummary {
   severityCounts: Record<Severity, number>;
   domainScores: { domain: Domain; score: number | null }[];
   controls: ControlAssessment[];
+  /** Assessable Annex A controls (ISO_ASSESSABLE) that no result in this scan evidences. */
+  notCovered: string[];
 }
 
 /** Grade colours (A to D darkened so white text reaches 4.5:1). Used by the web app and the PDF. */
@@ -94,7 +100,19 @@ export function computeScore(
     Domain,
     { got: number; max: number }
   >;
-  const controlAcc = new Map<string, { got: number; max: number; checks: ControlAssessment['checks']; severeFail: boolean; failed: number; passed: number }>();
+  type Acc = {
+    got: number;
+    max: number;
+    checks: ControlAssessment['checks'];
+    severeFail: boolean;
+    severeSecondaryFail: boolean;
+    failed: number;
+    passed: number;
+    primaryAssessed: number;
+    primaryMajor: boolean;
+    secondaryAssessed: number;
+  };
+  const controlAcc = new Map<string, Acc>();
   let got = 0;
   let max = 0;
 
@@ -116,17 +134,29 @@ export function computeScore(
       domainAcc[meta.domain].max += sevW;
     }
 
+    // For controls, an accepted risk still counts as a gap (half credit): accepting a risk does not make a control effective.
+    const ce = status === 'accepted' ? 0.5 : e;
+    const major = r.severity === 'critical' || r.severity === 'high';
+    const triage = status === 'accepted' ? 'accepted' : falsePositive ? 'false_positive' : null;
     meta.frameworks.iso27001.forEach((ctrl, idx) => {
       const primary = idx === 0;
-      const acc = controlAcc.get(ctrl) ?? { got: 0, max: 0, checks: [], severeFail: false, failed: 0, passed: 0 };
-      acc.checks.push({ checkId: r.checkId, status: status === 'accepted' ? 'warn' : status, primary });
-      if (e !== null) {
+      const acc: Acc = controlAcc.get(ctrl) ?? {
+        got: 0, max: 0, checks: [], severeFail: false, severeSecondaryFail: false, failed: 0, passed: 0,
+        primaryAssessed: 0, primaryMajor: false, secondaryAssessed: 0,
+      };
+      acc.checks.push({ checkId: r.checkId, systemId: r.systemId, status: r.status, primary, triage });
+      if (ce !== null) {
         const w = sevW * (primary ? 1 : 0.5);
-        acc.got += w * e;
+        acc.got += w * ce;
         acc.max += w;
+        if (primary) {
+          acc.primaryAssessed++;
+          if (major) acc.primaryMajor = true;
+        } else acc.secondaryAssessed++;
         if (status === 'fail') {
           acc.failed++;
-          if (primary && (r.severity === 'critical' || r.severity === 'high')) acc.severeFail = true;
+          if (major && primary) acc.severeFail = true;
+          if (major && !primary) acc.severeSecondaryFail = true;
         }
         if (status === 'pass') acc.passed++;
       }
@@ -141,21 +171,28 @@ export function computeScore(
   const controls: ControlAssessment[] = [...controlAcc.entries()]
     .sort(([a], [b]) => isoSort(a, b))
     .map(([id, acc]) => {
+      const evidence: EvidenceStrength =
+        acc.primaryAssessed === 0 ? (acc.secondaryAssessed > 0 ? 'indirect' : 'none') : acc.primaryMajor || acc.primaryAssessed >= 2 ? 'strong' : 'limited';
       let verdict: ControlVerdict;
       if (acc.max === 0) verdict = 'not_assessed';
-      else if (acc.got === acc.max) verdict = 'effective';
       else if (acc.severeFail || acc.got / acc.max < 0.5) verdict = 'not_effective';
-      else verdict = 'partial';
+      else if (acc.got < acc.max || acc.severeSecondaryFail) verdict = 'partial';
+      // Clean results only make a control "effective" when the evidence is strong enough to say so.
+      else verdict = evidence === 'strong' ? 'effective' : 'no_issues_limited';
       return {
         id,
         title: ISO_BY_ID[id]?.title ?? id,
         verdict,
+        evidence,
         score: acc.max === 0 ? null : Math.round((acc.got / acc.max) * 100),
         checks: acc.checks,
         failed: acc.failed,
         passed: acc.passed,
       };
     });
+
+  const evidenced = new Set(controls.filter((c) => c.verdict !== 'not_assessed').map((c) => c.id));
+  const notCovered = ISO_ASSESSABLE.filter((id) => !evidenced.has(id));
 
   return {
     score,
@@ -169,6 +206,7 @@ export function computeScore(
       score: domainAcc[d].max === 0 ? null : Math.round((domainAcc[d].got / domainAcc[d].max) * 100),
     })),
     controls,
+    notCovered,
   };
 }
 

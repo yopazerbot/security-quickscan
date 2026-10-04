@@ -102,6 +102,13 @@ export interface ResourceRef {
   id: string;
   name?: string;
   detail?: string;
+  /** Deep link to the resource in the provider console (Entra, Azure portal, AWS console, github.com). */
+  url?: string;
+  /** Resource type, e.g. 'S3 bucket', 'Conditional Access policy', 'Repository'. */
+  type?: string;
+  region?: string;
+  /** Account, subscription, tenant or organisation the resource belongs to. */
+  account?: string;
 }
 
 export interface CheckOutcome {
