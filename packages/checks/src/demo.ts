@@ -1,5 +1,6 @@
 import { CHECKS_BY_ID, type CheckOutcome, type ResourceRef } from '@qs/shared';
 import { sleep } from './util.js';
+import { githubOrgSettingsUrl, githubRepoUrl, githubUrl } from './links.js';
 
 /**
  * Demo data for the fictional company "Noordkust Logistics NV".
@@ -19,7 +20,23 @@ const ORG = DEMO_COMPANY.githubOrg;
 const upn = (u: string) => `${u}@${D}`;
 const user = (u: string, detail?: string): ResourceRef => ({ id: upn(u), name: upn(u), detail });
 const iam = (u: string, detail?: string): ResourceRef => ({ id: `arn:aws:iam::${ACC}:user/${u}`, name: u, detail });
-const repo = (r: string, detail?: string): ResourceRef => ({ id: `${ORG}/${r}`, name: `${ORG}/${r}`, detail });
+const repo = (r: string, detail?: string, page?: string): ResourceRef => ({
+  id: `${ORG}/${r}`,
+  name: `${ORG}/${r}`,
+  detail,
+  type: 'Repository',
+  url: githubRepoUrl(`${ORG}/${r}`, page),
+  account: ORG,
+});
+const ghMember = (login: string, detail?: string): ResourceRef => ({ id: login, name: login, detail, type: 'Member', url: githubUrl(login), account: ORG });
+const ghSetting = (name: string, page: string, detail?: string): ResourceRef => ({
+  id: `${ORG}/settings/${page}`,
+  name,
+  detail,
+  type: 'Organisation setting',
+  url: githubOrgSettingsUrl(ORG, page),
+  account: ORG,
+});
 const sub = (name: string, detail?: string): ResourceRef => ({ id: `/subscriptions/${name}`, name, detail });
 
 interface Scenario {
@@ -190,31 +207,149 @@ const SCENARIOS: Record<string, Scenario> = {
   'aws.access-analyzer': { bad: fail('IAM Access Analyzer is not enabled in any region.'), good: 'Access Analyzer active in all regions.' },
 
   // ---------- GitHub ----------
-  'gh.org-2fa': { bad: fail('The organisation does not require two-factor authentication.'), good: 'Two-factor authentication is required for all members.' },
-  'gh.base-permissions': { bad: fail('Base permission is "write" for all members.', [], { default_repository_permission: 'write' }), good: 'Base permission is "read".' },
-  'gh.owner-count': { bad: fail('7 organisation owners.', ['pieters-nk', 'kjanssens', 'devops-bot', 'lmaes', 'rvdb', 'msp-dev', 'ci-admin'].map((u, i) => ({ id: String(1000 + i), name: u }))), good: '3 organisation owner(s).' },
-  'gh.outside-collaborators': { bad: warn('3 outside collaborator(s) to review.', ['freelance-dev42', 'agency-ux', 'old-contractor'].map((u, i) => ({ id: String(2000 + i), name: u }))), good: 'No outside collaborators.' },
-  'gh.public-repo-creation': { bad: warn('Members can create public repositories.'), good: 'Members cannot create public repositories.' },
-  'gh.private-forking': { bad: warn('Members can fork private repositories.'), good: 'Forking of private repositories is disabled.' },
-  'gh.public-repos': { bad: warn('2 public repositories: confirm they are intended to be public.', [repo('website'), repo('tms-api-client', 'contains internal hostnames in README')]), good: 'No public repositories.' },
+  'gh.org-2fa': {
+    bad: fail('The organisation does not require two-factor authentication.', [ghSetting('Authentication security', 'security', 'Require two-factor authentication is off')]),
+    good: 'Two-factor authentication is required for all members.',
+  },
+  'gh.base-permissions': {
+    bad: fail('Base permission is "write" for all members.', [ghSetting('Member privileges', 'member_privileges', 'base permission write')], { default_repository_permission: 'write' }),
+    good: 'Base permission is "read".',
+  },
+  'gh.owner-count': {
+    bad: fail('7 organisation owners.', ['pieters-nk', 'kjanssens', 'devops-bot', 'lmaes', 'rvdb', 'msp-dev', 'ci-admin'].map((u) => ghMember(u, 'organisation owner'))),
+    good: '3 organisation owners.',
+  },
+  'gh.outside-collaborators': {
+    bad: fail(
+      '2 of 3 outside collaborator(s) have write or admin access.',
+      [
+        ghMember('agency-ux', 'outside collaborator, highest permission admin: website (admin)'),
+        ghMember('freelance-dev42', 'outside collaborator, highest permission write: driver-app (write), route-planner (read)'),
+        ghMember('old-contractor', 'outside collaborator, highest permission read: edi-connector (read)'),
+      ],
+      { outsideCollaborators: 3, withWriteOrAdmin: 2 },
+    ),
+    good: 'No outside collaborators.',
+  },
+  'gh.public-repo-creation': {
+    bad: warn('Members can create public repositories.', [ghSetting('Repository creation', 'member_privileges', 'public repositories allowed')]),
+    good: 'Members cannot create public repositories.',
+  },
+  'gh.private-forking': {
+    bad: warn('Members can fork private repositories.', [ghSetting('Repository forking', 'member_privileges', 'forking of private repositories allowed')]),
+    good: 'Forking of private repositories is disabled.',
+  },
+  'gh.public-repos': {
+    bad: warn('2 public repositories: confirm they are intended to be public.', [repo('website', 'public'), repo('tms-api-client', 'public, contains internal hostnames in README')]),
+    good: 'No public repositories.',
+  },
   'gh.branch-protection': {
-    bad: fail('4 of 11 repositories have an unprotected default branch.', [repo('route-planner', 'main not protected'), repo('driver-app', 'main not protected'), repo('infra-terraform', 'main not protected'), repo('edi-connector', 'master not protected')]),
-    good: 'All 11 repositories protect their default branch.',
+    bad: fail(
+      '3 of 11 repositories have an unprotected default branch, 2 more are only partially protected.',
+      [
+        repo('driver-app', 'main not protected', 'settings/rules'),
+        repo('edi-connector', 'master not protected (ruleset "Protect main" is in evaluate mode (not enforced))', 'settings/rules'),
+        repo('infra-terraform', 'main not protected', 'settings/rules'),
+        repo('route-planner', 'main missing: stale approvals dismissed on new commits, rules also apply to administrators (enforce admins or no ruleset bypass actors)', 'settings/rules'),
+        repo('website', 'main missing: at least 1 required approving review', 'settings/rules'),
+      ],
+      { evaluated: 11, unprotected: 3, partial: 2 },
+    ),
+    good: 'All 11 evaluated repositories fully protect their default branch.',
   },
   'gh.secret-scanning': {
-    bad: fail('Secret scanning disabled on 8 of 11 repositories.', [repo('route-planner', 'private'), repo('driver-app', 'private'), repo('infra-terraform', 'private'), repo('edi-connector', 'private')]),
-    good: 'Secret scanning enabled on all 11 repositories.',
+    bad: fail('Secret scanning disabled on 4 of 11 repositories.', [
+      repo('driver-app', 'private, secret scanning off', 'settings/security_analysis'),
+      repo('edi-connector', 'private, secret scanning off', 'settings/security_analysis'),
+      repo('infra-terraform', 'private, secret scanning off', 'settings/security_analysis'),
+      repo('route-planner', 'private, secret scanning off', 'settings/security_analysis'),
+    ]),
+    good: 'Secret scanning enabled on all 11 evaluated repositories.',
   },
-  'gh.push-protection': { bad: warn('Push protection disabled on 9 of 11 repositories.', [repo('route-planner'), repo('infra-terraform')]), good: 'Push protection enabled everywhere.' },
+  'gh.push-protection': {
+    bad: warn('Push protection disabled on 2 of 11 repositories.', [repo('infra-terraform', 'push protection off', 'settings/security_analysis'), repo('route-planner', 'push protection off', 'settings/security_analysis')]),
+    good: 'Push protection enabled on all 11 evaluated repositories.',
+  },
+  'gh.secret-scanning-alerts': {
+    bad: fail(
+      '4 open secret scanning alert(s) across 2 repositories: rotate the exposed credentials.',
+      [
+        repo('infra-terraform', '3 open alerts: Amazon AWS Access Key ID, Azure Storage Account Key', 'security/secret-scanning'),
+        repo('website', '1 open alert: Slack Incoming Webhook URL', 'security/secret-scanning'),
+      ],
+      { openAlerts: 4, truncated: false },
+    ),
+    good: 'No open secret scanning alerts.',
+  },
   'gh.dependabot-alerts': {
-    bad: fail('11 open critical/high Dependabot alerts across 3 repositories.', [repo('driver-app', '4 critical, 3 high'), repo('route-planner', '0 critical, 3 high'), repo('website', '0 critical, 1 high')]),
+    bad: fail(
+      '11 open critical/high Dependabot alerts across 3 repositories. Dependabot security updates not enabled on 2 repositories with alerts on.',
+      [
+        repo('driver-app', '4 critical, 3 high', 'security/dependabot'),
+        repo('route-planner', '0 critical, 3 high', 'security/dependabot'),
+        repo('website', '0 critical, 1 high', 'security/dependabot'),
+        repo('edi-connector', 'Dependabot security updates not enabled', 'settings/security_analysis'),
+        repo('driver-app', 'Dependabot security updates not enabled', 'settings/security_analysis'),
+      ],
+      { noSecurityUpdates: 2 },
+    ),
     good: 'No open critical or high Dependabot alerts.',
   },
-  'gh.code-scanning-alerts': { bad: warn('5 open critical/high code scanning alerts.', [repo('edi-connector', '3 alerts'), repo('route-planner', '2 alerts')]), good: 'No open critical or high code scanning alerts.' },
-  'gh.actions-allowed': { bad: warn('All actions and reusable workflows are allowed.', [], { allowed_actions: 'all' }), good: 'Allowed actions restricted (selected).' },
-  'gh.workflow-permissions': { bad: fail('Default GITHUB_TOKEN has read/write permissions.', [], { default_workflow_permissions: 'write' }), good: 'Default workflow token is read-only and cannot approve PRs.' },
-  'gh.deploy-keys': { bad: warn('2 write-enabled deploy key(s).', [{ id: 'k1', name: `${ORG}/infra-terraform`, detail: 'write key "jenkins-old"' }, { id: 'k2', name: `${ORG}/website`, detail: 'write key "hosting-sync"' }]), good: 'All deploy keys are read-only.' },
-  'gh.webhooks': { bad: warn('1 webhook(s) without verified HTTPS.', [{ id: 'h1', name: 'http://jenkins.noordkust.example/github-webhook/', detail: 'plain HTTP' }]), good: 'All 3 webhooks use verified HTTPS.' },
+  'gh.code-scanning-alerts': {
+    bad: warn('5 open critical/high code scanning alerts. Code scanning not enabled on 2 of 11 repositories.', [
+      repo('edi-connector', '3 alerts', 'security/code-scanning'),
+      repo('route-planner', '2 alerts', 'security/code-scanning'),
+      repo('driver-app', 'Code scanning: no analysis in the last 90 days (last 2026-03-02)', 'settings/security_analysis'),
+      repo('infra-terraform', 'Code scanning not enabled', 'settings/security_analysis'),
+    ]),
+    good: 'No open critical or high code scanning alerts.',
+  },
+  'gh.actions-allowed': {
+    bad: warn('All actions and reusable workflows are allowed.', [ghSetting('Actions policy', 'actions', 'allowed_actions: all')], { allowed_actions: 'all' }),
+    good: 'Allowed actions restricted to GitHub-owned, verified creators, 6 listed pattern(s).',
+  },
+  'gh.workflow-permissions': {
+    bad: fail('Default GITHUB_TOKEN has read/write permissions.', [ghSetting('Workflow permissions', 'actions', 'default_workflow_permissions: write')], { default_workflow_permissions: 'write' }),
+    good: 'Default workflow token is read-only and cannot approve PRs.',
+  },
+  'gh.deploy-keys': {
+    bad: warn('2 write-enabled deploy key(s).', [
+      { ...repo('infra-terraform', 'write key "jenkins-old"', 'settings/keys'), id: `${ORG}/infra-terraform#81234567`, type: 'Deploy key' },
+      { ...repo('website', 'write key "hosting-sync"', 'settings/keys'), id: `${ORG}/website#81234890`, type: 'Deploy key' },
+    ]),
+    good: 'All deploy keys in 11 evaluated repositories are read-only.',
+  },
+  'gh.webhooks': {
+    bad: warn('1 webhook(s) without verified HTTPS.', [
+      { id: '412345678', name: 'http://jenkins.noordkust.example', detail: 'plain HTTP', type: 'Webhook', url: githubOrgSettingsUrl(ORG, 'hooks/412345678'), account: ORG },
+    ]),
+    good: 'All 3 webhooks use verified HTTPS.',
+  },
+  'gh.members-without-2fa': {
+    bad: fail('3 account(s) without two-factor authentication (2FA is not enforced).', [
+      ghMember('magazijn-scripts', 'member without 2FA'),
+      ghMember('rvdb', 'member without 2FA'),
+      ghMember('old-contractor', 'outside collaborator without 2FA'),
+    ]),
+    good: 'Two-factor authentication is enforced, so every member and collaborator has 2FA.',
+  },
+  'gh.app-installations': {
+    bad: warn(
+      '2 of 5 GitHub App(s) have broad write permissions (code, workflows, secrets or administration).',
+      [
+        { id: '51234567', name: 'legacy-ci-bot', detail: 'write: administration, contents, workflows; selected repositories', type: 'GitHub App', url: githubOrgSettingsUrl(ORG, 'installations/51234567'), account: ORG },
+        { id: '51234890', name: 'docs-sync', detail: 'write: contents; all repositories', type: 'GitHub App', url: githubOrgSettingsUrl(ORG, 'installations/51234890'), account: ORG },
+      ],
+      { installations: 5, broad: 2, critical: 0 },
+    ),
+    good: 'None of the 5 installed GitHub Apps hold broad write permissions.',
+  },
+  'gh.security-defaults': {
+    bad: warn('New repositories do not get Dependabot security updates, secret scanning, secret scanning push protection by default.', [
+      ghSetting('Code security defaults', 'security_analysis', 'off for new repositories: Dependabot security updates, secret scanning, secret scanning push protection'),
+    ]),
+    good: 'New repositories get dependency graph, Dependabot alerts, Dependabot security updates, secret scanning, secret scanning push protection by default.',
+  },
 };
 
 /** Deterministic pseudo-random generator. */

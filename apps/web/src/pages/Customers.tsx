@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Building2, Plus, Search, SearchX, X } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
+import { DataTable } from '../components/data-table';
 import { Badge, Button, Card, DemoBadge, EmptyState, ErrorState, GradeBadge, Input, LinkButton, PageHeader, PageLoader } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
@@ -33,7 +34,35 @@ function sharedLabel(access: unknown) {
   return access === 'view' ? 'Shared with you, can view' : access === 'edit' ? 'Shared with you, can edit' : 'Shared with you';
 }
 
+/** Sort text of the access column. */
+function accessText(c: any, admin: boolean, demo: boolean) {
+  if (c.owned) return 'Owned by you';
+  if (admin) return c.ownerName ? `Owner: ${c.ownerName}` : c.isDemo ? '' : 'No owner';
+  return demo && c.isDemo ? '' : sharedLabel(c.myAccess ?? c.permission);
+}
+
+function AccessCell({ c, admin, demo }: { c: any; admin: boolean; demo: boolean }) {
+  if (c.owned) return <span className="text-xs text-slate-500">Owned by you</span>;
+  if (admin)
+    return c.ownerName ? (
+      <span className="text-xs text-slate-500">Owner: {c.ownerName}</span>
+    ) : c.isDemo ? (
+      <span className="text-xs text-slate-500">-</span>
+    ) : (
+      <Badge className="bg-amber-100 text-amber-800 ring-1 ring-amber-200">No owner</Badge>
+    );
+  // The demo visitor reaches demo organisations through a shared account: not "shared with you".
+  if (demo && c.isDemo) return <span className="text-xs text-slate-500">-</span>;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-500">
+      <Badge className="bg-brand-50 text-brand-700 ring-1 ring-brand-100">{sharedLabel(c.myAccess ?? c.permission)}</Badge>
+      {c.ownerName && <span className="truncate">Owner: {c.ownerName}</span>}
+    </div>
+  );
+}
+
 export function Customers() {
+  const nav = useNavigate();
   const can = useCan();
   const { me } = useAuth();
   useDocumentTitle('Organisations');
@@ -101,62 +130,68 @@ export function Customers() {
               </button>
             )}
           </div>
-          {rows.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={<SearchX className="size-6" />}
-                title="No organisations match"
-                action={
-                  <Button variant="secondary" icon={<X className="size-4" aria-hidden />} onClick={() => setQ('')}>
-                    Clear search
-                  </Button>
-                }
-              >
-                No organisation name contains "{q.trim()}". Check the spelling or clear the search to see all organisations.
-              </EmptyState>
-            </Card>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {rows.map((c) => (
-                <Link key={c.id} to={`/organisations/${c.id}`} className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
-                  <div className="flex items-start justify-between gap-3">
+          <Card className="overflow-hidden">
+            <DataTable
+              storageKey="organisations"
+              label="organisations"
+              caption="Organisations"
+              minWidth="48rem"
+              rows={rows}
+              rowKey={(c) => c.id}
+              filterKey={term}
+              onRowClick={(c) => nav(`/organisations/${c.id}`)}
+              empty={
+                <EmptyState
+                  icon={<SearchX className="size-6" />}
+                  title="No organisations match"
+                  action={
+                    <Button variant="secondary" icon={<X className="size-4" aria-hidden />} onClick={() => setQ('')}>
+                      Clear search
+                    </Button>
+                  }
+                >
+                  No organisation name contains "{q.trim()}". Check the spelling or clear the search to see all organisations.
+                </EmptyState>
+              }
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  sort: (c) => c.name.toLowerCase(),
+                  render: (c) => (
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-base font-semibold text-slate-900 group-hover:text-brand-700">{c.name}</span>
+                        <Link to={`/organisations/${c.id}`} className="font-semibold text-slate-900 hover:text-brand-700 hover:underline">
+                          {c.name}
+                        </Link>
                         {c.isDemo && <DemoBadge />}
                       </div>
-                      <div className="mt-0.5 truncate text-sm text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
-                      {!c.owned &&
-                        (can.admin ? (
-                          c.ownerName ? (
-                            <div className="mt-1.5 truncate text-xs text-slate-500">Owner: {c.ownerName}</div>
-                          ) : (
-                            !c.isDemo && (
-                              <div className="mt-1.5">
-                                <Badge className="bg-amber-100 text-amber-800 ring-1 ring-amber-200">No owner</Badge>
-                              </div>
-                            )
-                          )
-                        ) : (
-                          // The demo visitor reaches demo organisations through a shared account: not "shared with you".
-                          !(me?.user.isDemo && c.isDemo) && (
-                            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                              <Badge className="bg-brand-50 text-brand-700 ring-1 ring-brand-100">{sharedLabel(c.myAccess ?? c.permission)}</Badge>
-                              {c.ownerName && <span className="truncate">Owner: {c.ownerName}</span>}
-                            </div>
-                          )
-                        ))}
+                      <div className="mt-0.5 truncate text-xs text-slate-500">{INDUSTRIES.find(([id]) => id === c.industry)?.[1] ?? 'Unknown sector'}</div>
                     </div>
-                    <GradeBadge grade={c.latestScan?.grade} />
-                  </div>
-                  <div className="mt-5 flex items-center justify-between text-xs text-slate-500">
-                    <span>{c.scanCount} scan{c.scanCount === 1 ? '' : 's'}</span>
-                    <span>{c.latestScan ? `Last scan ${fmtDate(c.latestScan.finishedAt)}` : 'Not scanned yet'}</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+                  ),
+                },
+                {
+                  key: 'grade',
+                  header: 'Latest grade',
+                  sort: (c) => (typeof c.latestScan?.score === 'number' ? c.latestScan.score : null),
+                  render: (c) => <GradeBadge grade={c.latestScan?.grade} score={c.latestScan?.score} size="sm" />,
+                },
+                { key: 'scans', header: 'Scans', align: 'right', sort: (c) => c.scanCount ?? 0, render: (c) => <span className="text-slate-600">{c.scanCount}</span> },
+                {
+                  key: 'updated',
+                  header: 'Last scan',
+                  sort: (c) => (c.latestScan?.finishedAt ? new Date(c.latestScan.finishedAt) : null),
+                  render: (c) => <span className="whitespace-nowrap text-slate-600">{c.latestScan ? fmtDate(c.latestScan.finishedAt) : 'Not scanned yet'}</span>,
+                },
+                {
+                  key: 'access',
+                  header: 'Access',
+                  sort: (c) => accessText(c, can.admin, Boolean(me?.user.isDemo)),
+                  render: (c) => <AccessCell c={c} admin={can.admin} demo={Boolean(me?.user.isDemo)} />,
+                },
+              ]}
+            />
+          </Card>
         </>
       )}
     </>

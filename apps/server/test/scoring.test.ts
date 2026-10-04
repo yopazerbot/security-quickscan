@@ -1,4 +1,4 @@
-import { CHECKS, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, executiveSummarySentences, GRADE_COLORS, ISO_BY_ID, IMPLEMENTED, partialLabel, ROLE_LABELS, ROLES } from './fixtures.js';
+import { CHECKS, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, executiveSummarySentences, GRADE_COLORS, ISO_ASSESSABLE, ISO_BY_ID, IMPLEMENTED, partialLabel, ROLE_LABELS, ROLES, SEVERITY_WEIGHT, type CheckMeta, type ScoreInput } from './fixtures.js';
 import { describe, expect, it } from 'vitest';
 
 describe('catalog', () => {
@@ -49,6 +49,13 @@ describe('scoring', () => {
     expect(s.controls.find((c) => c.id === '8.5')?.verdict).toBe('not_effective');
     expect(s.score).toBeLessThan(20);
   });
+  it('needs strong evidence for an effective verdict', () => {
+    // A single critical primary check is strong evidence.
+    const s = computeScore([{ checkId: 'm365.mfa-all-users', status: 'pass', severity: 'critical' }], CHECKS_BY_ID, weights);
+    const c85 = s.controls.find((c) => c.id === '8.5')!;
+    expect(c85.evidence).toBe('strong');
+    expect(c85.verdict).toBe('effective');
+  });
   it('treats false positives as pass and excludes accepted risks', () => {
     const fp = computeScore([{ checkId: 'gh.org-2fa', status: 'fail', severity: 'critical', triage: 'false_positive' }], CHECKS_BY_ID, weights);
     expect(fp.score).toBe(100);
@@ -62,6 +69,10 @@ describe('scoring', () => {
     );
     expect(acc.score).toBe(100);
     expect(acc.counts.accepted).toBe(1);
+    // In the control, the accepted critical failure still counts as a gap.
+    const ctrl = acc.controls.find((c) => c.id === CHECKS_BY_ID['gh.org-2fa'].frameworks.iso27001[0])!;
+    expect(['partial', 'not_effective']).toContain(ctrl.verdict);
+    expect(ctrl.checks.find((x) => x.checkId === 'gh.org-2fa')).toMatchObject({ status: 'fail', primary: true, triage: 'accepted' });
   });
   it('ignores n/a and errors', () => {
     const s = computeScore([{ checkId: 'aws.rds-public', status: 'na', severity: 'high' }], CHECKS_BY_ID, weights);
@@ -136,5 +147,76 @@ describe('coverage-aware grade', () => {
       return 0.2126 * r + 0.7152 * g + 0.0722 * b;
     };
     for (const g of ['A', 'B', 'C', 'D', 'E', 'F']) expect(1.05 / (lum(GRADE_COLORS[g]) + 0.05), g).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe('ISO control evidence', () => {
+  const weights = computeRiskProfile(DEFAULT_CONTEXT).domainWeights;
+  const input = (c: CheckMeta, status: ScoreInput['status'] = 'pass', extra: Partial<ScoreInput> = {}): ScoreInput => ({ checkId: c.id, status, severity: c.severity, ...extra });
+  const primaryOf = (ctrl: string) => CHECKS.filter((c) => c.frameworks.iso27001[0] === ctrl);
+  const control = (results: ScoreInput[], id: string) => computeScore(results, CHECKS_BY_ID, weights).controls.find((c) => c.id === id)!;
+
+  it('rates a single minor primary check as limited evidence (no issues found, not effective)', () => {
+    const minor = CHECKS.find((c) => ['low', 'medium', 'info'].includes(c.severity))!;
+    const c = control([input(minor)], minor.frameworks.iso27001[0]);
+    expect(c.evidence).toBe('limited');
+    expect(c.verdict).toBe('no_issues_limited');
+  });
+
+  it('rates two primary checks as strong evidence', () => {
+    const ctrl = Object.keys(ISO_BY_ID).find((id) => primaryOf(id).filter((c) => c.severity !== 'critical' && c.severity !== 'high').length >= 2);
+    if (!ctrl) return;
+    const two = primaryOf(ctrl).filter((c) => c.severity !== 'critical' && c.severity !== 'high').slice(0, 2);
+    expect(control([input(two[0])], ctrl).evidence).toBe('limited');
+    const c = control(two.map((x) => input(x)), ctrl);
+    expect(c.evidence).toBe('strong');
+    expect(c.verdict).toBe('effective');
+  });
+
+  it('rates controls with only secondary mappings as indirect evidence', () => {
+    const check = CHECKS.find((c) => c.frameworks.iso27001.length > 1)!;
+    const secondary = check.frameworks.iso27001[1];
+    const c = control([input(check)], secondary);
+    expect(c.evidence).toBe('indirect');
+    expect(c.verdict).toBe('no_issues_limited');
+    expect(c.checks).toEqual([{ checkId: check.id, systemId: undefined, status: 'pass', primary: false, triage: null }]);
+  });
+
+  it('caps a control at partial on a high or critical secondary failure', () => {
+    // The control with the most primary weight that a high or critical check maps to as a secondary control.
+    const candidates = CHECKS.filter((c) => ['critical', 'high'].includes(c.severity)).flatMap((c) =>
+      c.frameworks.iso27001.slice(1).map((ctrl) => ({ check: c, ctrl, primaries: primaryOf(ctrl).filter((p) => p.id !== c.id) })),
+    );
+    const weight = (cs: CheckMeta[]) => cs.reduce((a, c) => a + Math.max(SEVERITY_WEIGHT[c.severity], 0.5), 0);
+    const best = candidates.sort((a, b) => weight(b.primaries) - weight(a.primaries))[0];
+    expect(best.primaries.length).toBeGreaterThan(0);
+    const results = [...best.primaries.map((p) => input(p)), input(best.check, 'fail')];
+    const c = control(results, best.ctrl);
+    expect(c.evidence).toBe('strong');
+    expect(c.verdict).toBe('partial');
+    // Without the secondary failure the same evidence is effective.
+    expect(control(best.primaries.map((p) => input(p)), best.ctrl).verdict).toBe('effective');
+  });
+
+  it('keeps a primary critical or high failure not effective', () => {
+    const major = CHECKS.find((c) => c.severity === 'critical')!;
+    expect(control([input(major, 'fail')], major.frameworks.iso27001[0]).verdict).toBe('not_effective');
+  });
+
+  it('lists assessable controls without results as not covered', () => {
+    const check = CHECKS_BY_ID['m365.mfa-all-users'];
+    const s = computeScore([input(check)], CHECKS_BY_ID, weights);
+    const covered = new Set(check.frameworks.iso27001);
+    expect(s.notCovered).toEqual(ISO_ASSESSABLE.filter((id) => !covered.has(id)));
+    // Not applicable results evidence nothing.
+    expect(computeScore([input(check, 'na')], CHECKS_BY_ID, weights).notCovered).toEqual(ISO_ASSESSABLE);
+    expect(computeScore([], CHECKS_BY_ID, weights).notCovered).toEqual(ISO_ASSESSABLE);
+  });
+
+  it('attributes control results to their system', () => {
+    const check = CHECKS_BY_ID['m365.mfa-all-users'];
+    const c = control([input(check, 'fail', { systemId: 'sys-a' }), input(check, 'pass', { systemId: 'sys-b' })], '8.5');
+    expect(c.checks.map((x) => [x.systemId, x.status])).toEqual([['sys-a', 'fail'], ['sys-b', 'pass']]);
+    expect(c.verdict).toBe('not_effective');
   });
 });

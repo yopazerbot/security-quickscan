@@ -93,11 +93,14 @@ export type AwsConsoleService =
 
 const AWS_REGION_RE = /^[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-\d$/;
 
-/** Last path segment of an ARN resource part (arn:aws:iam::1:user/path/name => name), or the input itself. */
+/**
+ * Last segment of an ARN resource part, or the input itself:
+ * arn:aws:iam::1:user/path/name => name, arn:aws:rds:eu-west-1:1:db:reporting => reporting, arn:aws:kms:...:key/uuid => uuid.
+ */
 export function arnResourceName(idOrArn: string): string {
   if (!idOrArn.startsWith('arn:')) return idOrArn;
   const resource = idOrArn.split(':').slice(5).join(':');
-  const parts = resource.split('/');
+  const parts = resource.split(/[/:]/);
   return parts[parts.length - 1] || resource;
 }
 

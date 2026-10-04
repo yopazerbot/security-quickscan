@@ -110,7 +110,7 @@ function SystemForm({ provider, system, scanId, onClose, onSaved }: { provider: 
       wide
       title={
         <span className="flex items-center gap-2">
-          <ProviderIcon provider={provider} /> {system ? 'Edit' : 'Add'} {PROVIDER_LABELS[provider]}
+          <ProviderIcon provider={provider} decorative /> {system ? 'Edit' : 'Add'} {PROVIDER_LABELS[provider]}
         </span>
       }
       footer={
@@ -223,7 +223,7 @@ export function StepScope({ scan, refresh, next, navigating }: StepProps) {
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <ProviderIcon provider={p} className="size-8" />
+                  <ProviderIcon provider={p} className="size-8" decorative />
                   {count > 0 && <span className="rounded-full bg-brand-600 px-2 py-0.5 text-xs font-semibold text-white">{count} added</span>}
                 </div>
                 <div className="mt-4 text-sm font-semibold text-slate-900">{PROVIDER_LABELS[p]}</div>

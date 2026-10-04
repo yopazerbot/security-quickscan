@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 
 export type SortValue = string | number | Date | null | undefined;
 
@@ -267,11 +267,8 @@ export function DataTable<T>({
     setPage(0);
   }, [rows.length, filterKey]);
 
-  const sorted = useMemo(() => {
-    const col = sort && columns.find((c) => c.key === sort.key);
-    return col?.sort ? sortRows(rows, col.sort, sort.dir) : rows;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, sort?.key, sort?.dir]);
+  const sortCol = sort ? columns.find((c) => c.key === sort.key) : undefined;
+  const sorted = sortCol?.sort && sort ? sortRows(rows, sortCol.sort, sort.dir) : rows;
 
   const pageCount = Math.max(1, Math.ceil(sorted.length / size));
   const current = Math.min(page, pageCount - 1);

@@ -209,7 +209,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
           <div role="group" aria-label="Filter by platform" className="flex rounded-lg bg-slate-100 p-0.5 text-sm">
             {(['all', ...providers] as const).map((p) => (
               <button key={p} type="button" aria-pressed={tab === p} onClick={() => setTab(p)} className={clsx('flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium', tab === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600')}>
-                {p !== 'all' && <ProviderIcon provider={p} className="size-3.5" />}
+                {p !== 'all' && <ProviderIcon provider={p} className="size-3.5" decorative />}
                 {p === 'all' ? 'All' : PROVIDER_SHORT[p]}
               </button>
             ))}
@@ -242,7 +242,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
               <div className="flex items-center gap-2 border-y border-slate-100 bg-slate-50 px-6 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {view === 'provider' ? (
                   <>
-                    <ProviderIcon provider={g.key as Provider} className="size-4" />
+                    <ProviderIcon provider={g.key as Provider} className="size-4" decorative />
                     {PROVIDER_LABELS[g.key as Provider]}
                   </>
                 ) : (
@@ -263,6 +263,7 @@ export function StepCriteria({ scan, next, back, saveRef, navigating }: StepProp
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
+                            {view === 'iso' && <ProviderIcon provider={m.provider} className="size-4" />}
                             <span className={clsx('text-sm font-medium', i.included ? 'text-slate-900' : 'text-slate-500')}>{m.title}</span>
                             <SeverityBadge severity={m.severity} />
                             {!i.defaultIncluded && <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-600">optional for this profile</span>}

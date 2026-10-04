@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, ImageUp, Link2, RotateCcw, Trash2 } from 'lucide-react';
 import { useContext, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, UNSAFE_DataRouterContext, useBlocker, useNavigate } from 'react-router';
+import { DataTable } from '../components/data-table';
 import { AsyncButton, useToast } from '../components/feedback';
 import { Alert, Button, Card, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Spinner, Textarea, Toggle } from '../components/ui';
 import { ApiError, del, fileToBase64, get, post, put } from '../lib/api';
@@ -411,52 +412,76 @@ function TenantLinksCard() {
       ) : q.data.length === 0 ? (
         <p className="text-sm text-slate-500">No tenant links yet. A link is created when admin consent is completed for an organisation.</p>
       ) : (
-        <ul className="-my-2 divide-y divide-slate-100">
-          {q.data.map((b) => (
-            <li key={b.tenantId} className="flex flex-wrap items-center gap-3 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-mono text-sm text-slate-800">{b.tenantId}</div>
-                <div className="text-xs text-slate-500">
-                  {b.organisation ? (
+        <div className="-mx-6 -mb-6">
+          <DataTable
+            storageKey="tenant-links"
+            label="tenant links"
+            caption="Microsoft tenant links"
+            minWidth="44rem"
+            rows={q.data}
+            rowKey={(b) => b.tenantId}
+            hidePagerWhenSmall
+            columns={[
+              { key: 'tenant', header: 'Tenant', sort: (b) => b.tenantId, render: (b) => <span className="font-mono text-xs text-slate-800">{b.tenantId}</span> },
+              {
+                key: 'organisation',
+                header: 'Organisation',
+                sort: (b) => b.organisation?.name.toLowerCase() ?? null,
+                render: (b) =>
+                  b.organisation ? (
                     <Link to={`/organisations/${b.organisation.id}`} className="font-medium text-brand-700 hover:underline">
                       {b.organisation.name}
                     </Link>
                   ) : (
                     <span className="font-medium text-slate-600">Organisation deleted</span>
-                  )}
-                  <span className="ml-1.5">
-                    Linked {fmtDateTime(b.createdAt)}
-                    {b.createdBy ? ` by ${b.createdBy}` : ''}
-                  </span>
-                </div>
-              </div>
-              <AsyncButton
-                size="sm"
-                variant="ghost"
-                className="text-red-700 hover:bg-red-50"
-                success="The tenant link was released."
-                confirm={{
-                  title: 'Release tenant link?',
-                  danger: true,
-                  confirmLabel: 'Release link',
-                  body: (
-                    <>
-                      Tenant <span className="font-mono">{b.tenantId}</span> is no longer linked to {b.organisation ? <strong>{b.organisation.name}</strong> : 'the deleted organisation'}. It can then be
-                      linked to another organisation when someone completes admin consent for it.
-                      {b.organisation && ' Scans of this organisation need admin consent again before they can use the tenant.'}
-                    </>
                   ),
-                }}
-                onClick={async () => {
-                  await del(`/api/admin/tenant-bindings/${encodeURIComponent(b.tenantId)}`);
-                  await qc.invalidateQueries({ queryKey: ['tenant-bindings'] });
-                }}
-              >
-                Release
-              </AsyncButton>
-            </li>
-          ))}
-        </ul>
+              },
+              {
+                key: 'linked',
+                header: 'Linked',
+                sort: (b) => new Date(b.createdAt),
+                render: (b) => (
+                  <span className="text-xs text-slate-600">
+                    {fmtDateTime(b.createdAt)}
+                    {b.createdBy && <span className="block text-slate-500">by {b.createdBy}</span>}
+                  </span>
+                ),
+              },
+              {
+                key: 'actions',
+                header: <span className="sr-only">Actions</span>,
+                align: 'right',
+                render: (b) => (
+                  <AsyncButton
+                    size="sm"
+                    variant="ghost"
+                    className="text-red-700 hover:bg-red-50"
+                    aria-label={`Release the link of tenant ${b.tenantId}`}
+                    success="The tenant link was released."
+                    confirm={{
+                      title: 'Release tenant link?',
+                      danger: true,
+                      confirmLabel: 'Release link',
+                      body: (
+                        <>
+                          Tenant <span className="font-mono">{b.tenantId}</span> is no longer linked to {b.organisation ? <strong>{b.organisation.name}</strong> : 'the deleted organisation'}. It can then be
+                          linked to another organisation when someone completes admin consent for it.
+                          {b.organisation && ' Scans of this organisation need admin consent again before they can use the tenant.'}
+                        </>
+                      ),
+                    }}
+                    onClick={async () => {
+                      await del(`/api/admin/tenant-bindings/${encodeURIComponent(b.tenantId)}`);
+                      await qc.invalidateQueries({ queryKey: ['tenant-bindings'] });
+                    }}
+                  >
+                    Release
+                  </AsyncButton>
+                ),
+              },
+            ]}
+          />
+        </div>
       )}
     </Card>
   );

@@ -1,11 +1,12 @@
 import { CHECKS_BY_ID, ROLE_LABELS, type Role } from '@qs/shared';
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ScrollText, X } from 'lucide-react';
+import { ArrowDown, ScrollText, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Pager, usePageSize } from '../components/data-table';
 import { Button, Card, EmptyState, ErrorState, Input, PageHeader, PageLoader, Select, Spinner } from '../components/ui';
 import { get } from '../lib/api';
-import { fmtDateTime } from '../lib/format';
+import { fmtDateTime, fmtDateTimeBE } from '../lib/format';
 import { useDocumentTitle } from '../lib/use-document-title';
 
 interface AuditRow {
@@ -227,24 +228,36 @@ export function AuditPage() {
   const action = queryAction(filter);
   const orgs = useQuery({ queryKey: ['customers'], queryFn: () => get<{ id: string; name: string }[]>('/api/customers') });
   const users = useQuery({ queryKey: ['users'], queryFn: () => get<{ id: string; name: string; email: string }[]>('/api/users') });
-  const q = useInfiniteQuery({
-    queryKey: ['audit', action, organisationId, userId],
-    initialPageParam: 0,
-    queryFn: ({ pageParam }) =>
+  const [limit, setLimit] = usePageSize('audit');
+  // Cursor paging: the server returns entries older than `before`. The stack keeps the cursor of every page
+  // visited, so Previous goes back exactly one page. Filters and the page size start again from the newest entry.
+  const [cursors, setCursors] = useState<(number | null)[]>([null]);
+  const filterKey = `${action}|${organisationId}|${userId}|${limit}`;
+  const [lastFilterKey, setLastFilterKey] = useState(filterKey);
+  if (filterKey !== lastFilterKey) {
+    setLastFilterKey(filterKey);
+    setCursors([null]);
+  }
+  const before = cursors[cursors.length - 1];
+  const q = useQuery({
+    queryKey: ['audit', action, organisationId, userId, limit, before],
+    queryFn: () =>
       get<AuditRow[]>(
         `/api/audit?${new URLSearchParams({
-          ...(pageParam ? { before: String(pageParam) } : {}),
+          limit: String(limit),
+          ...(before ? { before: String(before) } : {}),
           ...(action ? { action } : {}),
           ...(organisationId ? { organisationId } : {}),
           ...(userId ? { userId } : {}),
         })}`,
       ),
-    getNextPageParam: (last) => (last.length === 100 ? last[last.length - 1].id : undefined),
-    // Keep showing the current rows while the next filter loads instead of flashing a loader.
+    // Keep showing the current rows while the next page or filter loads instead of flashing a loader.
     placeholderData: keepPreviousData,
   });
-  const rows = q.data?.pages.flat() ?? [];
-  const pending = input.trim() !== filter || (q.isFetching && !q.isFetchingNextPage && !q.isLoading);
+  const rows = (q.data ?? []).slice(0, limit);
+  const hasNext = (q.data?.length ?? 0) >= limit;
+  const offset = (cursors.length - 1) * limit;
+  const pending = input.trim() !== filter || (q.isFetching && !q.isLoading);
   const filtered = Boolean(filter || organisationId || userId);
   const clear = () => {
     setInput('');
@@ -311,7 +324,7 @@ export function AuditPage() {
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : q.isLoading ? (
         <PageLoader />
-      ) : rows.length === 0 ? (
+      ) : rows.length === 0 && cursors.length === 1 ? (
         <Card>
           <EmptyState
             icon={<ScrollText className="size-6" />}
@@ -331,19 +344,21 @@ export function AuditPage() {
         </Card>
       ) : (
         <Card className="overflow-hidden">
-          <p className="sr-only" role="status">
-            {rows.length} audit entries shown.
-          </p>
-          <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-auto">
             <table className="w-full min-w-[60rem] text-left text-sm">
-              <thead className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500">
+              <caption className="sr-only">Audit log, newest first</caption>
+              <thead className="sticky top-0 z-10 border-b border-slate-100 bg-white text-xs uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_rgb(241_245_249)]">
                 <tr>
-                  <th className="px-6 py-3 font-medium">Time</th>
-                  <th className="px-3 py-3 font-medium">Event</th>
-                  <th className="px-3 py-3 font-medium">By</th>
-                  <th className="px-3 py-3 font-medium">Target</th>
-                  <th className="px-3 py-3 font-medium">IP</th>
-                  <th className="px-6 py-3 font-medium">Details</th>
+                  <th scope="col" aria-sort="descending" className="px-6 py-3 font-medium">
+                    <span className="inline-flex items-center gap-1 text-slate-800" title="Newest first">
+                      Time (Brussels) <ArrowDown className="size-3.5" aria-hidden />
+                    </span>
+                  </th>
+                  <th scope="col" className="px-3 py-3 font-medium">Event</th>
+                  <th scope="col" className="px-3 py-3 font-medium">By</th>
+                  <th scope="col" className="px-3 py-3 font-medium">Target</th>
+                  <th scope="col" className="px-3 py-3 font-medium">IP</th>
+                  <th scope="col" className="px-6 py-3 font-medium">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -351,7 +366,11 @@ export function AuditPage() {
                   const t = target(r);
                   return (
                     <tr key={r.id} className="align-top">
-                      <td className="whitespace-nowrap px-6 py-2.5 text-slate-500">{fmtDateTime(r.at)}</td>
+                      <td className="whitespace-nowrap px-6 py-2.5 font-mono text-xs text-slate-600" data-testid="audit-time">
+                        <time dateTime={r.at} title={r.at}>
+                          {fmtDateTimeBE(r.at)}
+                        </time>
+                      </td>
                       <td className="max-w-md px-3 py-2.5">
                         <div className="text-slate-800">{describe(r)}</div>
                         <span className={clsx('mt-1 inline-block whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[11px]', tone(r.action))}>{displayAction(r.action)}</span>
@@ -384,13 +403,21 @@ export function AuditPage() {
               </tbody>
             </table>
           </div>
-          {q.hasNextPage && (
-            <div className="border-t border-slate-100 p-4 text-center">
-              <Button variant="secondary" onClick={() => q.fetchNextPage()} loading={q.isFetchingNextPage}>
-                Load more
-              </Button>
-            </div>
-          )}
+          <Pager
+            className="border-t border-slate-100 px-6 py-3"
+            label="audit entries"
+            page={cursors.length - 1}
+            pageCount={null}
+            pageSize={limit}
+            hasNext={hasNext && !q.isPlaceholderData}
+            hasPrevious={cursors.length > 1}
+            onPageSize={setLimit}
+            onPage={(p) => {
+              if (p < cursors.length - 1) setCursors((c) => c.slice(0, -1));
+              else if (rows.length) setCursors((c) => [...c, rows[rows.length - 1].id]);
+            }}
+            status={`Entries ${offset + 1} to ${offset + rows.length}${hasNext ? '' : ` of ${offset + rows.length}`}`}
+          />
         </Card>
       )}
     </>

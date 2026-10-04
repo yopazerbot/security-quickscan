@@ -50,7 +50,7 @@ export function StepLaunch({ scan, back, navigating }: StepProps) {
           <ul className="space-y-3">
             {scan.systems.map((s) => (
               <li key={s.id} className="flex items-center gap-3">
-                <ProviderIcon provider={s.provider} className="size-6" />
+                <ProviderIcon provider={s.provider} className="size-6" decorative />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-slate-800">{s.label}</div>
                   <div className="text-xs text-slate-500">{PROVIDER_LABELS[s.provider]}</div>

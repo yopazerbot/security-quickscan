@@ -140,7 +140,7 @@ export function systemIdentity(provider: Provider, config: unknown, details: unk
     : Array.isArray(c.subscriptionIds)
       ? c.subscriptionIds.map(String)
       : [];
-  const subText = subs.length ? `${subs.length === 1 ? 'subscription' : 'subscriptions'} ${listNames(subs)}` : null;
+  const subText = subs.length ? `${subs.length === 1 ? 'subscription' : 'subscriptions'}: ${listNames(subs)}` : null;
   return [tenant, subText].filter(Boolean).join('; ') || null;
 }
 

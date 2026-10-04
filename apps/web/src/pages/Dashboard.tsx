@@ -1,7 +1,8 @@
-import { INDUSTRIES } from '@qs/shared';
+import { INDUSTRIES, type Provider } from '@qs/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ArrowRight, Building2, Plus, Radar } from 'lucide-react';
 import { Link } from 'react-router';
+import { ProviderIcon } from '../components/ProviderIcon';
 import { Card, DemoBadge, EmptyState, ErrorState, GradeBadge, LinkButton, PageHeader, PageLoader, Stat } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
@@ -76,8 +77,17 @@ export function Dashboard() {
                         {s.customerName}
                         {s.isDemo && <DemoBadge />}
                       </div>
-                      <div className="truncate text-xs text-slate-500">
-                        {s.name} · {fmtDate(s.finishedAt ?? s.createdAt)}
+                      <div className="flex min-w-0 items-center gap-2 text-xs text-slate-500">
+                        <span className="truncate">
+                          {s.name} · {fmtDate(s.finishedAt ?? s.createdAt)}
+                        </span>
+                        {Array.isArray(s.providers) && s.providers.length > 0 && (
+                          <span className="flex shrink-0 items-center gap-1">
+                            {(s.providers as Provider[]).map((p) => (
+                              <ProviderIcon key={p} provider={p} className="size-3.5" />
+                            ))}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <ScanStatusBadge status={s.status} />

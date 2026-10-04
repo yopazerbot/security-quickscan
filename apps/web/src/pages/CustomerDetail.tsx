@@ -1,4 +1,4 @@
-import { CHECKS_BY_ID, INDUSTRIES, REGULATIONS, computeRiskProfile, type Provider, type Role } from '@qs/shared';
+import { ALL_SYSTEMS_KEY, CHECKS_BY_ID, INDUSTRIES, PROVIDER_LABELS, PROVIDER_SHORT, REGULATIONS, computeRiskProfile, type Provider, type Role } from '@qs/shared';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ArrowRight, ArrowRightLeft, ChevronDown, Download, KeyRound, LogOut, Pencil, Play, Radar, Trash2, UserPlus, X } from 'lucide-react';
@@ -7,12 +7,15 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CONTEXT_LABELS, RISK_STYLE } from '../components/ContextForm';
 import { AsyncButton, useAction, useToast } from '../components/feedback';
+import { DataTable } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
+import { SystemBadge } from '../components/SystemBadge';
 import { AnchorButton, Badge, Button, Card, DemoBadge, EmptyState, ErrorState, Field, GradeBadge, Input, LinkButton, Modal, PageHeader, PageLoader, Select, Spinner } from '../components/ui';
 import { del, get, patch, post, put } from '../lib/api';
 import { accessCan, useAuth, type CustomerAccess } from '../lib/auth';
 import { fmtDate } from '../lib/format';
 import { scanLink } from '../lib/scan-link';
+import { keyOfScanSystem, parseSystemKey, systemIdentity } from '../lib/systems';
 import { useDocumentTitle } from '../lib/use-document-title';
 import { ScanStatusBadge } from './Customers';
 
@@ -124,31 +127,13 @@ export function CustomerDetail() {
                   : 'Scans and reports appear here once someone with edit access runs a scan for this organisation.'}
               </EmptyState>
             ) : (
-              <ul className="-m-6 divide-y divide-slate-100">
-                {c.scans.map((s) => (
-                  <ScanRow key={s.id} s={s} customerId={c.id} canEdit={can.edit} />
-                ))}
-              </ul>
+              <div className="-m-6">
+                <ScanTable scans={c.scans} customerId={c.id} canEdit={can.edit} />
+              </div>
             )}
           </Card>
           {finished.length > 0 && <StoredSecretsCard scans={finished} canEdit={can.edit} />}
-          {triaged.length > 0 && (
-            <Card title="Triaged findings" subtitle="Risk acceptances and false positives apply to scans that finish from now on.">
-              <ul className="-my-2 divide-y divide-slate-100">
-                {triaged.map((t: any) => (
-                  <li key={`${t.checkId}|${t.systemKey ?? '*'}`} className="py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-slate-800">{CHECKS_BY_ID[t.checkId]?.title ?? t.checkId}</span>
-                      <span className={clsx('rounded-md px-2 py-0.5 text-xs font-medium', t.status === 'accepted' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600')}>
-                        {t.status === 'accepted' ? 'Risk accepted' : 'False positive'}
-                      </span>
-                    </div>
-                    {t.note && <p className="mt-1 text-xs text-slate-500">{t.note}</p>}
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
+          {triaged.length > 0 && <TriagedCard triaged={triaged} scans={finished} />}
         </div>
         <div className="space-y-6">
           <Card title="Risk profile">
@@ -226,70 +211,157 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-/** One scan in the list. Drafts open the wizard for editors only; view-only users see them as plain rows. */
-function ScanRow({ s, customerId, canEdit }: { s: ScanSummary; customerId: string; canEdit: boolean }) {
-  const qc = useQueryClient();
-  const draft = s.status === 'draft';
-  const linked = !draft || canEdit;
-  const body = (
-    <>
-      <GradeBadge grade={s.grade} size="sm" />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-slate-900">{s.name}</div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-          {draft ? `Draft started ${fmtDate(s.createdAt)}` : fmtDate(s.finishedAt ?? s.createdAt)}
-          <span className="flex gap-1">
-            {(s.providers as Provider[]).map((p) => (
-              <ProviderIcon key={p} provider={p} className="size-3.5" />
-            ))}
-          </span>
-        </div>
-      </div>
-      {s.score !== null && s.score !== undefined && <span className="text-sm font-semibold text-slate-700">{s.score}</span>}
-      <ScanStatusBadge status={s.status} />
-    </>
-  );
+/** The organisation's scans. Drafts open the wizard for editors only; view-only users see them as plain rows. */
+function ScanTable({ scans, customerId, canEdit }: { scans: ScanSummary[]; customerId: string; canEdit: boolean }) {
+  const nav = useNavigate();
+  const linked = (s: ScanSummary) => s.status !== 'draft' || canEdit;
   return (
-    <li className="flex items-center transition hover:bg-slate-50">
-      {linked ? (
-        <Link to={scanLink(s)} className="flex min-w-0 flex-1 items-center gap-4 py-4 pl-6 pr-3">
-          {body}
-          <ArrowRight className="size-4 text-slate-500" aria-hidden />
-        </Link>
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-4 py-4 pl-6 pr-3" title="Only people with edit access can open a draft.">
-          {body}
-        </div>
-      )}
-      {draft && canEdit && (
-        <div className="pr-4">
-          <AsyncButton
-            size="sm"
-            variant="ghost"
-            className="text-red-700 hover:bg-red-50"
-            aria-label={`Discard draft ${s.name}`}
-            title="Discard draft"
-            icon={<Trash2 className="size-3.5" aria-hidden />}
-            success="The draft was discarded."
-            confirm={{
-              title: 'Discard draft?',
-              danger: true,
-              confirmLabel: 'Discard draft',
-              body: (
-                <>
-                  <strong>{s.name}</strong> is deleted with its systems and any stored credentials. Finished scans are not affected.
-                </>
-              ),
-            }}
-            onClick={async () => {
-              await del(`/api/scans/${s.id}`);
-              await qc.invalidateQueries({ queryKey: ['customer', customerId] });
-              await qc.invalidateQueries({ queryKey: ['scans'] });
-            }}
-          />
-        </div>
-      )}
-    </li>
+    <DataTable
+      storageKey="organisation-scans"
+      label="scans"
+      caption="Scans"
+      minWidth="44rem"
+      rows={scans}
+      rowKey={(s) => s.id}
+      onRowClick={(s) => linked(s) && nav(scanLink(s))}
+      hidePagerWhenSmall
+      columns={[
+        {
+          key: 'name',
+          header: 'Name',
+          sort: (s) => s.name.toLowerCase(),
+          render: (s) =>
+            linked(s) ? (
+              <Link to={scanLink(s)} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">
+                {s.name}
+              </Link>
+            ) : (
+              <span className="font-medium text-slate-900" title="Only people with edit access can open a draft.">
+                {s.name}
+              </span>
+            ),
+        },
+        { key: 'status', header: 'Status', sort: (s) => s.status, render: (s) => <ScanStatusBadge status={s.status} /> },
+        {
+          key: 'grade',
+          header: 'Grade',
+          sort: (s) => s.score ?? null,
+          render: (s) => (s.status === 'draft' ? <span className="text-slate-500">-</span> : <GradeBadge grade={s.grade} score={s.score} size="sm" />),
+        },
+        {
+          key: 'systems',
+          header: 'Systems',
+          sort: (s) => s.providers.length,
+          render: (s) =>
+            s.providers.length ? (
+              <span className="flex flex-wrap gap-x-3 gap-y-1">
+                {(s.providers as Provider[]).map((p) => (
+                  <span key={p} className="inline-flex items-center gap-1 text-xs text-slate-600">
+                    <ProviderIcon provider={p} className="size-3.5" decorative />
+                    {PROVIDER_SHORT[p]}
+                    <span className="sr-only"> ({PROVIDER_LABELS[p]})</span>
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span className="text-xs text-slate-500">None yet</span>
+            ),
+        },
+        {
+          key: 'date',
+          header: 'Date',
+          sort: (s) => new Date(s.finishedAt ?? s.createdAt),
+          render: (s) => (
+            <span className="whitespace-nowrap text-xs text-slate-600">{s.status === 'draft' ? `Draft started ${fmtDate(s.createdAt)}` : fmtDate(s.finishedAt ?? s.createdAt)}</span>
+          ),
+        },
+        {
+          key: 'actions',
+          header: <span className="sr-only">Actions</span>,
+          align: 'right',
+          render: (s) =>
+            s.status === 'draft' && canEdit ? <DiscardDraft s={s} customerId={customerId} /> : linked(s) ? <ArrowRight className="ml-auto size-4 text-slate-500" aria-hidden /> : null,
+        },
+      ]}
+    />
+  );
+}
+
+function DiscardDraft({ s, customerId }: { s: ScanSummary; customerId: string }) {
+  const qc = useQueryClient();
+  return (
+    <AsyncButton
+      size="sm"
+      variant="ghost"
+      className="text-red-700 hover:bg-red-50"
+      aria-label={`Discard draft ${s.name}`}
+      title="Discard draft"
+      icon={<Trash2 className="size-3.5" aria-hidden />}
+      success="The draft was discarded."
+      confirm={{
+        title: 'Discard draft?',
+        danger: true,
+        confirmLabel: 'Discard draft',
+        body: (
+          <>
+            <strong>{s.name}</strong> is deleted with its systems and any stored credentials. Finished scans are not affected.
+          </>
+        ),
+      }}
+      onClick={async () => {
+        await del(`/api/scans/${s.id}`);
+        await qc.invalidateQueries({ queryKey: ['customer', customerId] });
+        await qc.invalidateQueries({ queryKey: ['scans'] });
+      }}
+    />
+  );
+}
+
+/**
+ * Risk acceptances and false positives, each with the system it applies to. Systems are resolved from the most
+ * recent finished scans; a key that no loaded scan knows still shows its platform and id.
+ */
+function TriagedCard({ triaged, scans }: { triaged: any[]; scans: ScanSummary[] }) {
+  const recent = scans.slice(0, 5);
+  const results = useQueries({ queries: recent.map((s) => ({ queryKey: ['scan', s.id], queryFn: () => get<ScanDetail>(`/api/scans/${s.id}`) })) });
+  const known = new Map<string, { provider: Provider; label: string; identity: string | null }>();
+  for (const r of results)
+    for (const sys of r.data?.systems ?? []) {
+      const key = keyOfScanSystem(sys);
+      if (!known.has(key)) known.set(key, { provider: sys.provider, label: sys.label, identity: systemIdentity(sys.provider, sys.connection?.details, sys.config) });
+    }
+  return (
+    <Card title="Triaged findings" subtitle="Risk acceptances and false positives apply to scans that finish from now on.">
+      <ul className="-my-2 divide-y divide-slate-100">
+        {triaged.map((t: any) => {
+          const key: string = t.systemKey ?? ALL_SYSTEMS_KEY;
+          const sys = known.get(key);
+          const parsed = parseSystemKey(key);
+          return (
+            <li key={`${t.checkId}|${key}`} className="py-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-slate-800">{CHECKS_BY_ID[t.checkId]?.title ?? t.checkId}</span>
+                <span className={clsx('shrink-0 rounded-md px-2 py-0.5 text-xs font-medium', t.status === 'accepted' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600')}>
+                  {t.status === 'accepted' ? 'Risk accepted' : 'False positive'}
+                </span>
+              </div>
+              <div className="mt-1">
+                {key === ALL_SYSTEMS_KEY ? (
+                  <span className="text-xs text-slate-600">All systems</span>
+                ) : sys ? (
+                  <SystemBadge provider={sys.provider} label={sys.label} identity={sys.identity} size="xs" />
+                ) : parsed.provider ? (
+                  <SystemBadge provider={parsed.provider} label={PROVIDER_LABELS[parsed.provider]} identity={parsed.id} size="xs" />
+                ) : (
+                  <span className="text-xs text-slate-600">{key}</span>
+                )}
+              </div>
+              {t.note && <p className="mt-1 text-xs text-slate-500">{t.note}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 
@@ -297,7 +369,14 @@ interface ScanDetail {
   id: string;
   name: string;
   status: string;
-  systems: { id: string; provider: Provider; label: string; credential: { hint: string; expiresAt: string | null; createdAt: string } | null }[];
+  systems: {
+    id: string;
+    provider: Provider;
+    label: string;
+    config?: Record<string, any> | null;
+    connection?: { details?: Record<string, any> | null } | null;
+    credential: { hint: string; expiresAt: string | null; createdAt: string } | null;
+  }[];
 }
 
 /**

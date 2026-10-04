@@ -2,6 +2,7 @@ import { ROLE_LABELS, ROLES, type Role } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Info, LogOut, Pencil, ShieldAlert, Trash2, UserPlus } from 'lucide-react';
 import { useId, useState } from 'react';
+import { DataTable } from '../components/data-table';
 import { AsyncButton, useToast } from '../components/feedback';
 import { Alert, Badge, Button, Card, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Select, Toggle } from '../components/ui';
 import { del, get, patch, post } from '../lib/api';
@@ -274,78 +275,106 @@ export function UsersPage() {
         }
       />
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[44rem] text-left text-sm">
-            <thead className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-6 py-3 font-medium">User</th>
-                <th className="px-3 py-3 font-medium">Role</th>
-                <th className="px-3 py-3 font-medium">Owns</th>
-                <th className="px-3 py-3 font-medium">Last sign-in</th>
-                <th className="px-3 py-3 font-medium">Sessions</th>
-                <th className="px-6 py-3">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {all.map((u) => (
-                <tr key={u.id} className={u.active ? '' : 'bg-slate-50/60'}>
-                  <td className="px-6 py-3">
-                    <div className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
-                      {u.name}
-                      {u.isBreakglass && (
-                        <Badge className="bg-red-100 text-red-700">
-                          <ShieldAlert className="size-3" aria-hidden /> Break glass
-                        </Badge>
-                      )}
-                      {!u.active && <Badge className="bg-slate-200 text-slate-700">Inactive</Badge>}
-                    </div>
-                    <div className="text-xs text-slate-500">{u.email}</div>
-                  </td>
-                  <td className="px-3 py-3 text-slate-700">{ROLE_LABELS[u.role]}</td>
-                  <td className="px-3 py-3 text-slate-600">
-                    {u.ownedCount > 0 ? <span title={`Owns ${orgs(u.ownedCount)}`}>{u.ownedCount}</span> : <span className="text-slate-500">0</span>}
-                  </td>
-                  <td className="px-3 py-3 text-slate-600">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : u.isBreakglass || u.isDemo ? '-' : 'Invited, not signed in yet'}</td>
-                  <td className="px-3 py-3 text-slate-600">{u.activeSessions}</td>
-                  <td className="px-6 py-3 text-right">
-                    {!u.isBreakglass && (
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" aria-label={`Edit ${u.name || u.email}`} title="Edit" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditing(u)} />
-                        {u.activeSessions > 0 && u.id !== me?.user.id && (
-                          <AsyncButton
-                            size="sm"
-                            variant="ghost"
-                            aria-label={`Sign out ${u.name || u.email} everywhere`}
-                            title="Sign out everywhere"
-                            icon={<LogOut className="size-3.5" aria-hidden />}
-                            success={`${u.email} was signed out everywhere.`}
-                            onClick={async () => {
-                              await post(`/api/users/${u.id}/revoke-sessions`);
-                              await refresh();
-                            }}
-                          />
-                        )}
-                        {u.id !== me?.user.id && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-600"
-                            aria-label={`Delete ${u.name || u.email}`}
-                            title="Delete"
-                            icon={<Trash2 className="size-3.5" aria-hidden />}
-                            onClick={() => setDeleting(u)}
-                          />
-                        )}
-                      </div>
+        <DataTable
+          storageKey="users"
+          label="users"
+          caption="Users"
+          minWidth="52rem"
+          rows={all}
+          rowKey={(u) => u.id}
+          rowClassName={(u) => (u.active ? undefined : 'bg-slate-50/60')}
+          columns={[
+            {
+              key: 'user',
+              header: 'User',
+              sort: (u) => (u.name || u.email).toLowerCase(),
+              render: (u) => (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                    {u.name}
+                    {u.isBreakglass && (
+                      <Badge className="bg-red-100 text-red-700">
+                        <ShieldAlert className="size-3" aria-hidden /> Break glass
+                      </Badge>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                  <div className="text-xs text-slate-500">{u.email}</div>
+                </>
+              ),
+            },
+            { key: 'role', header: 'Role', sort: (u) => ROLE_LABELS[u.role], render: (u) => <span className="text-slate-700">{ROLE_LABELS[u.role]}</span> },
+            {
+              key: 'owns',
+              header: 'Owns',
+              sort: (u) => u.ownedCount,
+              align: 'right',
+              render: (u) =>
+                u.ownedCount > 0 ? (
+                  <span className="text-slate-600" title={`Owns ${orgs(u.ownedCount)}`}>
+                    {u.ownedCount}
+                  </span>
+                ) : (
+                  <span className="text-slate-500">0</span>
+                ),
+            },
+            {
+              key: 'status',
+              header: 'Status',
+              sort: (u) => (u.active ? 0 : 1),
+              render: (u) =>
+                u.active ? (
+                  <Badge className="bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">Active</Badge>
+                ) : (
+                  <Badge className="bg-slate-200 text-slate-700">Inactive</Badge>
+                ),
+            },
+            {
+              key: 'lastLogin',
+              header: 'Last sign-in',
+              sort: (u) => (u.lastLoginAt ? new Date(u.lastLoginAt) : null),
+              render: (u) => (
+                <span className="text-slate-600">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : u.isBreakglass || u.isDemo ? '-' : 'Invited, not signed in yet'}</span>
+              ),
+            },
+            { key: 'sessions', header: 'Sessions', sort: (u) => u.activeSessions, align: 'right', render: (u) => <span className="text-slate-600">{u.activeSessions}</span> },
+            {
+              key: 'actions',
+              header: <span className="sr-only">Actions</span>,
+              align: 'right',
+              render: (u) =>
+                !u.isBreakglass && (
+                  <div className="flex justify-end gap-1">
+                    <Button size="sm" variant="ghost" aria-label={`Edit ${u.name || u.email}`} title="Edit" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditing(u)} />
+                    {u.activeSessions > 0 && u.id !== me?.user.id && (
+                      <AsyncButton
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Sign out ${u.name || u.email} everywhere`}
+                        title="Sign out everywhere"
+                        icon={<LogOut className="size-3.5" aria-hidden />}
+                        success={`${u.email} was signed out everywhere.`}
+                        onClick={async () => {
+                          await post(`/api/users/${u.id}/revoke-sessions`);
+                          await refresh();
+                        }}
+                      />
+                    )}
+                    {u.id !== me?.user.id && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-red-600"
+                        aria-label={`Delete ${u.name || u.email}`}
+                        title="Delete"
+                        icon={<Trash2 className="size-3.5" aria-hidden />}
+                        onClick={() => setDeleting(u)}
+                      />
+                    )}
+                  </div>
+                ),
+            },
+          ]}
+        />
       </Card>
       {editing !== undefined && <UserForm user={editing ?? undefined} all={all} onClose={() => setEditing(undefined)} />}
       {deleting && <DeleteUserModal user={deleting} all={all} onClose={() => setDeleting(null)} />}

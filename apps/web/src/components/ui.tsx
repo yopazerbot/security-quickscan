@@ -406,11 +406,12 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
   );
 }
 
-export function CopyButton({ value, label }: { value: string; label?: string }) {
+export function CopyButton({ value, label, ariaLabel }: { value: string; label?: string; ariaLabel?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
       onClick={() => {
         navigator.clipboard.writeText(value).then(
           () => {

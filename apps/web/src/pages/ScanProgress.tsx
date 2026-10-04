@@ -6,10 +6,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { AsyncButton } from '../components/feedback';
 import { ProviderIcon } from '../components/ProviderIcon';
+import { SystemBadge } from '../components/SystemBadge';
 import { Alert, Button, Card, ErrorState, LinkButton, PageHeader, PageLoader, StatusBadge } from '../components/ui';
 import { ApiError, get, post } from '../lib/api';
 import { accessCan } from '../lib/auth';
 import { fmtDuration, GRADE_HEX, NOT_ASSESSED_HEX, STATUS_STYLE } from '../lib/format';
+import { systemIdentity } from '../lib/systems';
 import { useDocumentTitle } from '../lib/use-document-title';
 import type { WizardScan } from './wizard/ScanWizard';
 
@@ -377,17 +379,35 @@ export function ScanProgress() {
           {[...bySystem.entries()].map(([sid, rows]) => {
             const s = sysLabel.get(sid);
             const d = rows.filter((r) => !['pending', 'running'].includes(r.status)).length;
+            const identity = s ? systemIdentity(s.provider, s.connection?.details, s.config) : null;
+            const count = (k: string) => rows.filter((r) => r.status === k).length;
+            const tally: [string, number, string][] = [
+              ['passed', count('pass'), 'text-emerald-700'],
+              ['failed', count('fail'), 'text-red-700'],
+              ['warnings', count('warn'), 'text-amber-700'],
+            ];
             return (
               <Card key={sid}>
                 <div className="p-5">
-                  <div className="mb-4 flex items-center gap-3">
-                    {s && <ProviderIcon provider={s.provider} className="size-7" />}
-                    <div className="flex-1">
+                  <div className="mb-4 flex flex-wrap items-center gap-3">
+                    {s && <ProviderIcon provider={s.provider} className="size-7" decorative />}
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold text-slate-900">{s?.label}</div>
-                      <div className="text-xs text-slate-500">{s && PROVIDER_LABELS[s.provider]}</div>
+                      <div className="truncate text-xs text-slate-500">
+                        {s && PROVIDER_LABELS[s.provider]}
+                        {identity && <> · {identity}</>}
+                      </div>
+                    </div>
+                    <div role="group" className="flex items-center gap-3 text-xs text-slate-600" aria-label={`${s?.label ?? 'System'} results so far`}>
+                      {tally.map(([l, n, tone]) => (
+                        <span key={l}>
+                          <span className={clsx('font-semibold', n === 0 ? 'text-slate-600' : tone)}>{n}</span> {l}
+                        </span>
+                      ))}
                     </div>
                     <span className="text-sm font-medium text-slate-600">
                       {d}/{rows.length}
+                      <span className="sr-only"> checks done</span>
                     </span>
                   </div>
                   <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-hidden>
@@ -400,8 +420,8 @@ export function ScanProgress() {
                         <div
                           key={r.checkId}
                           role="img"
-                          aria-label={`${m?.title}: ${STATUS_STYLE[r.status].label}`}
-                          title={`${m?.title} (A.${m?.frameworks.iso27001[0]} ${ISO_BY_ID[m?.frameworks.iso27001[0] ?? '']?.title ?? ''})\n${STATUS_STYLE[r.status].label}${r.summary ? `: ${r.summary}` : ''}`}
+                          aria-label={`${m?.title} on ${s?.label ?? 'this system'}: ${STATUS_STYLE[r.status].label}`}
+                          title={`${m?.title} (A.${m?.frameworks.iso27001[0]} ${ISO_BY_ID[m?.frameworks.iso27001[0] ?? '']?.title ?? ''})\n${s?.label ?? ''}${identity ? ` (${identity})` : ''}\n${STATUS_STYLE[r.status].label}${r.summary ? `: ${r.summary}` : ''}`}
                           className={clsx('size-7 rounded-md transition-colors duration-500', tileClass(r.status))}
                         />
                       );
@@ -423,6 +443,11 @@ export function ScanProgress() {
                     <span className="truncate text-sm font-medium text-slate-800">{CHECKS_BY_ID[r.checkId]?.title}</span>
                     <StatusBadge status={r.status} />
                   </div>
+                  {sysLabel.get(r.systemId) && (
+                    <div className="mt-1">
+                      <SystemBadge provider={sysLabel.get(r.systemId)!.provider} label={sysLabel.get(r.systemId)!.label} size="xs" showIdentity={false} />
+                    </div>
+                  )}
                   <div className="mt-0.5 truncate text-xs text-slate-500">{r.summary}</div>
                 </li>
               ))}

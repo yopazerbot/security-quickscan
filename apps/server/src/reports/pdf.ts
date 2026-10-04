@@ -309,7 +309,7 @@ function summaryPage(doc: Doc, m: ReportModel) {
 export function systemsTable(doc: Doc, m: ReportModel) {
   h2(doc, 'Results per system');
   const W = doc.page.width - 2 * M;
-  const cols = { icon: M + 4, system: M + 22, identity: M + 150, grade: M + 340, failed: M + 425, warn: M + 462 };
+  const cols = { icon: M + 4, system: M + 22, identity: M + 150, grade: M + 335, failed: M + 405, warn: M + 445 };
   const head = () => {
     const y = doc.y;
     doc.rect(M, y, W, 18).fill(C.ink);
@@ -331,14 +331,15 @@ export function systemsTable(doc: Doc, m: ReportModel) {
     if (i % 2 === 0) doc.rect(M, y - 3, W, 20).fill(C.soft);
     drawProviderIcon(doc, s.provider, cols.icon, y, 12);
     doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text(s.label, cols.system, y + 2, { width: 124, height: 12, ellipsis: true, lineBreak: false });
-    doc.fillColor(C.body).font('Helvetica').fontSize(8.5).text(s.identity ?? s.providerLabel, cols.identity, y + 2, { width: 185, height: 12, ellipsis: true, lineBreak: false });
+    doc.fillColor(C.body).font('Helvetica').fontSize(8.5).text(s.identity ?? s.providerLabel, cols.identity, y + 2, { width: 180, height: 12, ellipsis: true, lineBreak: false });
     const sum = s.summary;
-    doc.fillColor(sum?.grade ? (GRADE[sum.grade] ?? C.ink) : C.muted).font('Helvetica-Bold').fontSize(9).text(sum ? gradeText(sum) : '-', cols.grade, y + 2, { width: 82, lineBreak: false });
-    doc.fillColor(sum?.counts.fail ? C.fail : C.body).text(String(sum?.counts.fail ?? 0), cols.failed, y + 2, { width: 34, lineBreak: false });
-    doc.fillColor(sum?.counts.warn ? C.warn : C.body).text(String(sum?.counts.warn ?? 0), cols.warn, y + 2, { width: 33, lineBreak: false });
+    doc.fillColor(sum?.grade ? (GRADE[sum.grade] ?? C.ink) : C.muted).font('Helvetica-Bold').fontSize(9).text(sum ? gradeText(sum) : '-', cols.grade, y + 2, { width: 68, lineBreak: false });
+    doc.fillColor(sum?.counts.fail ? C.fail : C.body).text(String(sum?.counts.fail ?? 0), cols.failed, y + 2, { width: 36, lineBreak: false });
+    doc.fillColor(sum?.counts.warn ? C.warn : C.body).text(String(sum?.counts.warn ?? 0), cols.warn, y + 2, { width: 48, lineBreak: false });
     doc.y = y + 20;
   });
   doc.x = M;
+  doc.moveDown(0.6);
 }
 
 /** Systems whose (untriaged) failures or warnings fed the control, by label. */
@@ -457,7 +458,7 @@ function itemList(doc: Doc, title: string, items: ReportItem[]) {
     const rw = Math.min(doc.widthOfString(right), doc.page.width - 2 * M - 365);
     drawProviderIcon(doc, f.provider, doc.page.width - M - rw - 14, y + 2, 10);
     doc.fillColor(C.muted).font('Helvetica').fontSize(8.5).text(right, M + 365, y + 3, { width: doc.page.width - 2 * M - 365, align: 'right', height: 12, ellipsis: true });
-    doc.y = after;
+    doc.y = Math.max(after, y + 18);
     doc.y = Math.max(doc.y, y + 18);
   }
 }
@@ -524,7 +525,7 @@ function appendix(doc: Doc, m: ReportModel) {
     ensure(doc, 16);
     const y = doc.y;
     drawProviderIcon(doc, s.provider, M, y, 11);
-    para(doc, `${s.label}  -  ${s.providerLabel}${s.identity ? `  -  ${s.identity}` : ''}`, { width: doc.page.width - 2 * M - 16 });
+    doc.fillColor(C.body).font('Helvetica').fontSize(10).text(`${s.label}  -  ${s.providerLabel}${s.identity ? `  -  ${s.identity}` : ''}`, M + 16, y, { width: doc.page.width - 2 * M - 16, lineGap: 2 });
     doc.y = Math.max(doc.y, y + 14);
   }
   doc.x = M;

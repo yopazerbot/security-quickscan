@@ -245,7 +245,7 @@ function SystemAccess({ scan, s, refresh }: { scan: WizardScan; s: WizardSystem;
   return (
     <Card>
       <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
-        <ProviderIcon provider={s.provider} className="size-8" />
+        <ProviderIcon provider={s.provider} className="size-8" decorative />
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-semibold text-slate-900">{s.label}</div>
           <div className="text-xs text-slate-500">

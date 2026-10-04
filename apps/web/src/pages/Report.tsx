@@ -19,12 +19,17 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { Bar, BarChart, Cell, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { RISK_STYLE } from '../components/ContextForm';
 import { AsyncButton, useToast } from '../components/feedback';
+import { DataTable, Pager, usePaged } from '../components/data-table';
 import { ProviderIcon } from '../components/ProviderIcon';
+import { ResourceList } from '../components/ResourceList';
+import { SystemBadge } from '../components/SystemBadge';
 import { Alert, AnchorButton, Button, Card, EmptyState, ErrorState, Input, PageHeader, PageLoader, Select, SeverityBadge, StatusBadge, Textarea } from '../components/ui';
 import { del, get, post, put } from '../lib/api';
 import { accessCan } from '../lib/auth';
 import { fmtDate, fmtDateTime, GRADE_HEX, SEVERITY_HEX, VERDICT_STYLE } from '../lib/format';
 import { useDocumentTitle } from '../lib/use-document-title';
+import { IsoSection } from './report/IsoSection';
+import { SystemCards } from './report/SystemCards';
 
 type Item = any;
 
@@ -39,65 +44,40 @@ const countCls = (n: number, tone: string) => (n === 0 ? 'text-slate-600' : tone
 /** Smooth scrolling unless the user asked the system for reduced motion. */
 const scrollBehavior = (): ScrollBehavior => (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
-function ControlHeatmap({ controls, selected, onSelect }: { controls: any[]; selected: string | null; onSelect(id: string | null): void }) {
-  const byId = new Map(controls.map((c) => [c.id, c]));
-  const themes = [
-    { key: 'organizational', label: 'A.5 Organizational' },
-    { key: 'people', label: 'A.6 People' },
-    { key: 'technological', label: 'A.8 Technological' },
-  ];
-  return (
-    <div className="space-y-4">
-      {themes.map((t) => {
-        const list = ISO_CONTROLS.filter((c) => c.theme === t.key && byId.has(c.id));
-        if (!list.length) return null;
-        return (
-          <div key={t.key}>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t.label}</div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-2">
-              {list.map((c) => {
-                const a = byId.get(c.id);
-                const v = a.verdict as ControlVerdict;
-                const pct = a.score !== null && a.score !== undefined ? `${a.score}%` : null;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    aria-pressed={selected === c.id}
-                    aria-label={`A.${c.id} ${c.title}: ${VERDICT_LABELS[v]}${pct ? `, ${pct}` : ''}`}
-                    onClick={() => onSelect(selected === c.id ? null : c.id)}
-                    title={`A.${c.id} ${c.title}\n${VERDICT_LABELS[v]}${pct ? ` (${pct})` : ''}`}
-                    className={clsx(
-                      'rounded-lg px-2 py-2 text-left transition motion-safe:hover:scale-[1.03]',
-                      VERDICT_STYLE[v].cls,
-                      // The selected control gets a strong ring; the others keep their colour so verdicts stay readable.
-                      selected === c.id && 'ring-[3px] ring-slate-900 ring-offset-2',
-                    )}
-                  >
-                    <div className="flex items-baseline justify-between gap-1">
-                      <span className="font-mono text-sm font-semibold">A.{c.id}</span>
-                      <span className="text-[10px] font-semibold" aria-hidden>
-                        {pct ?? 'n/a'}
-                      </span>
-                    </div>
-                    <div className="line-clamp-2 text-[10px] leading-tight">{c.title}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-      <div className="flex flex-wrap gap-3 pt-1 text-xs text-slate-500">
-        {(Object.keys(VERDICT_LABELS) as ControlVerdict[]).map((v) => (
-          <span key={v} className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm" style={{ backgroundColor: VERDICT_STYLE[v].hex }} aria-hidden />
-            {VERDICT_LABELS[v]}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
+/** The system of a report item: identity from the item (newer reports) or from the report's system list. */
+const identityOf = (f: Item, systems: Map<string, any>): string | null => f.systemIdentity ?? systems.get(f.systemId)?.identity ?? null;
+
+const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+const STATUS_ORDER: Record<string, number> = { fail: 0, warn: 1, error: 2, na: 3, pass: 4 };
+
+type FindingSort = 'severity' | 'system' | 'status' | 'title';
+const FINDING_SORTS: [FindingSort, string][] = [
+  ['severity', 'Severity'],
+  ['system', 'System'],
+  ['status', 'Status'],
+  ['title', 'Title'],
+];
+
+function sortFindings(list: Item[], by: FindingSort): Item[] {
+  // The server sends findings by severity; the other orders keep severity as the tie-breaker.
+  if (by === 'severity') return list;
+  const sev = (f: Item) => SEV_ORDER[f.severity] ?? 9;
+  const key: Record<Exclude<FindingSort, 'severity'>, (a: Item, b: Item) => number> = {
+    system: (a, b) => String(a.systemLabel).localeCompare(String(b.systemLabel)),
+    status: (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
+    title: (a, b) => String(a.title).localeCompare(String(b.title)),
+  };
+  return [...list].sort((a, b) => key[by](a, b) || sev(a) - sev(b) || String(a.title).localeCompare(String(b.title)));
+}
+
+const SORT_KEY = 'qs_report_findings_sort';
+function readSort(): FindingSort {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return FINDING_SORTS.some(([k]) => k === v) ? (v as FindingSort) : 'severity';
+  } catch {
+    return 'severity';
+  }
 }
 
 function Triage({ customerId, item, onSaved }: { customerId: string; item: Item; onSaved(): void }) {
@@ -151,29 +131,18 @@ function Triage({ customerId, item, onSaved }: { customerId: string; item: Item;
   );
 }
 
-function FindingDetail({ f, customerId, canWrite, interactive, onTriaged }: { f: Item; customerId: string; canWrite: boolean; interactive: boolean; onTriaged(): void }) {
+function FindingDetail({ f, identity, customerId, canWrite, interactive, onTriaged }: { f: Item; identity: string | null; customerId: string; canWrite: boolean; interactive: boolean; onTriaged(): void }) {
   return (
     <>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+        <span className="font-semibold uppercase tracking-wide text-slate-500">System</span>
+        <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} size="sm" />
+      </div>
       <p className="text-sm text-slate-600">{f.description}</p>
       <div className="grid gap-5 lg:grid-cols-2 print:grid-cols-2">
         <div>
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Affected resources ({f.resources.length})</h4>
-          {f.resources.length === 0 ? (
-            <p className="text-sm text-slate-500">Tenant or account level setting.</p>
-          ) : (
-            <div className="max-h-64 overflow-y-auto rounded-lg ring-1 ring-slate-200 print:max-h-none print:overflow-visible">
-              <table className="w-full text-left text-xs">
-                <tbody className="divide-y divide-slate-100">
-                  {f.resources.map((r: any) => (
-                    <tr key={r.id}>
-                      <td className="px-3 py-2 font-medium text-slate-800">{r.name ?? r.id}</td>
-                      <td className="px-3 py-2 text-slate-500">{r.detail}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {f.resources.length === 0 ? <p className="text-sm text-slate-500">Tenant or account level setting.</p> : <ResourceList resources={f.resources} />}
         </div>
         <div className="space-y-4">
           <div className="rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-100">
@@ -197,7 +166,8 @@ function FindingDetail({ f, customerId, canWrite, interactive, onTriaged }: { f:
             <div className="mt-2 flex flex-wrap gap-3">
               {f.references.map((r: string) => (
                 <a key={r} href={r} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-brand-600 hover:underline">
-                  Reference <ExternalLink className="size-3" />
+                  Reference <ExternalLink className="size-3" aria-hidden />
+                  <span className="sr-only"> (opens in a new tab)</span>
                   <span className="print-only">{r}</span>
                 </a>
               ))}
@@ -221,7 +191,23 @@ function FindingDetail({ f, customerId, canWrite, interactive, onTriaged }: { f:
   );
 }
 
-function FindingCard({ f, customerId, canWrite, onTriaged, focused, showNew }: { f: Item; customerId: string; canWrite: boolean; onTriaged(): void; focused: boolean; showNew: boolean }) {
+function FindingCard({
+  f,
+  identity,
+  customerId,
+  canWrite,
+  onTriaged,
+  focused,
+  showNew,
+}: {
+  f: Item;
+  identity: string | null;
+  customerId: string;
+  canWrite: boolean;
+  onTriaged(): void;
+  focused: boolean;
+  showNew: boolean;
+}) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (focused) setOpen(true);
@@ -247,10 +233,7 @@ function FindingCard({ f, customerId, canWrite, onTriaged, focused, showNew }: {
             <div className="mt-0.5 line-clamp-2 text-sm text-slate-500 md:truncate">{f.summary}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:justify-end">
-            <span className="flex items-center gap-1.5 text-xs text-slate-500">
-              <ProviderIcon provider={f.provider} className="size-4" />
-              {f.systemLabel}
-            </span>
+            <SystemBadge provider={f.provider} label={f.systemLabel} identity={identity} showIdentity={false} size="xs" className="max-w-[14rem]" />
             <span className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] text-brand-700">A.{f.iso[0]}</span>
             <SeverityBadge severity={f.severity} />
             <StatusBadge status={f.status} />
@@ -260,12 +243,12 @@ function FindingCard({ f, customerId, canWrite, onTriaged, focused, showNew }: {
       </button>
       {open ? (
         <div id={bodyId} className="animate-fade-in space-y-5 border-t border-slate-100 px-5 py-5">
-          <FindingDetail f={f} customerId={customerId} canWrite={canWrite} interactive onTriaged={onTriaged} />
+          <FindingDetail f={f} identity={identity} customerId={customerId} canWrite={canWrite} interactive onTriaged={onTriaged} />
         </div>
       ) : (
         // Collapsed on screen, but always fully expanded on paper.
         <div className="print-only space-y-5 border-t border-slate-100 px-5 py-5">
-          <FindingDetail f={f} customerId={customerId} canWrite={canWrite} interactive={false} onTriaged={onTriaged} />
+          <FindingDetail f={f} identity={identity} customerId={customerId} canWrite={canWrite} interactive={false} onTriaged={onTriaged} />
         </div>
       )}
     </div>
@@ -278,7 +261,16 @@ export function Report() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['report', scanId], queryFn: () => get(`/api/scans/${scanId}/report`) });
   const [sev, setSev] = useState<string>('all');
-  const [platform, setPlatform] = useState<string>('all');
+  const [system, setSystem] = useState<string>('all');
+  const [sortBy, setSortByState] = useState<FindingSort>(readSort);
+  const setSortBy = (v: FindingSort) => {
+    setSortByState(v);
+    try {
+      localStorage.setItem(SORT_KEY, v);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   const [control, setControl] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>('all');
@@ -292,22 +284,26 @@ export function Report() {
   };
 
   const m = q.data;
+  const systems = useMemo(() => new Map<string, any>((m?.systems ?? []).map((x: any) => [x.id, x])), [m]);
   const findings = useMemo(() => {
     if (!m) return [];
-    return m.findings.filter(
+    const term = search.trim().toLowerCase();
+    const list = m.findings.filter(
       (f: Item) =>
         (sev === 'all' || f.severity === sev) &&
-        (platform === 'all' || f.provider === platform) &&
+        (system === 'all' || f.systemId === system) &&
         (!control || f.iso.includes(control)) &&
         (status === 'all' || f.status === status) &&
         (triage === 'all' || (f.triage?.status ?? 'open') === triage) &&
-        (!search || `${f.title} ${f.summary}`.toLowerCase().includes(search.toLowerCase())),
+        (!term || `${f.title} ${f.summary} ${f.systemLabel} ${identityOf(f, systems) ?? ''}`.toLowerCase().includes(term)),
     );
-  }, [m, sev, platform, control, status, triage, search]);
-  const filtered = sev !== 'all' || platform !== 'all' || control !== null || status !== 'all' || triage !== 'all' || search !== '';
+    return sortFindings(list, sortBy);
+  }, [m, systems, sev, system, control, status, triage, search, sortBy]);
+  const filtered = sev !== 'all' || system !== 'all' || control !== null || status !== 'all' || triage !== 'all' || search !== '';
+  const paged = usePaged(findings, 'report-findings', `${sev}|${system}|${control}|${status}|${triage}|${search}|${sortBy}`);
   const clearFilters = () => {
     setSev('all');
-    setPlatform('all');
+    setSystem('all');
     setControl(null);
     setStatus('all');
     setTriage('all');
@@ -315,15 +311,23 @@ export function Report() {
   };
 
   // Jump to a finding from the top risks list: filters are cleared first so the target is rendered.
+  const focusVisible = Boolean(focusKey && paged.visible.some((f: Item) => f.key === focusKey));
   useEffect(() => {
     if (!focusKey) return;
+    // The finding may be on another page of the list: go there first, then scroll once it is rendered.
+    if (!focusVisible) {
+      const idx = findings.findIndex((f: Item) => f.key === focusKey);
+      if (idx >= 0) paged.pagerProps.onPage(Math.floor(idx / paged.pagerProps.pageSize));
+      return;
+    }
     const el = document.getElementById(findingId(focusKey));
     el?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
     // Move keyboard focus to the finding so the next Tab continues from there.
     el?.querySelector<HTMLButtonElement>('[data-finding-toggle]')?.focus({ preventScroll: true });
     const t = setTimeout(() => setFocusKey(null), 2500);
     return () => clearTimeout(t);
-  }, [focusKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, focusVisible]);
   const jumpTo = (key: string) => {
     clearFilters();
     setFocusKey(key);
@@ -336,7 +340,13 @@ export function Report() {
   const s = m.summary;
   const radar = s.domainScores.filter((d: any) => d.score !== null).map((d: any) => ({ domain: DOMAIN_SHORT[d.domain as keyof typeof DOMAIN_SHORT], score: d.score }));
   const sevData = (['critical', 'high', 'medium', 'low'] as Severity[]).map((k) => ({ name: k[0].toUpperCase() + k.slice(1), value: s.severityCounts[k], fill: SEVERITY_HEX[k] }));
-  const verdicts = s.controls.reduce((a: Record<string, number>, c: any) => ({ ...a, [c.verdict]: (a[c.verdict] ?? 0) + 1 }), {});
+  const failCounts = new Map<string, { fail: number; warn: number }>();
+  for (const f of m.findings as Item[]) {
+    const c = failCounts.get(f.systemId) ?? { fail: 0, warn: 0 };
+    if (f.status === 'fail') c.fail++;
+    else if (f.status === 'warn') c.warn++;
+    failCounts.set(f.systemId, c);
+  }
   const cmp = m.comparison;
   // Score changes only mean something when both scans were graded on the same systems.
   const comparable = Boolean(cmp && !cmp.differentScope && cmp.previousScore !== null && s.score !== null);
@@ -405,10 +415,7 @@ export function Report() {
           <ul className="mt-3 space-y-2">
             {storedSecrets.map((x: any) => (
               <li key={x.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <ProviderIcon provider={x.provider} className="size-4" />
-                  {x.label}
-                </span>
+                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} showIdentity={false} />
                 <span className="text-xs">{x.credentialsExpireAt ? `Deleted automatically on ${fmtDateTime(x.credentialsExpireAt)}` : 'Kept until someone deletes it'}</span>
                 {can.edit && (
                   <AsyncButton
@@ -484,9 +491,8 @@ export function Report() {
                 <span className={clsx('rounded-md px-2 py-0.5 text-xs font-semibold ring-1', risk.cls)}>{risk.label} risk profile</span>
                 <span className="text-slate-300" aria-hidden>|</span>
                 {m.systems.map((x: any) => (
-                  <span key={x.id} className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-0.5 text-xs">
-                    <ProviderIcon provider={x.provider} className="size-3.5" />
-                    {x.label}
+                  <span key={x.id} className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">
+                    <SystemBadge provider={x.provider} label={x.label} showIdentity={false} size="xs" />
                   </span>
                 ))}
               </div>
@@ -526,19 +532,18 @@ export function Report() {
         </Card>
       </div>
 
+      {m.systems.length > 0 && <SystemCards systems={m.systems} fallbackCounts={failCounts} selected={system} onSelect={setSystem} />}
+
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <Card
+        <IsoSection
           className="lg:col-span-2"
-          title="ISO/IEC 27001:2022 Annex A"
-          subtitle={
-            <>
-              {s.controls.length} controls evidenced: {verdicts.effective ?? 0} effective, {verdicts.partial ?? 0} partial, {verdicts.not_effective ?? 0} not effective.{' '}
-              <span className="no-print">Click a control to filter findings.</span>
-            </>
-          }
-        >
-          <ControlHeatmap controls={s.controls} selected={control} onSelect={setControl} />
-        </Card>
+          controls={s.controls}
+          notCovered={s.notCovered}
+          systems={m.systems}
+          selected={control}
+          onSelect={setControl}
+          onSystem={(id) => setSystem(id)}
+        />
         <Card title="Score by domain">
           <div className="h-72" role="img" aria-label="Radar chart of the score per domain. The list that follows gives each score.">
             <ResponsiveContainer width="100%" height="100%">
@@ -581,7 +586,13 @@ export function Report() {
                   >
                     {f.title}
                   </a>
-                  <span className="hidden text-xs text-slate-500 sm:inline">{f.systemLabel}</span>
+                  <span className="hidden sm:inline-flex">
+                    <SystemBadge provider={f.provider} label={f.systemLabel} showIdentity={false} size="xs" className="max-w-[10rem]" />
+                  </span>
+                  <span className="sm:hidden">
+                    <ProviderIcon provider={f.provider} className="size-4" />
+                    <span className="sr-only">{f.systemLabel}</span>
+                  </span>
                   <span className="shrink-0">
                     <SeverityBadge severity={f.severity} />
                   </span>
@@ -600,6 +611,7 @@ export function Report() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-slate-800">{f.title}</span>
                     <SeverityBadge severity={f.severity} />
+                    <SystemBadge provider={f.provider} label={f.systemLabel} showIdentity={false} size="xs" />
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{f.remediation}</p>
                 </li>
@@ -615,6 +627,7 @@ export function Report() {
             <h2 className="text-lg font-semibold text-slate-900">Findings</h2>
             <p className="text-sm text-slate-500" role="status" aria-live="polite">
               {findings.length} of {m.findings.length} shown{control && <> for A.{control} {ISO_BY_ID[control]?.title}</>}
+              {system !== 'all' && systems.get(system) && <> on {systems.get(system).label}</>}
             </p>
           </div>
           <div className="no-print flex flex-wrap gap-2">
@@ -636,10 +649,19 @@ export function Report() {
                 <option key={k} value={k}>{l}</option>
               ))}
             </Select>
-            <Select value={platform} onChange={(e) => setPlatform(e.target.value)} className="w-44" aria-label="Filter by platform">
-              <option value="all">All platforms</option>
-              {[...new Set(m.systems.map((x: any) => x.provider))].map((p: any) => (
-                <option key={p} value={p}>{PROVIDER_LABELS[p as keyof typeof PROVIDER_LABELS]}</option>
+            <Select value={system} onChange={(e) => setSystem(e.target.value)} className="w-56" aria-label="Filter by system">
+              <option value="all">All systems</option>
+              {m.systems.map((x: any) => (
+                <option key={x.id} value={x.id}>
+                  {x.identity ? `${x.label} (${x.identity})` : x.label}
+                </option>
+              ))}
+            </Select>
+            <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as FindingSort)} className="w-44" aria-label="Sort findings">
+              {FINDING_SORTS.map(([k, l]) => (
+                <option key={k} value={k}>
+                  Sort by {l.toLowerCase()}
+                </option>
               ))}
             </Select>
             {control && <Button variant="ghost" onClick={() => setControl(null)}>Clear A.{control}</Button>}
@@ -651,9 +673,19 @@ export function Report() {
           </div>
         </div>
         <div className="space-y-2">
-          {findings.map((f: Item) => (
-            <FindingCard key={f.key} f={f} customerId={m.customer.id} canWrite={can.edit} onTriaged={refresh} focused={focusKey === f.key} showNew={comparable} />
+          {paged.visible.map((f: Item) => (
+            <FindingCard
+              key={f.key}
+              f={f}
+              identity={identityOf(f, systems)}
+              customerId={m.customer.id}
+              canWrite={can.edit}
+              onTriaged={refresh}
+              focused={focusKey === f.key}
+              showNew={comparable}
+            />
           ))}
+          {paged.showPager && <Pager {...paged.pagerProps} label="findings" className="pt-2" />}
           {findings.length === 0 && (
             <div className="rounded-xl bg-white ring-1 ring-slate-200">
               {m.findings.length === 0 ? (
@@ -670,7 +702,7 @@ export function Report() {
                     </Button>
                   }
                 >
-                  Try another severity, result or triage state, or clear the filters to see all {m.findings.length} findings.
+                  Try another severity, result, triage state or system, or clear the filters to see all {m.findings.length} findings.
                 </EmptyState>
               )}
             </div>
@@ -678,37 +710,95 @@ export function Report() {
         </div>
       </section>
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-2">
-        <Card title={`Passed checks (${m.passed.length})`} actions={<Button variant="ghost" size="sm" onClick={() => setShowPassed(!showPassed)}>{showPassed ? 'Hide' : 'Show'}</Button>}>
+      <div className="mt-10 space-y-6">
+        <Card
+          title={`Passed checks (${m.passed.length})`}
+          actions={
+            <Button variant="ghost" size="sm" aria-expanded={showPassed} onClick={() => setShowPassed(!showPassed)}>
+              {showPassed ? 'Hide' : 'Show'}
+            </Button>
+          }
+        >
           {showPassed ? (
-            <ul className="space-y-1.5 text-sm">
-              {m.passed.map((p: Item) => (
-                <li key={p.key} className="flex items-center gap-2">
-                  <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
-                  <span className="flex-1 text-slate-700">{p.title}</span>
-                  <span className="font-mono text-[11px] text-slate-500">A.{p.iso[0]}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="-m-6">
+              <DataTable
+                storageKey="report-passed"
+                label="passed checks"
+                caption="Passed checks"
+                minWidth="40rem"
+                rows={m.passed as Item[]}
+                rowKey={(p) => p.key}
+                hidePagerWhenSmall
+                columns={[
+                  {
+                    key: 'title',
+                    header: 'Check',
+                    sort: (p) => p.title,
+                    render: (p) => (
+                      <span className="flex items-center gap-2 text-slate-700">
+                        <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                        {p.title}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'system',
+                    header: 'System',
+                    sort: (p) => p.systemLabel,
+                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} size="xs" />,
+                  },
+                  { key: 'severity', header: 'Severity', sort: (p) => SEV_ORDER[p.severity] ?? 9, render: (p) => <SeverityBadge severity={p.severity} /> },
+                  { key: 'control', header: 'Control', sort: (p) => p.iso[0], render: (p) => <span className="font-mono text-[11px] text-slate-500">A.{p.iso[0]}</span> },
+                ]}
+              />
+            </div>
           ) : (
             <p className="text-sm text-slate-500">{m.passed.length} checks met the baseline.</p>
           )}
         </Card>
         <Card title={`Not assessed (${m.notAssessed.length}) and excluded (${m.excluded.length})`}>
+          {m.notAssessed.length > 0 && (
+            <div className="-mx-6 -mt-6 mb-4">
+              <DataTable
+                storageKey="report-not-assessed"
+                label="checks not assessed"
+                caption="Checks not assessed"
+                minWidth="40rem"
+                rows={m.notAssessed as Item[]}
+                rowKey={(p) => p.key}
+                hidePagerWhenSmall
+                columns={[
+                  { key: 'status', header: 'Result', sort: (p) => p.status, render: (p) => <StatusBadge status={p.status} /> },
+                  {
+                    key: 'title',
+                    header: 'Check',
+                    sort: (p) => p.title,
+                    render: (p) => (
+                      <>
+                        <div className="text-slate-700">{p.title}</div>
+                        <p className="mt-0.5 text-xs text-slate-500">{p.summary}</p>
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'system',
+                    header: 'System',
+                    sort: (p) => p.systemLabel,
+                    render: (p) => <SystemBadge provider={p.provider} label={p.systemLabel} identity={identityOf(p, systems)} size="xs" />,
+                  },
+                ]}
+              />
+            </div>
+          )}
           <ul className="space-y-2 text-sm">
-            {m.notAssessed.map((p: Item) => (
-              <li key={p.key}>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={p.status} />
-                  <span className="text-slate-700">{p.title}</span>
-                </div>
-                <p className="ml-1 mt-0.5 text-xs text-slate-500">{p.summary}</p>
-              </li>
-            ))}
             {m.excluded.map((e: any) => (
-              <li key={e.checkId} className="text-slate-500">
-                <span className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase">Excluded</span>
-                {e.title}
+              <li key={e.checkId} className="flex flex-wrap items-center gap-2 text-slate-600">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase">Excluded</span>
+                <span className="inline-flex items-center gap-1 text-xs text-slate-600">
+                  <ProviderIcon provider={e.provider} className="size-3.5" decorative />
+                  {e.providerLabel ?? PROVIDER_LABELS[e.provider as keyof typeof PROVIDER_LABELS]}
+                </span>
+                <span className="text-slate-700">{e.title}</span>
                 {e.reason && <span className="text-xs">: {e.reason}</span>}
               </li>
             ))}
@@ -719,14 +809,14 @@ export function Report() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card title="Scope">
-          <dl className="space-y-2 text-sm">
+          <ul className="space-y-3 text-sm">
             {m.systems.map((x: any) => (
-              <div key={x.id} className="flex justify-between gap-4">
-                <dt className="text-slate-500">{x.label}</dt>
-                <dd className="text-right font-medium text-slate-800">{x.identity ?? PROVIDER_LABELS[x.provider as keyof typeof PROVIDER_LABELS]}</dd>
-              </div>
+              <li key={x.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                <SystemBadge provider={x.provider} label={x.label} identity={x.identity} size="md" />
+                <span className="text-xs text-slate-500">{x.providerLabel ?? PROVIDER_LABELS[x.provider as keyof typeof PROVIDER_LABELS]}</span>
+              </li>
             ))}
-          </dl>
+          </ul>
         </Card>
         <Card title="Method and limitations">
           <p className="text-sm leading-relaxed text-slate-600">
