@@ -54,6 +54,7 @@ export function SystemCards({
               key={x.id}
               type="button"
               data-testid="system-card"
+              data-findings={fb.fail + fb.warn}
               aria-pressed={on}
               onClick={() => onSelect(on ? 'all' : x.id)}
               className={clsx(
@@ -63,7 +64,9 @@ export function SystemCards({
             >
               <ProviderIcon provider={x.provider} className="mt-0.5 size-7" decorative />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-slate-900">{x.label}</span>
+                <span className="block truncate text-sm font-semibold text-slate-900" data-testid="system-card-label">
+                  {x.label}
+                </span>
                 <span className="block truncate text-xs text-slate-500">{x.identity ?? PROVIDER_LABELS[x.provider]}</span>
                 <span className="sr-only"> ({PROVIDER_LABELS[x.provider]})</span>
                 <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">

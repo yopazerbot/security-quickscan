@@ -21,6 +21,18 @@ test('admin sees the seeded demo organisation with history and reports', async (
   await expect(page.getByRole('heading', { name: 'ISO/IEC 27001:2022 Annex A' })).toBeVisible();
   await expect(page.getByText(/Since the previous scan/)).toBeVisible();
   await expect(page.getByRole('heading', { name: /Top risks/ })).toBeVisible();
+
+  // A system card filters the findings to that system; selecting it again shows all findings.
+  const card = page.locator('[data-testid="system-card"]:not([data-findings="0"])').first();
+  const system = (await card.getByTestId('system-card-label').innerText()).trim();
+  await card.click();
+  await expect(card).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(new RegExp(`shown on ${system.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))).toBeVisible();
+  const findings = page.getByTestId('finding');
+  await expect(findings.first()).toBeVisible();
+  for (const text of await findings.allInnerTexts()) expect(text).toContain(system);
+  await card.click();
+  await expect(card).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('run the prepared draft scan end to end and download the exports', async ({ page }) => {
@@ -92,6 +104,36 @@ test('reset demo data restores the original demo organisation', async ({ page })
   await expect(page.getByText('Demo data was reset.')).toBeVisible();
   await openDemoOrganisation(page);
   await expect(page.getByText('Quarterly quick scan (ready to run)')).toBeVisible();
+});
+
+test('admin tables sort and page, and the audit log shows Brussels time', async ({ page }) => {
+  await page.goto('/admin/users');
+  await expect(page.getByRole('heading', { name: 'Users', exact: true })).toBeVisible();
+  const rowsPerPage = page.getByLabel('Rows per page');
+  await rowsPerPage.selectOption('50');
+  await expect(rowsPerPage).toHaveValue('50');
+  const roleHeader = page.getByRole('columnheader', { name: 'Role' });
+  await roleHeader.getByRole('button').click();
+  await expect(roleHeader).toHaveAttribute('aria-sort', 'ascending');
+  await roleHeader.getByRole('button').click();
+  await expect(roleHeader).toHaveAttribute('aria-sort', 'descending');
+  await roleHeader.getByRole('button').click();
+  await expect(roleHeader).toHaveAttribute('aria-sort', 'none');
+  await rowsPerPage.selectOption('10');
+
+  await page.goto('/admin/audit');
+  await expect(page.getByRole('columnheader', { name: /Time \(Brussels\)/ })).toHaveAttribute('aria-sort', 'descending');
+  await expect(page.getByTestId('audit-time').first()).toHaveText(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/);
+  await page.getByLabel('Rows per page').selectOption('10');
+  await expect(page.getByTestId('pager-status')).toHaveText(/^Entries 1 to \d+/);
+  expect(await page.getByTestId('audit-time').count()).toBeLessThanOrEqual(10);
+  const next = page.getByRole('button', { name: 'Next page of audit entries' });
+  if (await next.isEnabled()) {
+    await next.click();
+    await expect(page.getByTestId('pager-status')).toHaveText(/^Entries 11 to /);
+    await page.getByRole('button', { name: 'Previous page of audit entries' }).click();
+    await expect(page.getByTestId('pager-status')).toHaveText(/^Entries 1 to /);
+  }
 });
 
 // Runs last: signing out ends the shared admin session.

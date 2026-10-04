@@ -19,7 +19,7 @@ export interface Control {
   verdict: ControlVerdict;
   evidence?: EvidenceStrength;
   score: number | null;
-  checks?: ControlCheck[] | string[];
+  checks?: ControlCheck[];
 }
 
 export interface ReportSystem {
@@ -38,8 +38,6 @@ const THEMES = [
   { key: 'technological', label: 'A.8 Technological' },
 ];
 
-/** Older reports list check ids only; newer ones carry the contributing results. */
-const detailedChecks = (c: Control): ControlCheck[] => (c.checks ?? []).filter((x): x is ControlCheck => typeof x === 'object' && x !== null);
 
 function ControlHeatmap({ controls, selected, onSelect }: { controls: Control[]; selected: string | null; onSelect(id: string | null): void }) {
   const byId = new Map(controls.map((c) => [c.id, c]));
@@ -125,7 +123,7 @@ const TRIAGE_TEXT = { accepted: 'Risk accepted', false_positive: 'False positive
 
 /** The results behind one control, grouped by system. */
 function ControlDrillDown({ control, systems, onClose, onSystem }: { control: Control; systems: Map<string, ReportSystem>; onClose(): void; onSystem(id: string): void }) {
-  const checks = detailedChecks(control);
+  const checks = control.checks ?? [];
   const groups = new Map<string, ControlCheck[]>();
   for (const c of checks) groups.set(c.systemId ?? '', [...(groups.get(c.systemId ?? '') ?? []), c]);
   const meta = ISO_BY_ID[control.id];

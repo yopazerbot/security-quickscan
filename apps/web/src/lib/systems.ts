@@ -1,13 +1,11 @@
 import { PROVIDER_LABELS, systemKey, type Provider } from '@qs/shared';
 
-/** Up to two names, then "and N more". */
-function names(list: string[]) {
-  return list.length <= 2 ? list.join(', ') : `${list.slice(0, 2).join(', ')} and ${list.length - 2} more`;
-}
+/** Up to four names, then "and N more". */
+const listNames = (xs: string[], max = 4) => (xs.length > max ? `${xs.slice(0, max).join(', ')} and ${xs.length - max} more` : xs.join(', '));
 
 /**
- * Who the system is in the provider (account, tenant or organisation), from the connection test details and the
- * system configuration. Mirrors the report model; null when nothing is known yet.
+ * Who the system is in the provider (account, tenant or organisation), from the connection test details with the
+ * configuration as fallback. Same wording as the report model on the server; null when nothing is known yet.
  */
 export function systemIdentity(provider: Provider, details?: Record<string, any> | null, config?: Record<string, any> | null): string | null {
   const d = details ?? {};
@@ -22,12 +20,15 @@ export function systemIdentity(provider: Provider, details?: Record<string, any>
     return org ? `github.com/${org}` : null;
   }
   const tenantId = d.tenantId || c.tenantId;
-  if (provider === 'azure' && Array.isArray(d.subscriptions) && d.subscriptions.length) {
-    const subs = names(d.subscriptions.map((s: any) => String(s?.name || s?.id || s)));
-    return tenantId ? `Tenant ${tenantId}, ${subs}` : subs;
-  }
-  if (d.displayName) return tenantId ? `${d.displayName} (${tenantId})` : String(d.displayName);
-  return tenantId ? `Tenant ${tenantId}` : null;
+  const tenant = d.displayName ? `Tenant ${d.displayName}${tenantId ? ` (${tenantId})` : ''}` : tenantId ? `Tenant ${tenantId}` : null;
+  if (provider === 'm365') return tenant;
+  const subs: string[] = Array.isArray(d.subscriptions)
+    ? d.subscriptions.map((x: any) => (x?.name && x?.id && x.name !== x.id ? `${x.name} (${x.id})` : String(x?.name || x?.id || ''))).filter(Boolean)
+    : Array.isArray(c.subscriptionIds)
+      ? c.subscriptionIds.map(String)
+      : [];
+  const subText = subs.length ? `${subs.length === 1 ? 'subscription' : 'subscriptions'}: ${listNames(subs)}` : null;
+  return [tenant, subText].filter(Boolean).join('; ') || null;
 }
 
 /** A system as the report and the scan pages know it. */

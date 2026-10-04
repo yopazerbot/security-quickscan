@@ -1,6 +1,8 @@
 import { CHECKS_BY_ID, type CheckOutcome, type ResourceRef } from '@qs/shared';
 import { sleep } from './util.js';
 import { githubOrgSettingsUrl, githubRepoUrl, githubUrl } from './links.js';
+import { awsConsoleUrl, type AwsConsoleService } from './links.js';
+import { azurePortalUrl, entraUrl, type EntraKind } from './links.js';
 
 /**
  * Demo data for the fictional company "Noordkust Logistics NV".
@@ -18,8 +20,36 @@ const D = DEMO_COMPANY.domain;
 const ACC = DEMO_COMPANY.awsAccount;
 const ORG = DEMO_COMPANY.githubOrg;
 const upn = (u: string) => `${u}@${D}`;
-const user = (u: string, detail?: string): ResourceRef => ({ id: upn(u), name: upn(u), detail });
-const iam = (u: string, detail?: string): ResourceRef => ({ id: `arn:aws:iam::${ACC}:user/${u}`, name: u, detail });
+const user = (u: string, detail?: string): ResourceRef => msUser(u, detail);
+// AWS resources (demo account, region eu-west-1 unless stated otherwise).
+const AWS_REGION = 'eu-west-1';
+const iam = (u: string, detail?: string): ResourceRef => {
+  const id = `arn:aws:iam::${ACC}:user/${u}`;
+  return { id, name: u, detail, type: 'IAM user', account: ACC, url: awsConsoleUrl('iam-user', undefined, id) };
+};
+const iamRole = (r: string, detail?: string, path = '/'): ResourceRef => {
+  const id = `arn:aws:iam::${ACC}:role${path}${r}`;
+  return { id, name: r, detail, type: 'IAM role', account: ACC, url: awsConsoleUrl('iam-role', undefined, id) };
+};
+const awsRoot = (detail?: string): ResourceRef => ({ id: `arn:aws:iam::${ACC}:root`, name: 'root', detail, type: 'Root user', account: ACC });
+const awsRes = (
+  service: AwsConsoleService | undefined,
+  type: string,
+  arn: string,
+  name: string,
+  detail?: string,
+  opts: { region?: string; urlId?: string } = {},
+): ResourceRef => {
+  const region = opts.region ?? AWS_REGION;
+  const url = service ? awsConsoleUrl(service, region, opts.urlId ?? arn) : undefined;
+  return { id: arn, name, detail, type, region, account: ACC, ...(url ? { url } : {}) };
+};
+const awsRegion = (arnService: string, type: string, region: string, detail?: string, service?: AwsConsoleService) =>
+  awsRes(service, type, `arn:aws:${arnService}:${region}:${ACC}:account`, region, detail, { region, urlId: '' });
+const bucket = (b: string, detail: string) => awsRes('s3', 'S3 bucket', `arn:aws:s3:::${b}`, b, detail, { urlId: b });
+const sg = (id: string, name: string, detail: string) => awsRes('ec2-sg', 'Security group', `arn:aws:ec2:${AWS_REGION}:${ACC}:security-group/${id}`, `${name} (${id})`, detail, { urlId: id });
+const ec2i = (id: string, name: string) => awsRes('ec2-instance', 'EC2 instance', `arn:aws:ec2:${AWS_REGION}:${ACC}:instance/${id}`, name, `${id}, IMDSv1 allowed`, { urlId: id });
+const rdsDb = (id: string, detail: string) => awsRes('rds', 'RDS instance', `arn:aws:rds:${AWS_REGION}:${ACC}:db:${id}`, id, detail);
 const repo = (r: string, detail?: string, page?: string): ResourceRef => ({
   id: `${ORG}/${r}`,
   name: `${ORG}/${r}`,
@@ -37,7 +67,32 @@ const ghSetting = (name: string, page: string, detail?: string): ResourceRef => 
   url: githubOrgSettingsUrl(ORG, page),
   account: ORG,
 });
-const sub = (name: string, detail?: string): ResourceRef => ({ id: `/subscriptions/${name}`, name, detail });
+// Microsoft resources (demo tenant and subscriptions): deterministic object ids, so links stay stable.
+function demoGuid(seed: string): string {
+  let hex = '';
+  for (let salt = 0; hex.length < 32; salt++) {
+    let h = 2166136261 ^ salt;
+    for (const c of `${salt}:${seed}`) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+    hex += (h >>> 0).toString(16).padStart(8, '0');
+  }
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+const AZ_SUBS: Record<string, string> = { 'noordkust-prod': demoGuid('sub:noordkust-prod'), 'noordkust-dev': demoGuid('sub:noordkust-dev') };
+const subArm = (name: string) => `/subscriptions/${AZ_SUBS[name] ?? demoGuid(`sub:${name}`)}`;
+const sub = (name: string, detail?: string): ResourceRef => ({ id: subArm(name), name, detail, type: 'Subscription', account: name, url: azurePortalUrl(subArm(name)) });
+const azRes = (subName: string, rg: string, provider: string, name: string, type: string, detail?: string, region = 'westeurope'): ResourceRef => {
+  const id = `${subArm(subName)}/resourceGroups/${rg}/providers/${provider}/${name}`;
+  return { id, name, detail, type, region, account: subName, url: azurePortalUrl(id) };
+};
+const entra = (kind: EntraKind, type: string, name: string, detail?: string): ResourceRef => {
+  const id = demoGuid(`${kind}:${name}`);
+  return { id, name, detail, type, account: D, url: entraUrl(kind, kind === 'app' ? demoGuid(`appId:${name}`) : id) };
+};
+const msUser = (u: string, detail?: string) => entra('user', 'User', upn(u), detail);
+const caPol = (name: string, detail?: string) => entra('caPolicy', 'Conditional Access policy', name, detail);
+const msRole = (name: string, detail?: string) => entra('role', 'Directory role', name, detail);
+const msSp = (name: string, detail?: string) => entra('servicePrincipal', 'Enterprise application', name, detail);
+const msApp = (name: string, detail?: string) => entra('app', 'App registration', name, detail);
 
 interface Scenario {
   /** Outcome when the control is not (yet) in place. */
@@ -150,61 +205,153 @@ const SCENARIOS: Record<string, Scenario> = {
   'azure.subscription-owners': { bad: warn('1 subscription(s) have more than 3 Owner assignments.', [sub('noordkust-prod', '5 Owner assignments')]), good: 'All subscriptions have 3 or fewer Owner assignments.' },
 
   // ---------- AWS ----------
-  'aws.root-mfa': { bad: fail('Root account does not have MFA enabled.', [{ id: `arn:aws:iam::${ACC}:root`, name: 'root' }]), good: 'Root account has MFA enabled.' },
-  'aws.root-access-keys': { bad: fail('Root account has active access keys.', [{ id: `arn:aws:iam::${ACC}:root`, name: 'root' }]), good: 'No root access keys present.' },
+  'aws.root-mfa': {
+    bad: fail('Root account does not have MFA enabled.', [awsRoot('root password last used 2026-08-19')], { accountMfaEnabled: false, accountPasswordPresent: 1, rootLastUsed: '2026-08-19T07:42:11+00:00' }),
+    good: 'Root account has MFA enabled (hardware device) and was not used in the last 90 days.',
+  },
+  'aws.root-access-keys': { bad: fail('Root account has active access keys.', [awsRoot('access key 1 last used 2026-06-02')]), good: 'No root access keys present.' },
   'aws.iam-users-mfa': {
     bad: fail('3 console user(s) without MFA.', [iam('b.vermeulen', 'last used 2026-09-28'), iam('finance-reporting', 'last used 2026-09-30'), iam('tms-admin', 'last used 2026-08-14')]),
     good: 'All 4 console users have MFA.',
   },
   'aws.iam-access-key-age': {
-    bad: fail('3 active access key(s) older than 90 days.', [iam('ci-deploy', 'key 1 rotated 2024-03-11'), iam('backup-sync', 'key 1 rotated 2023-11-02'), iam('tms-integration', 'key 2 rotated 2025-01-20')]),
+    bad: fail('3 active access key(s) older than 90 days.', [
+      { ...iam('ci-deploy', 'key 1 rotated 2024-03-11'), id: `arn:aws:iam::${ACC}:user/ci-deploy#key1`, type: 'IAM access key' },
+      { ...iam('backup-sync', 'key 1 rotated 2023-11-02'), id: `arn:aws:iam::${ACC}:user/backup-sync#key1`, type: 'IAM access key' },
+      { ...iam('tms-integration', 'key 2 rotated 2025-01-20'), id: `arn:aws:iam::${ACC}:user/tms-integration#key2`, type: 'IAM access key' },
+    ]),
     good: 'All active access keys rotated within 90 days.',
   },
-  'aws.iam-unused-credentials': { bad: warn('2 user(s) with credentials unused for 90+ days.', [iam('old-sftp-user', 'access key 1 unused 90+ days'), iam('d.smet', 'password unused 90+ days')]), good: 'No unused credentials found.' },
+  'aws.iam-unused-credentials': {
+    bad: warn('2 user(s) with credentials unused for 45+ days.', [iam('old-sftp-user', 'access key 1 unused 45+ days'), iam('d.smet', 'password unused 45+ days')]),
+    good: 'No credentials unused for 45+ days.',
+  },
   'aws.password-policy': { bad: warn('Password policy is weak: minimum length 8 (< 14); reuse prevention 0 (< 24).'), good: 'Password policy meets the baseline.' },
-  'aws.iam-admin-users': { bad: fail('2 IAM user(s) have AdministratorAccess attached directly.', [iam('tms-admin'), iam('ci-deploy')]), good: 'No IAM users have AdministratorAccess attached directly.' },
+  'aws.iam-admin-users': {
+    bad: fail('2 IAM user(s) have administrator access (directly, through a group or an inline *:* policy). 2 role(s) also grant administrator access (listed for review).', [
+      iam('tms-admin', 'AdministratorAccess'),
+      iam('ci-deploy', 'via group deployers (inline policy deploy-all allows *:*)'),
+      iamRole('OrganizationAccountAccessRole', 'AdministratorAccess'),
+      iamRole('AWSReservedSSO_AdministratorAccess_3f1c2b9a7d6e5f40', 'IAM Identity Center permission set; AdministratorAccess', '/aws-reserved/sso.amazonaws.com/eu-west-1/'),
+    ]),
+    good: 'No IAM users have administrator access. 2 role(s) also grant administrator access (listed for review).',
+  },
   'aws.cloudtrail': {
-    bad: warn('Multi-region trail exists but is not fully configured.', [{ id: `arn:aws:cloudtrail:eu-west-1:${ACC}:trail/management-events`, name: 'management-events', detail: 'log file validation disabled' }]),
-    good: 'Multi-region trail(s) active with validation: org-trail.',
+    bad: warn('Multi-region trail logs management events but is not fully configured: log file validation disabled, logs not encrypted with a KMS key, not delivered to CloudWatch Logs.', [
+      awsRes('cloudtrail', 'CloudTrail trail', `arn:aws:cloudtrail:${AWS_REGION}:${ACC}:trail/management-events`, 'management-events', 'log file validation disabled, logs not encrypted with a KMS key, not delivered to CloudWatch Logs'),
+    ]),
+    good: "Multi-region trail 'org-trail' logs all management events with log file validation, KMS encryption and CloudWatch Logs delivery.",
   },
   'aws.guardduty': {
-    bad: warn('GuardDuty disabled in 15 of 17 regions.', [{ id: 'us-east-1', name: 'us-east-1' }, { id: 'eu-central-1', name: 'eu-central-1' }]),
-    good: 'GuardDuty enabled in all 17 regions.',
+    bad: warn('GuardDuty disabled in 2 of 4 regions.', [awsRegion('guardduty', 'GuardDuty', 'us-east-1', 'not enabled', 'guardduty'), awsRegion('guardduty', 'GuardDuty', 'eu-central-1', 'not enabled', 'guardduty')]),
+    good: 'GuardDuty enabled in all 4 evaluated regions.',
   },
-  'aws.securityhub': { bad: fail('Security Hub is not enabled in any region.'), good: 'Security Hub enabled in all regions.' },
-  'aws.config': { bad: fail('AWS Config is not recording in any region.'), good: 'AWS Config recording in all regions.' },
+  'aws.securityhub': {
+    bad: fail('Security Hub is not enabled in any of the 4 evaluated regions.', ['eu-west-1', 'eu-central-1', 'us-east-1', 'eu-west-3'].map((r) => awsRegion('securityhub', 'Security Hub', r, 'not enabled', 'securityhub'))),
+    good: 'Security Hub enabled with the FSBP or CIS standard in all 4 evaluated regions.',
+  },
+  'aws.securityhub-findings': {
+    bad: fail('23 active critical/high failed findings across 4 control(s) (3 critical).', [
+      awsRes('securityhub', 'Security Hub control', `arn:aws:securityhub:${AWS_REGION}:${ACC}:security-control/S3.8`, 'S3.8: S3 general purpose buckets should block public access', '2 failed finding(s) (2 critical, 0 high) on 2 resource(s)', { urlId: '' }),
+      awsRes('securityhub', 'Security Hub control', `arn:aws:securityhub:${AWS_REGION}:${ACC}:security-control/EC2.19`, 'EC2.19: Security groups should not allow unrestricted access to high-risk ports', '3 failed finding(s) (1 critical, 2 high) on 3 resource(s)', { urlId: '' }),
+      awsRes('securityhub', 'Security Hub control', `arn:aws:securityhub:${AWS_REGION}:${ACC}:security-control/EC2.8`, 'EC2.8: EC2 instances should use IMDSv2', '5 failed finding(s) (0 critical, 5 high) on 5 resource(s)', { urlId: '' }),
+      awsRes('securityhub', 'Security Hub control', `arn:aws:securityhub:${AWS_REGION}:${ACC}:security-control/IAM.6`, 'IAM.6: Hardware MFA should be enabled for the root user', '1 failed finding(s) (0 critical, 1 high) on 1 resource(s)', { urlId: '' }),
+    ]),
+    good: 'No active critical or high failed Security Hub findings in 4 region(s).',
+  },
+  'aws.config': {
+    bad: fail('AWS Config is not recording in any of the 4 evaluated regions.', ['eu-west-1', 'eu-central-1', 'us-east-1', 'eu-west-3'].map((r) => awsRegion('config', 'AWS Config recorder', r, 'not recording', 'config'))),
+    good: 'AWS Config records all resource types with a delivery channel in all 4 evaluated regions, including global resources.',
+  },
   'aws.s3-account-bpa': { bad: fail('Account-level S3 Block Public Access is not configured.'), good: 'All four account-level Block Public Access settings are on.' },
   'aws.s3-public-buckets': {
-    bad: fail('2 of 14 buckets are public via bucket policy.', [
-      { id: 'arn:aws:s3:::noordkust-invoices-archive', name: 'noordkust-invoices-archive', detail: 'eu-west-1' },
-      { id: 'arn:aws:s3:::nk-marketing-assets', name: 'nk-marketing-assets', detail: 'eu-west-1' },
+    bad: fail('2 of 14 evaluated buckets are public (bucket policy or ACL not blocked by Block Public Access).', [
+      bucket('noordkust-invoices-archive', 'public via ACL (AllUsers: READ)'),
+      bucket('nk-marketing-assets', 'public via bucket policy'),
     ]),
-    good: 'None of 14 buckets are public via bucket policy.',
+    good: 'None of 14 evaluated buckets are public (bucket policy, ACL and Block Public Access evaluated).',
   },
-  'aws.ebs-encryption': { bad: warn('EBS encryption by default disabled in 17 of 17 regions.', [{ id: 'eu-west-1', name: 'eu-west-1' }]), good: 'EBS encryption by default enabled in all regions.' },
+  'aws.s3-secure-transport': {
+    bad: fail('9 of 14 evaluated buckets do not deny plain HTTP requests (aws:SecureTransport).', [
+      bucket('noordkust-invoices-archive', 'no bucket policy'),
+      bucket('nk-tms-exports', 'no bucket policy'),
+      bucket('nk-edi-inbound', 'policy does not deny aws:SecureTransport=false'),
+      bucket('nk-backup-sync', 'no bucket policy'),
+    ]),
+    good: 'All 14 evaluated buckets deny plain HTTP requests.',
+  },
+  'aws.public-snapshots': {
+    bad: fail('2 snapshot(s) or AMI(s) are shared publicly.', [
+      awsRes('ec2-snapshot', 'EBS snapshot', `arn:aws:ec2:${AWS_REGION}::snapshot/snap-0f1e2d3c4b5a69788`, 'tms-app-01 pre-upgrade', 'EBS snapshot of vol-0a1b2c3d4e5f60789 is public', { urlId: 'snap-0f1e2d3c4b5a69788' }),
+      awsRes('rds-snapshot', 'RDS snapshot', `arn:aws:rds:${AWS_REGION}:${ACC}:snapshot:reporting-db-migration`, 'reporting-db-migration', 'RDS snapshot is public', { urlId: 'reporting-db-migration' }),
+    ]),
+    good: 'No public EBS snapshots, AMIs or RDS snapshots found.',
+  },
+  'aws.ebs-encryption': {
+    bad: fail('EBS encryption by default is disabled in all 4 evaluated regions.', ['eu-west-1', 'eu-central-1', 'us-east-1', 'eu-west-3'].map((r) => awsRegion('ec2', 'EBS default encryption', r, 'EBS encryption by default off'))),
+    good: 'EBS encryption by default enabled in all evaluated regions.',
+  },
   'aws.sg-admin-ports': {
-    bad: fail('3 security group rule(s) expose admin/database ports to the internet.', [
-      { id: 'sg-0a1b2c3d4e5f60718', name: 'tms-windows-app (eu-west-1)', detail: 'ports 3389' },
-      { id: 'sg-0b2c3d4e5f6071829', name: 'bastion-legacy (eu-west-1)', detail: 'ports 22' },
-      { id: 'sg-0c3d4e5f607182930', name: 'reporting-db (eu-west-1)', detail: 'ports 5432' },
+    bad: fail('3 security group(s) expose admin/database ports to the internet (0.0.0.0/0, ::/0 or other very broad ranges).', [
+      sg('sg-0a1b2c3d4e5f60718', 'tms-windows-app', 'ports 3389 from 0.0.0.0/0'),
+      sg('sg-0b2c3d4e5f6071829', 'bastion-legacy', 'ports 22 from 0.0.0.0/0, ::/0'),
+      sg('sg-0c3d4e5f607182930', 'reporting-db', 'ports 5432 from 0.0.0.0/0'),
     ]),
     good: 'No security groups expose admin ports to the internet.',
   },
+  'aws.default-sg-closed': {
+    bad: fail('2 of 3 default security groups still have rules.', [
+      awsRes('ec2-sg', 'Default security group', `arn:aws:ec2:${AWS_REGION}:${ACC}:security-group/sg-0d4e5f6071829304a`, 'default (vpc-0a1b2c3d4e5f60718)', '1 inbound and 1 outbound rule(s)', { urlId: 'sg-0d4e5f6071829304a' }),
+      awsRes('ec2-sg', 'Default security group', `arn:aws:ec2:eu-central-1:${ACC}:security-group/sg-0e5f6071829304a5b`, 'default (vpc-0b2c3d4e5f6071829)', '1 inbound and 1 outbound rule(s)', { region: 'eu-central-1', urlId: 'sg-0e5f6071829304a5b' }),
+    ]),
+    good: 'All 3 default security groups restrict all traffic.',
+  },
+  'aws.vpc-flow-logs': {
+    bad: fail('2 of 3 VPCs have no active flow log.', [
+      awsRes('vpc', 'VPC', `arn:aws:ec2:${AWS_REGION}:${ACC}:vpc/vpc-0a1b2c3d4e5f60718`, 'tms-prod (vpc-0a1b2c3d4e5f60718)', 'no flow log', { urlId: 'vpc-0a1b2c3d4e5f60718' }),
+      awsRes('vpc', 'VPC', `arn:aws:ec2:eu-central-1:${ACC}:vpc/vpc-0b2c3d4e5f6071829`, 'vpc-0b2c3d4e5f6071829', 'default VPC, no flow log', { region: 'eu-central-1', urlId: 'vpc-0b2c3d4e5f6071829' }),
+    ]),
+    good: 'All 3 VPCs have flow logs.',
+  },
   'aws.ec2-imdsv2': {
     bad: fail('5 of 9 instances allow IMDSv1.', [
-      { id: 'i-0a12b34c56d78e901', name: 'tms-app-01', detail: 'eu-west-1' },
-      { id: 'i-0b23c45d67e89f012', name: 'tms-app-02', detail: 'eu-west-1' },
-      { id: 'i-0c34d56e78f90a123', name: 'sftp-gateway', detail: 'eu-west-1' },
-      { id: 'i-0d45e67f89a01b234', name: 'reporting-worker', detail: 'eu-west-1' },
-      { id: 'i-0e56f78a90b12c345', name: 'bastion-legacy', detail: 'eu-west-1' },
+      ec2i('i-0a12b34c56d78e901', 'tms-app-01'),
+      ec2i('i-0b23c45d67e89f012', 'tms-app-02'),
+      ec2i('i-0c34d56e78f90a123', 'sftp-gateway'),
+      ec2i('i-0d45e67f89a01b234', 'reporting-worker'),
+      ec2i('i-0e56f78a90b12c345', 'bastion-legacy'),
     ]),
     good: 'All 9 instances require IMDSv2.',
   },
-  'aws.rds-public': { bad: fail('1 RDS instance(s) are publicly accessible.', [{ id: `arn:aws:rds:eu-west-1:${ACC}:db:reporting-db`, name: 'reporting-db', detail: 'eu-west-1' }]), good: 'None of 3 RDS instances are publicly accessible.' },
-  'aws.rds-encryption': { bad: fail('1 RDS instance(s) without storage encryption.', [{ id: `arn:aws:rds:eu-west-1:${ACC}:db:tms-legacy`, name: 'tms-legacy', detail: 'eu-west-1' }]), good: 'All 3 RDS instances are encrypted.' },
-  'aws.rds-backup': { bad: warn('1 RDS instance(s) keep backups for less than 7 days.', [{ id: `arn:aws:rds:eu-west-1:${ACC}:db:reporting-db`, name: 'reporting-db', detail: 'retention 1 days' }]), good: 'All 3 RDS instances retain backups for 7+ days.' },
-  'aws.kms-rotation': { bad: warn('2 of 4 customer managed keys without rotation.', [{ id: 'kms-1', name: 'tms-data-key' }, { id: 'kms-2', name: 'backup-key' }]), good: 'All 4 customer managed keys rotate automatically.' },
-  'aws.access-analyzer': { bad: fail('IAM Access Analyzer is not enabled in any region.'), good: 'Access Analyzer active in all regions.' },
+  'aws.rds-public': { bad: fail('1 RDS instance(s) are publicly accessible.', [rdsDb('reporting-db', 'publicly accessible')]), good: 'None of 3 RDS instances are publicly accessible.' },
+  'aws.rds-encryption': { bad: fail('1 RDS instance(s) without storage encryption.', [rdsDb('tms-legacy', 'storage not encrypted')]), good: 'All 3 RDS instances are encrypted.' },
+  'aws.rds-backup': {
+    bad: warn('1 RDS instance(s) keep backups for less than 7 days. 1 read replica(s) skipped.', [rdsDb('reporting-db', 'retention 1 days')]),
+    good: 'All 3 RDS instances retain backups for 7+ days. 1 read replica(s) skipped.',
+  },
+  'aws.backup-plans': {
+    bad: fail('No AWS Backup plans found in any of the 4 evaluated regions.', [], { plans: 0, plansWithResources: 0, lockedVaults: [] }),
+    good: '2 AWS Backup plan(s) with resource assignments. 1 vault(s) protected by Vault Lock.',
+  },
+  'aws.inspector': {
+    bad: warn('Amazon Inspector: 4 active critical finding(s); incomplete coverage (EC2, ECR, Lambda) in 3 of 4 regions.', [
+      awsRegion('inspector2', 'Amazon Inspector', 'eu-west-1', 'not scanning Lambda; 4 active critical finding(s)', 'inspector'),
+      awsRegion('inspector2', 'Amazon Inspector', 'eu-central-1', 'not enabled', 'inspector'),
+      awsRegion('inspector2', 'Amazon Inspector', 'us-east-1', 'not enabled', 'inspector'),
+    ]),
+    good: 'Amazon Inspector scans EC2, ECR and Lambda in all 4 evaluated regions with no active critical findings.',
+  },
+  'aws.kms-rotation': {
+    bad: warn('2 of 4 customer managed keys without rotation.', [
+      awsRes('kms', 'KMS key', `arn:aws:kms:${AWS_REGION}:${ACC}:key/5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d`, 'tms-data-key', 'automatic rotation off'),
+      awsRes('kms', 'KMS key', `arn:aws:kms:${AWS_REGION}:${ACC}:key/7f3e4d5c-6b7a-4c8d-9e0f-1a2b3c4d5e6f`, 'backup-key', 'automatic rotation off'),
+    ]),
+    good: 'All 4 evaluated customer managed keys rotate automatically.',
+  },
+  'aws.access-analyzer': {
+    bad: fail('IAM Access Analyzer is not enabled in any of the 4 evaluated regions.', ['eu-west-1', 'eu-central-1', 'us-east-1', 'eu-west-3'].map((r) => awsRegion('access-analyzer', 'IAM Access Analyzer', r, 'no active analyzer'))),
+    good: 'Access Analyzer active in all evaluated regions.',
+  },
 
   // ---------- GitHub ----------
   'gh.org-2fa': {
