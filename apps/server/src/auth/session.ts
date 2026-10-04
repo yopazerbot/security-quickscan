@@ -1,10 +1,11 @@
 import { and, eq, lt, or, sql } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { Role } from '@qs/shared';
+import { REAUTH_REQUIRED, RECENT_AUTH_MINUTES, type Role } from '@qs/shared';
 import type { AppCtx, SessionUser } from '../context.js';
 import { forbidden, HttpError } from '../context.js';
 import { randomToken, safeEqual, sha256 } from '../crypto/envelope.js';
 import { customerAssignments, customers, sessions, users } from '../db/schema.js';
+import { getRuntime } from '../settings/runtime.js';
 
 export const cookieName = (ctx: AppCtx) => (ctx.config.COOKIE_SECURE ? '__Host-qs_session' : 'qs_session');
 
@@ -12,7 +13,8 @@ export async function createSession(ctx: AppCtx, req: FastifyRequest, reply: Fas
   // Rotate: any session presented with this request is discarded.
   await destroySession(ctx, req, reply);
   const token = randomToken(32);
-  const expiresAt = new Date(Date.now() + ctx.config.SESSION_MAX_HOURS * 3600_000);
+  const { general } = await getRuntime(ctx);
+  const expiresAt = new Date(Date.now() + general.sessionMaxHours * 3600_000);
   await ctx.db.insert(sessions).values({
     idHash: sha256(token),
     userId,
@@ -53,9 +55,10 @@ export async function loadSession(ctx: AppCtx, req: FastifyRequest) {
   const row = rows[0];
   if (!row) return;
   const now = Date.now();
-  const idleMs = ctx.config.SESSION_IDLE_MINUTES * 60_000;
+  const { general } = await getRuntime(ctx);
+  const idleMs = general.sessionIdleMinutes * 60_000;
   // Demo visitor sessions end as soon as demo mode is switched off.
-  if (row.s.expiresAt.getTime() < now || row.s.lastSeenAt.getTime() < now - idleMs || !row.u.active || (row.u.isDemo && !ctx.config.DEMO_MODE)) {
+  if (row.s.expiresAt.getTime() < now || row.s.lastSeenAt.getTime() < now - idleMs || !row.u.active || (row.u.isDemo && !general.demoMode)) {
     await ctx.db.delete(sessions).where(eq(sessions.idHash, idHash));
     return;
   }
@@ -69,8 +72,39 @@ export async function loadSession(ctx: AppCtx, req: FastifyRequest) {
     role: row.u.role,
     isBreakglass: row.u.isBreakglass,
     isDemo: row.u.isDemo,
+    hasPassword: Boolean(row.u.passwordHash),
+    mustChangePassword: row.u.mustChangePassword,
   };
-  req.session = { idHash, csrfToken: row.s.csrfToken, authMethod: row.s.authMethod, expiresAt: row.s.expiresAt };
+  req.session = {
+    idHash,
+    csrfToken: row.s.csrfToken,
+    authMethod: row.s.authMethod,
+    expiresAt: row.s.expiresAt,
+    createdAt: row.s.createdAt,
+    reauthAt: row.s.reauthAt,
+  };
+}
+
+/** Until when the current session counts as recently authenticated (sign-in or re-authentication). */
+export function recentAuthUntil(req: FastifyRequest): Date | null {
+  if (!req.session) return null;
+  const last = Math.max(req.session.createdAt.getTime(), req.session.reauthAt?.getTime() ?? 0);
+  return new Date(last + RECENT_AUTH_MINUTES * 60_000);
+}
+
+/**
+ * Sensitive changes (sign-in methods, scanner identities, password resets) need a sign-in within the last
+ * RECENT_AUTH_MINUTES. A local installation has no sign-in and is exempt.
+ */
+export function requireRecentAuth(ctx: AppCtx, req: FastifyRequest) {
+  if (ctx.config.LOCAL_MODE && req.session?.authMethod === 'local') return;
+  const until = recentAuthUntil(req);
+  if (!until || until.getTime() < Date.now()) throw new HttpError(403, 'Sign in again to change this setting', REAUTH_REQUIRED);
+}
+
+/** The session's temporary password must be changed before anything else (password sessions only). */
+export function passwordChangePending(req: FastifyRequest): boolean {
+  return Boolean(req.user?.mustChangePassword && req.session?.authMethod === 'password');
 }
 
 export function verifyCsrf(req: FastifyRequest) {
@@ -81,7 +115,7 @@ export function verifyCsrf(req: FastifyRequest) {
 }
 
 export async function purgeExpiredSessions(ctx: AppCtx) {
-  const idle = new Date(Date.now() - ctx.config.SESSION_IDLE_MINUTES * 60_000);
+  const idle = new Date(Date.now() - (await getRuntime(ctx)).general.sessionIdleMinutes * 60_000);
   await ctx.db.delete(sessions).where(or(lt(sessions.expiresAt, new Date()), lt(sessions.lastSeenAt, idle)));
 }
 

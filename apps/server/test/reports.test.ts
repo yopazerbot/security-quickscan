@@ -1,4 +1,4 @@
-import { brandingSchema, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, ISO_ASSESSABLE, PROVIDER_ICONS, PROVIDERS, REPORT_TITLE, VERDICT_LABELS } from '@qs/shared';
+import { brandingSchema, CHECKS_BY_ID, computeScore, ISO_ASSESSABLE, PROVIDER_ICONS, PROVIDERS, REPORT_TITLE, VERDICT_LABELS } from '@qs/shared';
 import { randomBytes } from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { and, eq } from 'drizzle-orm';
@@ -7,7 +7,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { randomToken, sha256 } from '../src/crypto/envelope.js';
 import { createDb, runMigrations } from '../src/db/index.js';
-import { auditLog, checkResults, customers, findingTriage, scans, scanSystems, sessions, users } from '../src/db/schema.js';
+import { auditLog, checkResults, customers, findingTriage, scanCriteria, scans, scanSystems, sessions, users } from '../src/db/schema.js';
 import { controlsCsv, findingsCsv, statusText } from '../src/reports/csv.js';
 import { buildReport, systemIdentity, type ReportItem, type ReportModel } from '../src/reports/model.js';
 import { cover, drawProviderIcon, isoPage, notCoveredList, renderPdf, systemsTable } from '../src/reports/pdf.js';
@@ -29,8 +29,7 @@ function fakeModel(over: Partial<ReportModel['summary']> = {}): ReportModel {
   return {
     generatedAt: new Date().toISOString(),
     scan: { id: 'x', name: 'Scan', status: 'completed', startedAt: new Date(), finishedAt: new Date(), retentionMode: 'days', retentionDays: 7, frozen: true },
-    customer: { id: 'c', name: 'Acme', country: 'BE', context: DEFAULT_CONTEXT },
-    riskProfile: computeRiskProfile(DEFAULT_CONTEXT),
+    customer: { id: 'c', name: 'Acme' },
     branding: brandingSchema.parse({ consultantName: 'A very long consultant name that keeps going', companyName: 'An equally long consultancy company name BV', contactEmail: 'hello@example.com' }),
     systems: [],
     summary,
@@ -82,7 +81,6 @@ function spyDoc() {
   return { doc, calls };
 }
 
-const weights = computeRiskProfile(DEFAULT_CONTEXT).domainWeights;
 function item(over: Partial<ReportItem> & Pick<ReportItem, 'checkId' | 'status' | 'systemId' | 'systemLabel'>): ReportItem {
   const m = CHECKS_BY_ID[over.checkId];
   return {
@@ -99,10 +97,10 @@ function twoSystemModel(): ReportModel {
     item({ checkId: 'aws.root-mfa', status: 'pass', systemId: 's', systemLabel: 'AWS sandbox', systemIdentity: 'AWS account 444455556666' }),
   ];
   const inputs = (xs: ReportItem[]) => xs.map((i) => ({ checkId: i.checkId, status: i.status, severity: i.severity, systemId: i.systemId }));
-  const m = fakeModel(computeScore(inputs(items), CHECKS_BY_ID, weights));
+  const m = fakeModel(computeScore(inputs(items), CHECKS_BY_ID));
   const sys = (id: string, label: string, identity: string) => ({
     id, provider: 'aws' as const, providerLabel: 'AWS', label, systemKey: `aws:${id}`, identity, credentialsStored: false, credentialsExpireAt: null, authMode: 'role',
-    summary: computeScore(inputs(items.filter((i) => i.systemId === id)), CHECKS_BY_ID, weights),
+    summary: computeScore(inputs(items.filter((i) => i.systemId === id)), CHECKS_BY_ID),
   });
   m.systems = [sys('p', 'AWS production', 'AWS account 111122223333'), sys('s', 'AWS sandbox', 'AWS account 444455556666')];
   m.findings = items.filter((i) => i.status === 'fail');
@@ -196,7 +194,7 @@ describe('CSV columns', () => {
 describe('CSV labels', () => {
   it('uses readable status and triage labels', () => {
     expect(statusText('fail', { status: 'accepted', note: '' })).toBe('fail (risk accepted)');
-    expect(statusText('warn', { status: 'false_positive', note: '' })).toBe('warning (false positive)');
+    expect(statusText('warn', { status: 'false_positive', note: '' })).toBe('warning (not applicable / false positive)');
     expect(statusText('na', null)).toBe('not applicable');
     expect(statusText('pass', { status: 'accepted', note: '' })).toBe('pass');
   });
@@ -213,12 +211,11 @@ const url = process.env.TEST_DATABASE_URL;
   let app: Awaited<ReturnType<typeof buildApp>>['app'];
   let ctx: Awaited<ReturnType<typeof buildApp>>['ctx'];
   let customerId: string;
-  const profile = computeRiskProfile(DEFAULT_CONTEXT);
 
   beforeAll(async () => {
     await runMigrations(db);
     ({ app, ctx } = await buildApp(config, db));
-    [{ id: customerId }] = await db.insert(customers).values({ name: `Report Co ${randomToken(3)}`, context: { ...DEFAULT_CONTEXT, industry: 'retail' } }).returning();
+    [{ id: customerId }] = await db.insert(customers).values({ name: `Report Co ${randomToken(3)}`, context: {} }).returning();
   });
   afterAll(async () => {
     await db.delete(customers).where(eq(customers.id, customerId));
@@ -231,7 +228,7 @@ const url = process.env.TEST_DATABASE_URL;
     at += 86_400_000;
     const [scan] = await db
       .insert(scans)
-      .values({ customerId, name: 'Scan', status, context: DEFAULT_CONTEXT, riskProfile: profile, retentionMode: 'days', retentionDays: 14, startedAt: new Date(at - 60_000), finishedAt: new Date(at) })
+      .values({ customerId, name: 'Scan', status, context: {}, riskProfile: {}, retentionMode: 'days', retentionDays: 14, startedAt: new Date(at - 60_000), finishedAt: new Date(at) })
       .returning();
     for (const s of systems) {
       const [sys] = await db.insert(scanSystems).values({ scanId: scan.id, provider: s.provider, label: s.label, config: s.config }).returning();
@@ -259,7 +256,7 @@ const url = process.env.TEST_DATABASE_URL;
     const m = await buildReport(ctx, both);
     expect(m.scan.frozen).toBe(true);
     expect(m.scan.retentionDays).toBe(14);
-    expect(m.customer.context.industry).toBe(DEFAULT_CONTEXT.industry); // scan-time context, not the live 'retail'
+    expect(m).not.toHaveProperty('riskProfile');
     const root = (k: string) => m.findings.find((f) => f.checkId === 'aws.root-mfa' && f.systemKey === k)!;
     expect(root('aws:444455556666').triage?.status).toBe('accepted');
     expect(root('aws:111122223333').triage).toBeNull();
@@ -326,6 +323,18 @@ const url = process.env.TEST_DATABASE_URL;
     expect(m.summary.notCovered).toEqual(s.notCovered);
     expect(m.summary.controls.every((c) => c.evidence)).toBe(true);
     expect(m.summary.controls.flatMap((c) => c.checks).every((x) => x.systemId === m.systems[0].id)).toBe(true);
+  });
+
+  it('still lists checks excluded by the former criteria step in old reports', async () => {
+    const id = await makeScan([{ ...prodAws, results: [['aws.root-mfa', 'pass']] }]);
+    await db.insert(scanCriteria).values([
+      { scanId: id, checkId: 'aws.kms-rotation', included: false, reason: 'Only AWS managed keys' },
+      { scanId: id, checkId: 'aws.root-mfa', included: true, reason: '' },
+    ]);
+    await storeScanScore(ctx, id);
+    const m = await buildReport(ctx, id);
+    expect(m.excluded).toEqual([{ checkId: 'aws.kms-rotation', title: CHECKS_BY_ID['aws.kms-rotation'].title, provider: 'aws', reason: 'Only AWS managed keys' }]);
+    expect((await renderPdf(m, null)).length).toBeGreaterThan(1000);
   });
 
   it('lists providers per scan and pages the audit log with a limit', async () => {

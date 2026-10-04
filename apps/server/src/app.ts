@@ -8,7 +8,9 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { authRoutes, localAccessToken } from './auth/routes.js';
-import { loadSession, verifyCsrf } from './auth/session.js';
+import { loadSession, passwordChangePending, verifyCsrf } from './auth/session.js';
+import { announceSetup, setupRoutes } from './auth/setup.js';
+import { PASSWORD_CHANGE_REQUIRED } from '@qs/shared';
 import { LOOPBACK, type Config } from './config.js';
 import { HttpError, type AppCtx } from './context.js';
 import { Envelope } from './crypto/envelope.js';
@@ -18,13 +20,16 @@ import { adminRoutes } from './routes/admin.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { scanRoutes } from './routes/scans.js';
+import { settingsRoutes } from './routes/settings.js';
 import { tenantRoutes } from './routes/tenants.js';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const inContainer = existsSync('/.dockerenv');
 /** Endpoints reachable without a session (they do their own checks). */
-const PUBLIC_MUTATIONS = new Set(['/api/auth/breakglass', '/api/auth/demo']);
+const PUBLIC_MUTATIONS = new Set(['/api/auth/breakglass', '/api/auth/demo', '/api/auth/password/login', '/api/setup']);
+/** All a password session with a temporary password may do until it is changed. */
+const PASSWORD_CHANGE_ALLOWED = new Set(['/api/auth/me', '/api/auth/config', '/api/auth/logout', '/api/auth/password/change']);
 
 function webDist() {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -49,14 +54,17 @@ export function loggerOptions(config: Config) {
         '*.clientSecret',
         '*.secretAccessKey',
         '*.sessionToken',
+        '*.currentPassword',
+        '*.newPassword',
+        '*.temporaryPassword',
       ],
       censor: '[redacted]',
     },
     serializers: {
-      // Never log one-time OAuth codes or consent state from query strings.
+      // Never log one-time OAuth codes, consent state or the setup token from query strings.
       req: (req: { method: string; url: string; ip?: string }) => ({
         method: req.method,
-        url: /^\/(api\/auth\/callback|consent\/callback)/.test(req.url) || req.url.includes('local_token=') ? req.url.split('?')[0] : req.url,
+        url: /^\/(api\/auth\/callback|consent\/callback|setup)/.test(req.url) || req.url.includes('local_token=') || req.url.includes('token=') ? req.url.split('?')[0] : req.url,
         ip: req.ip,
       }),
     },
@@ -161,10 +169,13 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
         verifyCsrf(req);
       }
     }
+    if (passwordChangePending(req) && !PASSWORD_CHANGE_ALLOWED.has(req.url.split('?')[0])) {
+      throw new HttpError(403, 'Change your temporary password first', PASSWORD_CHANGE_REQUIRED);
+    }
   });
 
   app.setErrorHandler((err: any, req, reply) => {
-    if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+    if (err instanceof HttpError) return reply.status(err.statusCode).send(err.code ? { error: err.message, code: err.code } : { error: err.message });
     if (err.statusCode === 429) {
       // Microsoft sign-in runs as full-page navigations: show the login page instead of raw JSON.
       if (req.method === 'GET' && /^\/api\/auth\/(login|callback)(\?|$)/.test(req.url)) return reply.redirect('/login?error=rate_limited');
@@ -181,6 +192,8 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
   });
 
   authRoutes(app, ctx);
+  setupRoutes(app, ctx);
+  settingsRoutes(app, ctx);
   customerRoutes(app, ctx);
   scanRoutes(app, ctx);
   reportRoutes(app, ctx);
@@ -205,5 +218,6 @@ export async function buildApp(config: Config, db: Db): Promise<{ app: FastifyIn
     return reply.sendFile('index.html');
   });
 
+  await announceSetup(ctx);
   return { app, ctx };
 }

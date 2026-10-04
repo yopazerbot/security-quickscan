@@ -1,18 +1,21 @@
 import { verify as argonVerify } from '@node-rs/argon2';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { passwordChangeInput, passwordLoginInput, reauthInput } from '@qs/shared';
+import { and, eq, gt, ne, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import * as oidc from 'openid-client';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { entraEnabled } from '../config.js';
 import type { AppCtx } from '../context.js';
-import { HttpError } from '../context.js';
+import { HttpError, notFound } from '../context.js';
 import { randomToken, safeEqual, sha256 } from '../crypto/envelope.js';
-import { authStates, loginAttempts, users } from '../db/schema.js';
-import { cookieName, createSession, destroySession, loadSession, requireUser } from './session.js';
+import { authStates, loginAttempts, sessions, users } from '../db/schema.js';
+import { cookieName, createSession, destroySession, loadSession, passwordChangePending, recentAuthUntil, requireUser } from './session.js';
 import { verifyTotp } from './totp.js';
 import { parse } from '../routes/helpers.js';
 import { demoLoginAvailable } from '../demo/login.js';
+import { getRuntime, type Runtime } from '../settings/runtime.js';
+import { hashPassword, passwordProblem, verifyPassword } from './password.js';
+import { LOCAL_EMAIL, realAdminExists, setupRequired } from './setup.js';
 
 const OIDC_COOKIE = 'qs_oidc';
 
@@ -29,19 +32,37 @@ const STATE_TTL_MS = 10 * 60_000;
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 15;
 
-let discovered: Promise<oidc.Configuration> | null = null;
-function entraConfig(ctx: AppCtx) {
-  if (!discovered) {
-    const c = ctx.config;
-    discovered = oidc
-      .discovery(new URL(`https://login.microsoftonline.com/${c.ENTRA_TENANT_ID}/v2.0`), c.ENTRA_CLIENT_ID!, c.ENTRA_CLIENT_SECRET!)
-      .catch((e) => {
-        discovered = null;
-        throw e;
-      });
+/** Indirection so tests can replace OIDC discovery (no network). */
+export const oidcDiscovery = { discover: (tenantId: string, clientId: string, clientSecret: string) => oidc.discovery(new URL(`https://login.microsoftonline.com/${tenantId}/v2.0`), clientId, clientSecret) };
+
+/** Discovery result, cached per Entra configuration version (tenant, client ID and secret). */
+let discovered: { version: string; config: Promise<oidc.Configuration> } | null = null;
+function entraConfig(rt: Runtime) {
+  const e = rt.entra;
+  if (!discovered || discovered.version !== e.version) {
+    const entry = {
+      version: e.version,
+      config: oidcDiscovery.discover(e.tenantId!, e.clientId!, e.clientSecret.value!).catch((err) => {
+        if (discovered === entry) discovered = null;
+        throw err;
+      }),
+    };
+    discovered = entry;
   }
-  return discovered;
+  return discovered.config;
 }
+
+/** Only same-site paths are accepted as a return target after sign-in. */
+function safeReturnTo(v: unknown): string {
+  return typeof v === 'string' && v.length <= 200 && /^\/(?![/\\])[A-Za-z0-9\-._~/?=&%]*$/.test(v) ? v : '/';
+}
+
+/** A Microsoft re-authentication must have entered credentials within this window (auth_time claim). */
+const REAUTH_MAX_AGE_S = 10 * 60;
+/** Password sign-in: failures per account and per client address within LOCK_MINUTES. */
+const PW_ACCOUNT_MAX = 5;
+const PW_IP_MAX = 20;
+const INVALID_LOGIN = 'Invalid email or password';
 
 /** Global ceiling for failed break-glass attempts from all addresses together (warns and slows down, never locks). */
 const BREAKGLASS_GLOBAL_MAX = 50;
@@ -92,13 +113,19 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   const redirectUri = `${config.APP_URL}/api/auth/callback`;
   // Sign-in redirects: generous enough for a shared office IP; a 429 here redirects to /login?error=rate_limited (app.ts).
   const ssoLimit = { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } };
+  const pwLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
 
-  app.get('/api/auth/config', async () => ({
-    entra: entraEnabled(config),
-    breakglass: config.BREAKGLASS_ENABLED,
-    demoLogin: await demoLoginAvailable(ctx),
-    local: config.LOCAL_MODE,
-  }));
+  app.get('/api/auth/config', async () => {
+    const rt = await getRuntime(ctx);
+    return {
+      entra: !config.LOCAL_MODE && rt.entra.usable,
+      password: !config.LOCAL_MODE && rt.password.enabled,
+      breakglass: config.BREAKGLASS_ENABLED,
+      demoLogin: await demoLoginAvailable(ctx),
+      local: config.LOCAL_MODE,
+      setupRequired: await setupRequired(ctx),
+    };
+  });
 
   app.get('/api/auth/me', async (req, reply) => {
     // Local mode: no login, the browser on this machine gets a local administrator session. Inside a container
@@ -117,26 +144,37 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       await loadSession(ctx, req);
     }
     const user = requireUser(req);
+    const rt = await getRuntime(ctx);
+    const local = req.session!.authMethod === 'local';
     return {
       user,
       csrfToken: req.session!.csrfToken,
       authMethod: req.session!.authMethod,
       sessionExpiresAt: req.session!.expiresAt,
       /** Sessions end after this many minutes without requests (in addition to sessionExpiresAt). */
-      idleMinutes: config.SESSION_IDLE_MINUTES,
+      idleMinutes: rt.general.sessionIdleMinutes,
+      /** The temporary password must be changed before anything else works (403 password_change_required). */
+      mustChangePassword: passwordChangePending(req),
+      /** Sensitive settings need a sign-in after this moment (403 reauth_required). Local mode is exempt. */
+      recentAuthUntil: (local ? req.session!.expiresAt : recentAuthUntil(req))?.toISOString() ?? null,
       features: {
-        demo: config.DEMO_MODE,
+        demo: rt.general.demoMode,
         local: config.LOCAL_MODE,
-        scannerAws: Boolean(config.SCANNER_AWS_ACCESS_KEY_ID),
-        scannerMs: Boolean(config.SCANNER_MS_CLIENT_ID),
-        scannerMsClientId: config.SCANNER_MS_CLIENT_ID ?? null,
+        scannerAws: Boolean(rt.scanner.env.aws),
+        scannerMs: Boolean(rt.scanner.env.ms),
+        scannerMsClientId: rt.scanner.ms.clientId,
       },
     };
   });
 
   app.get('/api/auth/login', ssoLimit, async (req, reply) => {
-    if (!entraEnabled(config)) throw new HttpError(404, 'Microsoft sign-in is not configured');
-    const oc = await entraConfig(ctx);
+    const rt = await getRuntime(ctx);
+    if (config.LOCAL_MODE || !rt.entra.usable) throw new HttpError(404, 'Microsoft sign-in is not configured');
+    const q = (req.query ?? {}) as Record<string, unknown>;
+    // ?reauth=1 from a signed-in browser: confirm the identity again (prompt=login), then mark the session as recent.
+    const reauth = (q.reauth === '1' || q.reauth === 'true') && Boolean(req.user && req.session);
+    const returnTo = safeReturnTo(q.returnTo);
+    const oc = await entraConfig(rt);
     const state = oidc.randomState();
     const nonce = oidc.randomNonce();
     const verifier = oidc.randomPKCECodeVerifier();
@@ -144,7 +182,8 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     await ctx.db.insert(authStates).values({
       stateHash: sha256(state),
       kind: 'oidc',
-      data: { verifier, nonce },
+      // Only the session's hash is kept; the callback arrives without the SameSite=Strict session cookie.
+      data: { verifier, nonce, returnTo, version: rt.entra.version, ...(reauth ? { reauthSession: req.session!.idHash, reauthUser: req.user!.id } : {}) },
       expiresAt: new Date(Date.now() + STATE_TTL_MS),
     });
     // Binds the flow to this browser (login CSRF protection). Lax so it survives the redirect back.
@@ -157,7 +196,8 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       code_challenge_method: 'S256',
       state,
       nonce,
-      prompt: 'select_account',
+      prompt: reauth ? 'login' : 'select_account',
+      ...(reauth && req.user ? { login_hint: req.user.email } : {}),
     });
     return reply.redirect(url.href);
   });
@@ -176,11 +216,21 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       .where(and(eq(authStates.stateHash, sha256(q.state)), eq(authStates.kind, 'oidc'), gt(authStates.expiresAt, new Date())))
       .returning();
     if (!st[0]) return fail('state_expired');
-    const { verifier, nonce } = st[0].data as { verifier: string; nonce: string };
+    const { verifier, nonce, returnTo, version, reauthSession, reauthUser } = st[0].data as {
+      verifier: string;
+      nonce: string;
+      returnTo?: string;
+      version?: string;
+      reauthSession?: string;
+      reauthUser?: string;
+    };
+    const rt = await getRuntime(ctx);
+    // Microsoft sign-in was switched off or reconfigured while this sign-in was in progress.
+    if (config.LOCAL_MODE || !rt.entra.usable || (version && version !== rt.entra.version)) return fail('state_expired');
 
     let claims: oidc.IDToken;
     try {
-      const oc = await entraConfig(ctx);
+      const oc = await entraConfig(rt);
       const current = new URL(`${redirectUri}?${new URLSearchParams(q).toString()}`);
       const tokens = await oidc.authorizationCodeGrant(oc, current, { pkceCodeVerifier: verifier, expectedState: q.state, expectedNonce: nonce, idTokenExpected: true });
       claims = tokens.claims()!;
@@ -193,20 +243,21 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
     const oid = String(claims.oid ?? '');
     // preferred_username is the UPN for member accounts; the optional email claim can be unverified.
     const email = String(claims.preferred_username ?? claims.email ?? '').toLowerCase();
-    if (!oid || tid.toLowerCase() !== config.ENTRA_TENANT_ID!.toLowerCase()) return fail('wrong_tenant');
+    if (!oid || tid.toLowerCase() !== rt.entra.tenantId!.toLowerCase()) return fail('wrong_tenant');
     // Guests (B2B) carry an idp claim pointing at their home identity provider: not supported.
     if (claims.idp && String(claims.idp) !== String(claims.iss)) {
       await audit(ctx, req, 'auth.login_denied', undefined, { email, oid, reason: 'guest' });
       return fail('guest_not_supported');
     }
-    if (config.ENTRA_REQUIRE_MFA && !(Array.isArray(claims.amr) && claims.amr.includes('mfa'))) return fail('mfa_required');
+    if (rt.entra.requireMfa && !(Array.isArray(claims.amr) && claims.amr.includes('mfa'))) return fail('mfa_required');
+    if (reauthSession && !(typeof claims.auth_time === 'number' && Date.now() / 1000 - claims.auth_time <= REAUTH_MAX_AGE_S)) return fail('reauth_failed');
 
     let user = (await ctx.db.select().from(users).where(eq(users.entraOid, oid)).limit(1))[0];
     if (!user && email) {
       const byEmail = (await ctx.db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1))[0];
       if (byEmail && !byEmail.entraOid && !byEmail.isBreakglass) {
         [user] = await ctx.db.update(users).set({ entraOid: oid, name: String(claims.name ?? byEmail.name) }).where(eq(users.id, byEmail.id)).returning();
-      } else if (!byEmail && config.BOOTSTRAP_ADMIN_EMAIL && email === config.BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && !(await realAdminExists(ctx))) {
+      } else if (!byEmail && rt.bootstrapAdminEmail && email === rt.bootstrapAdminEmail && !(await realAdminExists(ctx))) {
         [user] = await ctx.db.insert(users).values({ email, name: String(claims.name ?? email), role: 'admin', entraOid: oid }).returning();
         await audit(ctx, req, 'user.bootstrap_admin', { type: 'user', id: user.id }, undefined, { id: user.id, email });
       }
@@ -219,18 +270,110 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
       await audit(ctx, req, 'auth.login_denied', { type: 'user', id: user.id }, { email, oid, reason: 'inactive' });
       return fail('account_disabled');
     }
+    const target = safeReturnTo(returnTo);
+    if (reauthSession && reauthUser === user.id) {
+      // Same person confirmed again: the existing session counts as recently authenticated.
+      const upd = await ctx.db
+        .update(sessions)
+        .set({ reauthAt: new Date() })
+        .where(and(eq(sessions.idHash, reauthSession), eq(sessions.userId, user.id), gt(sessions.expiresAt, new Date())))
+        .returning({ id: sessions.idHash });
+      if (upd.length) {
+        await audit(ctx, req, 'auth.reauth', { type: 'user', id: user.id }, { method: 'entra' }, { id: user.id, email: user.email });
+        return reply.redirect(target);
+      }
+    }
     await createSession(ctx, req, reply, user.id, 'entra');
     await audit(ctx, req, 'auth.login', { type: 'user', id: user.id }, { method: 'entra' }, { id: user.id, email: user.email });
-    return reply.redirect('/');
+    return reply.redirect(target);
+  });
+
+  // ---------- local password sign-in ----------
+
+  const accountKey = (email: string) => `pw:acct:${email.toLowerCase()}`;
+
+  app.post('/api/auth/password/login', pwLimit, async (req, reply) => {
+    const rt = await getRuntime(ctx);
+    if (config.LOCAL_MODE || !rt.password.enabled) throw notFound();
+    const body = parse(passwordLoginInput, req.body);
+    const email = body.email.toLowerCase();
+    const ipKey = `pw:ip:${clientKey(req.ip)}`;
+    const acctKey = accountKey(email);
+    // Per address: only failures count (checked here, counted below). Per account: every attempt counts
+    // atomically before verification, so parallel guesses cannot slip under the limit.
+    if (await attemptsExhausted(ctx, ipKey, PW_IP_MAX)) throw new HttpError(429, 'Too many failed sign-in attempts. Try again later.');
+    if (!(await takeAttempt(ctx, acctKey, PW_ACCOUNT_MAX))) {
+      await audit(ctx, req, 'auth.password_locked', undefined, { email });
+      throw new HttpError(429, 'Too many failed sign-in attempts for this account. Try again in 15 minutes.');
+    }
+    const user = (await ctx.db.select().from(users).where(sql`lower(${users.email}) = ${email}`).limit(1))[0];
+    const eligible = Boolean(user && !user.isDemo && !user.isBreakglass && user.email.toLowerCase() !== LOCAL_EMAIL);
+    // Always verifies (a dummy hash without an account), so the timing does not reveal which accounts exist.
+    const ok = await verifyPassword(eligible ? user!.passwordHash : null, body.password);
+    if (!ok || !user!.active) {
+      await takeAttempt(ctx, ipKey, PW_IP_MAX);
+      // The typed email is only recorded for existing accounts (it may be a password typed into the wrong field).
+      const reason = !user ? 'unknown_account' : !eligible ? 'not_allowed' : !user.passwordHash ? 'no_password' : ok ? 'inactive' : 'wrong_password';
+      await audit(ctx, req, 'auth.password_failed', user ? { type: 'user', id: user.id } : undefined, user ? { email: user.email, reason } : { reason });
+      throw new HttpError(401, INVALID_LOGIN);
+    }
+    await clearAttempts(ctx, acctKey);
+    await createSession(ctx, req, reply, user.id, 'password');
+    await audit(ctx, req, 'auth.login', { type: 'user', id: user.id }, { method: 'password' }, { id: user.id, email: user.email });
+    return { ok: true, mustChangePassword: user.mustChangePassword };
+  });
+
+  app.post('/api/auth/password/change', pwLimit, async (req, reply) => {
+    const me = requireUser(req);
+    if (me.isDemo || me.isBreakglass || req.session!.authMethod === 'local') throw new HttpError(403, 'This account has no password to change');
+    const body = parse(passwordChangeInput, req.body);
+    const row = (await ctx.db.select().from(users).where(eq(users.id, me.id)).limit(1))[0];
+    if (!row?.passwordHash) throw new HttpError(400, 'This account signs in with Microsoft and has no password');
+    const acctKey = accountKey(row.email);
+    if (!(await takeAttempt(ctx, acctKey, PW_ACCOUNT_MAX))) throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.');
+    if (!(await verifyPassword(row.passwordHash, body.currentPassword))) {
+      await audit(ctx, req, 'auth.password_change_failed', { type: 'user', id: me.id }, { reason: 'wrong_password' });
+      throw new HttpError(400, 'The current password is incorrect');
+    }
+    const rt = await getRuntime(ctx);
+    const problem = passwordProblem(body.newPassword, { minLength: rt.password.minLength, email: row.email });
+    if (problem) throw new HttpError(400, problem);
+    if (body.newPassword === body.currentPassword) throw new HttpError(400, 'Choose a new password that differs from the current one.');
+    await ctx.db
+      .update(users)
+      .set({ passwordHash: await hashPassword(body.newPassword), passwordChangedAt: new Date(), mustChangePassword: false })
+      .where(eq(users.id, me.id));
+    // Every other session of this account ends; this one gets a fresh token.
+    const revoked = await ctx.db.delete(sessions).where(and(eq(sessions.userId, me.id), ne(sessions.idHash, req.session!.idHash))).returning({ id: sessions.idHash });
+    await clearAttempts(ctx, acctKey);
+    await createSession(ctx, req, reply, me.id, req.session!.authMethod);
+    await audit(ctx, req, 'auth.password_changed', { type: 'user', id: me.id }, { otherSessionsRevoked: revoked.length, wasTemporary: row.mustChangePassword });
+    return { ok: true };
+  });
+
+  /** Re-authentication for password sessions (Microsoft sessions use GET /api/auth/login?reauth=1). */
+  app.post('/api/auth/reauth', pwLimit, async (req) => {
+    const me = requireUser(req);
+    if (req.session!.authMethod !== 'password') {
+      throw new HttpError(400, req.session!.authMethod === 'entra' ? 'Confirm your identity with Microsoft sign-in' : 'Sign in again to confirm your identity');
+    }
+    const body = parse(reauthInput, req.body);
+    const row = (await ctx.db.select().from(users).where(eq(users.id, me.id)).limit(1))[0];
+    const acctKey = accountKey(row.email);
+    if (!(await takeAttempt(ctx, acctKey, PW_ACCOUNT_MAX))) throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.');
+    if (!(await verifyPassword(row.passwordHash, body.password))) {
+      await audit(ctx, req, 'auth.reauth_failed', { type: 'user', id: me.id });
+      throw new HttpError(400, 'The password is incorrect');
+    }
+    await clearAttempts(ctx, acctKey);
+    const now = new Date();
+    await ctx.db.update(sessions).set({ reauthAt: now }).where(eq(sessions.idHash, req.session!.idHash));
+    req.session!.reauthAt = now;
+    await audit(ctx, req, 'auth.reauth', { type: 'user', id: me.id }, { method: 'password' });
+    return { ok: true, recentAuthUntil: recentAuthUntil(req)!.toISOString() };
   });
 
   const bgSchema = z.object({ username: z.string().max(200), password: z.string().max(500), totp: z.string().max(10) });
-
-  /** Bootstrap only creates the first administrator, never again once one exists. */
-  async function realAdminExists(c: AppCtx) {
-    const r = await c.db.select({ id: users.id }).from(users).where(and(eq(users.role, 'admin'), eq(users.isBreakglass, false), eq(users.isDemo, false), sql`${users.entraOid} is not null`)).limit(1);
-    return r.length > 0;
-  }
 
   app.post('/api/auth/breakglass', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!config.BREAKGLASS_ENABLED) throw new HttpError(404, 'Not found');
@@ -289,7 +432,6 @@ export function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   });
 }
 
-const LOCAL_EMAIL = 'local-admin@localhost';
 const localTokens = new WeakMap<AppCtx, string>();
 
 /** One-time startup token of a local installation in a container (kept in memory, new on every start). */

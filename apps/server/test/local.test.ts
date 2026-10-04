@@ -1,4 +1,3 @@
-import { DEFAULT_CONTEXT } from '@qs/shared';
 import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,10 +73,10 @@ const url = process.env.TEST_DATABASE_URL;
       method: 'POST',
       url: '/api/customers',
       headers: { host: '127.0.0.1:9000', origin: 'http://127.0.0.1:9000', cookie, 'x-csrf-token': me.json().csrfToken },
-      payload: { name: 'Local Customer', context: DEFAULT_CONTEXT },
+      payload: { name: 'Local Customer' },
     });
     expect(created.statusCode).toBe(200);
-    const noCsrf = await app.inject({ method: 'POST', url: '/api/customers', headers: { host: 'localhost:8080', origin: 'http://localhost:8080', cookie }, payload: { name: 'X', context: DEFAULT_CONTEXT } });
+    const noCsrf = await app.inject({ method: 'POST', url: '/api/customers', headers: { host: 'localhost:8080', origin: 'http://localhost:8080', cookie }, payload: { name: 'X' } });
     expect(noCsrf.statusCode).toBe(403);
   });
 

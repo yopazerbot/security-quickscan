@@ -5,7 +5,7 @@
 [![Docker image](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml/badge.svg)](https://github.com/yopazerbot/security-quickscan/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Security QuickScan is a self-hostable web application for internal IT and security teams, MSPs and consultants, and auditors who need a fast, repeatable and well-documented view of an organisation's cloud security posture. It guides you from organisation context to a finished report in one flow: capture the context and risk profile, choose the systems in scope, connect with read-only access, review the evaluation criteria, watch the scan run live, and share a branded PDF.
+Security QuickScan is a self-hostable web application for internal IT and security teams, MSPs and consultants, and auditors who need a fast, repeatable and well-documented view of an organisation's cloud security posture. It is a pure best-practice and compliance scan, not a risk assessment, and asks for as little input as possible: name the organisation, choose the systems in scope, connect with read-only access, watch every check run live, and share a branded PDF.
 
 Run it on your laptop with one Docker command (no login, nothing leaves your machine), or host it for a team with Microsoft Entra ID single sign-on.
 
@@ -15,7 +15,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
 
 - **84 automated, read-only checks** across Microsoft 365 / Entra ID (23), Azure (13), AWS (28) and GitHub (20). See the [check catalogue](docs/CHECKS.md).
 - **ISO/IEC 27001:2022 Annex A as the backbone.** Every check maps to a primary Annex A control, and results roll up into a per-control verdict (effective, no issues found with limited evidence, partially effective, not effective or not assessed) with an evidence strength, and every finding links back to the system and console page it came from. CIS and NIS2 references are included as secondary mappings.
-- **Risk-based evaluation.** A short organisation questionnaire (sector, size, NIS2/DORA/ISO scope, data sensitivity, internet exposure, maturity) produces a risk profile that selects the default criteria and weights the score.
+- **Best practice, not risk based.** An organisation is just a name. Every scan runs every check for the platforms in scope, with no questionnaire, criteria selection or weighting; findings that do not apply are marked not applicable afterwards.
 - **Guided, least-privilege access.** Step-by-step instructions per platform, including a ready-made AWS CloudFormation role with external ID and a Microsoft admin-consent flow, so no long-lived secrets need to be shared. A connection test checks access before scanning.
 - **You choose how long credentials are kept** per scan: deleted right after the scan, kept for N days, or kept until you delete them. Secrets are always envelope-encrypted (AES-256-GCM) and never shown again.
 - **Live scan progress** with per-system lanes, a live score and an ETA.
@@ -23,7 +23,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
   - an interactive web report: grade and trend, Annex A heatmap, domain radar, top risks, quick wins, filterable findings with evidence and remediation;
   - a branded [PDF report](docs/sample-report.pdf);
   - CSV exports of findings and of the Annex A control assessment.
-- **Triage that sticks.** Mark a finding on a specific system as risk accepted or false positive with a note; the decision carries over to later scans of that system and is reflected in their score. Finished reports never change afterwards.
+- **Triage that sticks.** Mark a finding on a specific system as risk accepted or as not applicable / false positive with a note; the decision carries over to later scans of that system and is reflected in their score. Finished reports never change afterwards.
 - **Private by default** (hosted mode): each user sees only the organisations they own; the owner shares an organisation with specific colleagues as view or edit, on a need-to-know basis. Admin, analyst and viewer roles and an append-only audit log.
 - **Demo mode** with a realistic fictional organisation, for trying the tool or giving others a tour, plus an optional PIN login for demo visitors.
 
@@ -32,8 +32,7 @@ Run it on your laptop with one Docker command (no login, nothing leaves your mac
 | | |
 | --- | --- |
 | ![Dashboard](docs/screenshots/dashboard.png) **Dashboard** | ![Organisation](docs/screenshots/customer.png) **Organisation history and trend** |
-| ![Context](docs/screenshots/customer-context.png) **Organisation context and risk profile** | ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** |
-| ![Criteria](docs/screenshots/wizard-criteria.png) **Criteria mapped to ISO 27001 controls** | ![Progress](docs/screenshots/progress.png) **Live scan progress** |
+| ![Access](docs/screenshots/wizard-access.png) **Guided, read-only access** | ![Progress](docs/screenshots/progress.png) **Live scan progress** |
 | ![Finding](docs/screenshots/finding.png) **Findings with evidence and remediation** | ![PDF](docs/screenshots/pdf-report.png) **Branded PDF report** |
 
 All screenshots show the built-in fictional demo organisation.
@@ -88,13 +87,15 @@ Do not expose local mode to a network. To share the tool with colleagues or a wi
 
 ## How a scan works
 
-1. **Organisation context (once per organisation).** When you create the organisation, answer a short questionnaire. The live risk profile (low, medium, high, critical) shows its drivers and the domain weights it applies. Every new scan uses the current context, so the wizard does not ask for it again; edit the organisation to change it.
-2. **Scope.** Add the environments to assess: Microsoft 365 tenants, Azure tenants, AWS accounts and GitHub organisations, as many of each as needed.
-3. **Access.** Follow the per-platform guidance, store the read-only credentials (or use a secret-less method) and run a connection test. Choose how long secrets are kept.
-4. **Criteria.** Review the checks selected for the risk profile, grouped by platform or by ISO control. Exclude anything out of scope with a reason; exclusions appear in the report.
-5. **Review and start.** Check that every system is connected, see how many checks will run and how secrets are retained, then start the scan. Watch it run live, then open the report.
+Create the organisation once: it only needs a name. Then a scan takes three steps:
 
-Rescan later with one click: scope, criteria and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
+1. **Scope.** Add the environments to assess: Microsoft 365 tenants, Azure tenants, AWS accounts and GitHub organisations, as many of each as needed.
+2. **Access.** Follow the per-platform guidance, store the read-only credentials (or use a secret-less method) and run a connection test. Choose how long secrets are kept.
+3. **Review and start.** Check that every system is connected, see how many checks will run and how secrets are retained, then start the scan. Watch it run live, then open the report.
+
+Every check for the platforms in scope runs; there is no criteria step. When a finding does not apply to the organisation, mark it as **Not applicable / false positive** in the report's triage: it is left out of the score of every scan of that system that finishes from then on.
+
+Rescan later with one click: scope and still-valid credentials are copied, and the report shows what was resolved, what is new and what persists.
 
 ## What it checks
 
@@ -129,7 +130,7 @@ Evidence strength per control:
 
 An accepted risk still counts as a gap for the control (half credit): accepting a risk does not make a control effective. Assessable Annex A controls that no check evidenced are listed as **not covered** in the report, the PDF and the CSV, so coverage gaps are visible rather than silent. Each control lists the results that fed it per system.
 
-The overall score (0 to 100, graded A to F) weights each check by severity and by the domain weights from the organisation's risk profile. Findings marked as false positive count as passed; accepted risks are excluded from the score but listed in the report.
+The overall score (0 to 100, graded A to F) weights each check by its severity only; every domain counts the same. Findings marked as not applicable / false positive are left out of the score, and so are accepted risks, but both stay listed in the report.
 
 The report states clearly that verdicts reflect **technical evidence only**: organisational aspects of a control (policies, processes, awareness) are outside what an automated scan can see.
 
@@ -281,7 +282,7 @@ Code layout:
 ```
 apps/web         React 19 single-page app (Vite, Tailwind CSS, TanStack Query, Recharts)
 apps/server      Fastify API and scan worker, Drizzle ORM (Postgres), PDFKit reports
-packages/shared  Types, ISO 27001 catalogue, check catalogue, risk profiling, scoring
+packages/shared  Types, ISO 27001 catalogue, check catalogue, scoring
 packages/checks  Check implementations: AWS SDK v3, Microsoft Graph, Azure Resource Manager, GitHub REST
 e2e              Playwright end-to-end tests
 infra            AWS CloudFormation role and scanner policy
@@ -320,7 +321,7 @@ The end-to-end suite starts the app in demo mode and covers:
 
 ### Adding a check
 
-1. Add its metadata to `packages/shared/src/catalog/<platform>.ts`: severity, domain, minimum risk level, effort, remediation, references and ISO 27001 controls (primary first).
+1. Add its metadata to `packages/shared/src/catalog/<platform>.ts`: severity, domain, effort, remediation, references and ISO 27001 controls (primary first).
 2. Implement it in `packages/checks/src/...`, returning `pass`, `fail`, `warn`, `na` or `error` with the affected resources.
 3. Add a demo scenario in `packages/checks/src/demo.ts`.
 4. Run `npm test` (it verifies that every check maps to known Annex A controls and has an implementation and a demo scenario) and `npm run docs:checks`.

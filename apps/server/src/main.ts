@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { Envelope } from './crypto/envelope.js';
 import { createDb, runMigrations } from './db/index.js';
 import { seedDemo } from './demo/seed.js';
+import { getRuntime } from './settings/runtime.js';
 import { startWorker } from './worker.js';
 
 async function main() {
@@ -18,8 +19,10 @@ async function main() {
   log.info({ mode }, 'database migrated');
   // The previous key stays readable during a master key rotation.
   const envelope = new Envelope([config.MASTER_KEY, config.MASTER_KEY_PREVIOUS]);
-  if (config.DEMO_MODE && mode !== 'worker') {
-    await seedDemo({ config, db, envelope, log }).catch((e) => log.error({ err: e }, 'demo seeding failed'));
+  // Demo mode from the app settings (or DEMO_MODE); switching it on in the settings seeds as well.
+  if (mode !== 'worker') {
+    const base = { config, db, envelope, log };
+    if ((await getRuntime(base)).general.demoMode) await seedDemo(base).catch((e) => log.error({ err: e }, 'demo seeding failed'));
   }
 
   let stopWorker: ((deadlineMs?: number) => Promise<void>) | null = null;

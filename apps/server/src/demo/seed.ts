@@ -1,40 +1,25 @@
 import { demoOutcomeSync, DEMO_COMPANY, IMPLEMENTED_CHECKS } from '@qs/checks';
-import { CHECKS, CHECKS_BY_ID, computeRiskProfile, riskRank, type CustomerContext, type Provider } from '@qs/shared';
+import { CHECKS, type Provider } from '@qs/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import { audit } from '../audit.js';
 import type { AppCtx } from '../context.js';
 import { randomToken } from '../crypto/envelope.js';
 import { DEMO_EMAIL } from './login.js';
-import { checkResults, customerAssignments, customers, findingTriage, scanCriteria, scans, scanSystems, users } from '../db/schema.js';
+import { checkResults, customerAssignments, customers, findingTriage, scans, scanSystems, users } from '../db/schema.js';
 import { storeScanScore } from '../scoring.js';
 
 const DAY = 86_400_000;
-
-export const DEMO_CONTEXT: CustomerContext = {
-  industry: 'logistics',
-  employees: '51-250',
-  regulations: ['nis2_important', 'iso27001'],
-  dataSensitivity: 'high',
-  internetExposure: 'significant',
-  remoteWork: 'hybrid',
-  itManagement: 'mixed',
-  developsSoftware: true,
-  previousIncidents: true,
-  securityMaturity: 'developing',
-  crownJewels: 'Transport management system (TMS), EDI connections with shippers, driver planning data and invoicing. Ransomware on the TMS would stop operations within hours.',
-};
-
-/** Criteria excluded in the seeded scans, with the reason for each exclusion. */
-const EXCLUSIONS: Record<string, string> = {
-  'm365.device-compliance': 'Intune roll-out is planned for Q1 2027; agreed out of scope for this assessment.',
-  'aws.kms-rotation': 'Only AWS managed keys are used for production data according to the IT team.',
-};
 
 const TRIAGE = [
   {
     checkId: 'm365.weak-auth-methods',
     status: 'accepted' as const,
     note: 'SMS stays enabled for warehouse staff without company smartphones until Q2 2027. Compensating control: sign-in restricted to the warehouse network via Conditional Access.',
+  },
+  {
+    checkId: 'm365.device-compliance',
+    status: 'false_positive' as const,
+    note: 'Not applicable for this assessment: the Intune roll-out is planned for Q1 2027.',
   },
   {
     checkId: 'azure.sql-public',
@@ -74,13 +59,8 @@ function systemsFor(maturity: number) {
   return sys;
 }
 
-function criteriaIds(level: ReturnType<typeof computeRiskProfile>['level'], providers: Provider[]) {
-  return CHECKS.filter((c) => providers.includes(c.provider) && IMPLEMENTED_CHECKS.has(c.id)).map((c) => ({
-    checkId: c.id,
-    included: riskRank(c.minRisk) <= riskRank(level) && !EXCLUSIONS[c.id],
-    reason: EXCLUSIONS[c.id] ?? '',
-  }));
-}
+/** Every implemented check for the providers in scope runs; there is no selection of criteria. */
+const checksFor = (provider: Provider) => CHECKS.filter((c) => c.provider === provider && IMPLEMENTED_CHECKS.has(c.id));
 
 type Tx = Parameters<Parameters<AppCtx['db']['transaction']>[0]>[0];
 
@@ -89,7 +69,6 @@ async function createScan(
   customerId: string,
   opts: { name: string; maturity: number; finishedAt?: Date; draft?: boolean },
 ) {
-  const profile = computeRiskProfile(DEMO_CONTEXT);
   const startedAt = opts.finishedAt ? new Date(opts.finishedAt.getTime() - 6 * 60_000) : null;
   const [scan] = await tx
     .insert(scans)
@@ -97,9 +76,10 @@ async function createScan(
       customerId,
       name: opts.name,
       status: opts.draft ? 'draft' : 'completed',
-      wizardStep: opts.draft ? 4 : 4,
-      context: DEMO_CONTEXT,
-      riskProfile: profile,
+      // Stored steps count the former context step as 0: 3 is Review (Scope 1, Access 2, Review 3).
+      wizardStep: 3,
+      context: {},
+      riskProfile: {},
       createdAt: startedAt ? new Date(startedAt.getTime() - 3 * DAY) : new Date(),
       queuedAt: startedAt,
       startedAt,
@@ -108,8 +88,6 @@ async function createScan(
     .returning();
 
   const systems = systemsFor(opts.maturity);
-  const crit = criteriaIds(profile.level, systems.map((s) => s.provider));
-  await tx.insert(scanCriteria).values(crit.map((c) => ({ scanId: scan.id, ...c })));
 
   for (const s of systems) {
     const [row] = await tx
@@ -127,15 +105,14 @@ async function createScan(
       })
       .returning();
     if (opts.draft || !startedAt) continue;
-    const included = crit.filter((c) => c.included && CHECKS_BY_ID[c.checkId].provider === s.provider);
     await tx.insert(checkResults).values(
-      included.map((c, i) => {
-        const o = demoOutcomeSync(c.checkId, opts.maturity);
+      checksFor(s.provider).map((c, i) => {
+        const o = demoOutcomeSync(c.id, opts.maturity);
         const t = new Date(startedAt.getTime() + (i + 1) * 4000);
         return {
           scanId: scan.id,
           systemId: row.id,
-          checkId: c.checkId,
+          checkId: c.id,
           status: o.status,
           summary: o.summary,
           resources: o.resources ?? [],
@@ -165,12 +142,7 @@ export async function seedDemo(ctx: AppCtx): Promise<boolean> {
       .insert(customers)
       .values({
         name: DEMO_COMPANY.name,
-        contactName: 'Els Vandenberghe',
-        contactEmail: `els.vandenberghe@${DEMO_COMPANY.domain}`,
-        country: 'Belgium',
-        notes:
-          'Fictional demo organisation. Regional logistics company (road transport and warehousing, 140 employees, 3 sites). IT partly outsourced to an MSP; in-house team builds the route planner and driver app. Preparing for NIS2 and ISO 27001 certification in 2027.',
-        context: DEMO_CONTEXT,
+        context: {},
         isDemo: true,
         createdAt: new Date(firstScan.getTime() - 10 * DAY),
         updatedAt: new Date(now - 14 * DAY),

@@ -4,12 +4,12 @@ import { and, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { audit } from './audit.js';
 import { purgeExpiredSessions } from './auth/session.js';
-import { scannerEnv } from './config.js';
 import type { AppCtx } from './context.js';
 import { authStates, checkResults, credentials, scans, scanSystems } from './db/schema.js';
 import { credAad, needsSecret, tenantBindingState } from './routes/scans.js';
 import { applyRetention, settleOpenChecks } from './retention.js';
 import { storeScanScore } from './scoring.js';
+import { getRuntime, scannerEnv } from './settings/runtime.js';
 
 export const WORKER_ID = `worker-${randomUUID().slice(0, 8)}`;
 const POLL_MS = 2000;
@@ -127,7 +127,7 @@ async function runScan(ctx: AppCtx, scanId: string, isStopping: () => boolean) {
           config: cfg,
           secret,
           checkIds,
-          env: scannerEnv(ctx.config),
+          env: await scannerEnv(ctx),
           shouldStop,
           onStart: async (checkId) => {
             await db.update(checkResults).set({ status: 'running', startedAt: new Date(), updatedAt: new Date() }).where(where(checkId));
@@ -202,9 +202,10 @@ export async function housekeeping(ctx: AppCtx) {
 
   if (Date.now() - lastAuditPurge > DAY_MS) {
     lastAuditPurge = Date.now();
-    const r = await db.execute(sql`select audit_purge(make_interval(months => ${ctx.config.AUDIT_RETENTION_MONTHS}::int)) as n`);
+    const months = (await getRuntime(ctx)).general.auditRetentionMonths;
+    const r = await db.execute(sql`select audit_purge(make_interval(months => ${months}::int)) as n`);
     const n = Number((r.rows[0] as { n?: number } | undefined)?.n ?? 0);
-    if (n) ctx.log.info({ purged: n, months: ctx.config.AUDIT_RETENTION_MONTHS }, 'audit log retention applied');
+    if (n) ctx.log.info({ purged: n, months }, 'audit log retention applied');
   }
 }
 

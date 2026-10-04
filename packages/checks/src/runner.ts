@@ -121,14 +121,18 @@ export async function testConnection(provider: Provider, config: any, secret: an
   }
 }
 
-let principalCache: { arn: string; at: number } | null = null;
-/** ARN of the platform AWS identity, used in the customer's role trust policy. */
-export async function awsPrincipalArn(env: ScannerEnv): Promise<string | null> {
+let principalCache: { keyId: string; arn: string; at: number } | null = null;
+/**
+ * ARN of the platform AWS identity, used in the customer's role trust policy. Cached for an hour per access key
+ * (the identity can be changed in the settings); `fresh` skips the cache (connection test).
+ */
+export async function awsPrincipalArn(env: ScannerEnv, opts: { fresh?: boolean } = {}): Promise<string | null> {
   if (!env.aws) return null;
-  if (principalCache && Date.now() - principalCache.at < 3600_000) return principalCache.arn;
+  const keyId = env.aws.accessKeyId;
+  if (!opts.fresh && principalCache?.keyId === keyId && Date.now() - principalCache.at < 3600_000) return principalCache.arn;
   const { STSClient, GetCallerIdentityCommand } = await import('@aws-sdk/client-sts');
   const id = await new STSClient({ region: 'us-east-1', credentials: env.aws }).send(new GetCallerIdentityCommand({}));
-  principalCache = { arn: id.Arn!, at: Date.now() };
+  principalCache = { keyId, arn: id.Arn!, at: Date.now() };
   return id.Arn!;
 }
 

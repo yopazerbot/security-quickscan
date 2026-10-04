@@ -13,7 +13,8 @@ import { base32Encode } from './auth/totp.js';
 import { loadConfig } from './config.js';
 import { Envelope } from './crypto/envelope.js';
 import { createDb } from './db/index.js';
-import { credentials, scans, scanSystems } from './db/schema.js';
+import { credentials, scanSystems, settings } from './db/schema.js';
+import { secretAad, SECRET_FIELDS, type StoredSecret } from './settings/runtime.js';
 
 async function readSecret(prompt: string): Promise<string> {
   process.stderr.write(prompt);
@@ -97,6 +98,19 @@ async function main() {
           const aad = `cred:${r.scanId}:${r.c.systemId}`;
           if (decryptsWith(newEnv, r.c.blob, aad)) continue; // already on the new key (written after the switch)
           await tx.update(credentials).set({ blob: oldEnv.rewrap(r.c.blob, aad, newEnv), keyVersion: r.c.keyVersion + 1 }).where(eq(credentials.systemId, r.c.systemId));
+          n++;
+        }
+        // Secrets in the application settings (sign-in app, scanner identities).
+        for (const { key, field } of SECRET_FIELDS) {
+          const row = (await tx.select().from(settings).where(eq(settings.key, key)).for('update'))[0];
+          const value = row?.value as Record<string, unknown> | undefined;
+          const secret = value?.[field] as StoredSecret | null | undefined;
+          if (!value || !secret?.blob) continue;
+          const aad = secretAad(key, field);
+          const blob = Buffer.from(secret.blob, 'base64');
+          if (decryptsWith(newEnv, blob, aad)) continue;
+          const next = { ...value, [field]: { ...secret, blob: oldEnv.rewrap(blob, aad, newEnv).toString('base64') } };
+          await tx.update(settings).set({ value: next, updatedAt: new Date() }).where(eq(settings.key, key));
           n++;
         }
       });

@@ -8,8 +8,9 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { randomToken, sha256 } from '../src/crypto/envelope.js';
 import { createDb, runMigrations } from '../src/db/index.js';
-import { sessions, users } from '../src/db/schema.js';
-import { DEFAULT_CONTEXT } from '@qs/shared';
+import { checkResults, scanCriteria, sessions, users } from '../src/db/schema.js';
+import { CHECKS } from '@qs/shared';
+import { eq } from 'drizzle-orm';
 
 const url = process.env.TEST_DATABASE_URL;
 const d = url ? describe : describe.skip;
@@ -55,7 +56,7 @@ d('API authorisation', () => {
     await pool.end();
   });
 
-  const customer = (name: string) => ({ name, context: DEFAULT_CONTEXT });
+  const customer = (name: string) => ({ name });
 
   it('requires a session', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/customers' })).statusCode).toBe(401);
@@ -174,15 +175,32 @@ d('API authorisation', () => {
     expect(r.json().error).toMatch(/credentials/i);
   });
 
-  it('applies customer context changes to draft scans only', async () => {
-    const cid = (await req('alice', 'POST', '/api/customers', customer('Context Corp'))).json().id;
+  it('stores an organisation as a name only and ignores fields older clients still send', async () => {
+    const created = await req('alice', 'POST', '/api/customers', { name: 'Name Only', contactName: 'Old form', context: { industry: 'finance' } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({ name: 'Name Only', contactName: '', context: {} });
+    expect((await req('alice', 'POST', '/api/customers', { name: ' ' })).statusCode).toBe(400);
+    const id = created.json().id;
+    const renamed = await req('alice', 'PUT', `/api/customers/${id}`, { name: 'Renamed Org', context: { industry: 'finance' } });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json()).toMatchObject({ name: 'Renamed Org', context: {} });
+  });
+
+  it('runs every check for the providers in scope, ignoring criteria stored by older drafts', async () => {
+    const cid = (await req('alice', 'POST', '/api/customers', customer('All Checks Corp'))).json().id;
     const sid = (await req('alice', 'POST', `/api/customers/${cid}/scans`, {})).json().id;
-    const before = (await req('alice', 'GET', `/api/scans/${sid}`)).json();
-    const context = { ...DEFAULT_CONTEXT, dataSensitivity: 'very_high', internetExposure: 'significant', previousIncidents: true, regulations: ['nis2_essential'] };
-    expect((await req('alice', 'PUT', `/api/customers/${cid}`, { name: 'Context Corp', context })).statusCode).toBe(200);
-    const after = (await req('alice', 'GET', `/api/scans/${sid}`)).json();
-    expect(after.context.dataSensitivity).toBe('very_high');
-    expect(after.riskProfile.points).toBeGreaterThan(before.riskProfile.points);
+    const scan = (await req('alice', 'GET', `/api/scans/${sid}`)).json();
+    expect(scan.context).toEqual({});
+    expect(scan.riskProfile).toEqual({});
+    // The criteria API is gone; exclusions are made afterwards via triage.
+    expect((await req('alice', 'GET', `/api/scans/${sid}/criteria`)).statusCode).toBe(404);
+    expect((await req('alice', 'POST', `/api/scans/${sid}/systems`, { provider: 'github', label: 'Demo', config: { authMode: 'demo' } })).statusCode).toBe(200);
+    // An exclusion left behind by the former criteria step no longer applies.
+    await db.insert(scanCriteria).values({ scanId: sid, checkId: 'gh.org-2fa', included: false, reason: 'old draft' });
+    expect((await req('alice', 'POST', `/api/scans/${sid}/start`)).statusCode).toBe(200);
+    const ran = (await db.select({ checkId: checkResults.checkId }).from(checkResults).where(eq(checkResults.scanId, sid))).map((r) => r.checkId).sort();
+    expect(ran).toEqual(CHECKS.filter((c) => c.provider === 'github').map((c) => c.id).sort());
+    expect(await db.select().from(scanCriteria).where(eq(scanCriteria.scanId, sid))).toEqual([]);
   });
 
   it('makes the audit log append-only', async () => {

@@ -4,7 +4,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CONTEXT, computeRiskProfile } from '@qs/shared';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import type { AppCtx } from '../src/context.js';
@@ -69,7 +68,7 @@ d('scan lifecycle', () => {
   const req = (who: string, method: string, path: string, payload?: unknown) =>
     app.inject({ method: method as any, url: path, payload: payload as any, headers: { cookie: S[who].cookie, 'x-csrf-token': S[who].csrf, origin: 'http://localhost:8080' } });
 
-  const org = async (who = 'alice', name = 'Org') => (await req(who, 'POST', '/api/customers', { name: `${name} ${randomToken(3)}`, context: DEFAULT_CONTEXT })).json().id as string;
+  const org = async (who = 'alice', name = 'Org') => (await req(who, 'POST', '/api/customers', { name: `${name} ${randomToken(3)}` })).json().id as string;
   const draft = async (cid: string, who = 'alice') => (await req(who, 'POST', `/api/customers/${cid}/scans`, {})).json().id as string;
   const setStatus = (sid: string, status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled', workerId: string | null = null) =>
     db.update(scans).set({ status, workerId, heartbeatAt: new Date() }).where(eq(scans.id, sid));
@@ -94,7 +93,7 @@ d('scan lifecycle', () => {
     const patch = await req('alice', 'PATCH', `/api/scans/${sid}/systems/${sys.id}`, { label: 'GH', config: { authMode: 'token', org: 'evil' } });
     expect(patch.statusCode).toBe(409);
     expect((await req('alice', 'DELETE', `/api/scans/${sid}/systems/${sys.id}`)).statusCode).toBe(409);
-    expect((await req('alice', 'PUT', `/api/scans/${sid}/criteria`, { items: [] })).statusCode).toBe(409);
+    expect((await req('alice', 'PATCH', `/api/scans/${sid}`, { name: 'Renamed' })).statusCode).toBe(409);
   });
 
   it('serialises draft edits behind the scan lock (Start versus PATCH)', async () => {
@@ -313,10 +312,9 @@ d('scan lifecycle', () => {
 
   it('worker refuses an admin-consent tenant that is not bound to the organisation', async () => {
     const cid = await org();
-    const context = DEFAULT_CONTEXT;
     const [scan] = await db
       .insert(scans)
-      .values({ customerId: cid, name: 'w', context, riskProfile: computeRiskProfile(context), status: 'queued', queuedAt: new Date(), retentionMode: 'manual' })
+      .values({ customerId: cid, name: 'w', context: {}, riskProfile: {}, status: 'queued', queuedAt: new Date(), retentionMode: 'manual' })
       .returning();
     const cfg = { authMode: 'admin_consent', tenantId: randomUUID(), consentGrantedAt: new Date().toISOString() };
     const [sys] = await db.insert(scanSystems).values({ scanId: scan.id, provider: 'm365', label: 'M365', config: cfg, startedConfig: cfg }).returning();
@@ -339,10 +337,9 @@ d('scan lifecycle', () => {
 
   it('worker turns an undecryptable secret into a system error and keeps the credential', async () => {
     const cid = await org();
-    const context = DEFAULT_CONTEXT;
     const [scan] = await db
       .insert(scans)
-      .values({ customerId: cid, name: 'k', context, riskProfile: computeRiskProfile(context), status: 'queued', queuedAt: new Date(), retentionMode: 'purge_on_completion' })
+      .values({ customerId: cid, name: 'k', context: {}, riskProfile: {}, status: 'queued', queuedAt: new Date(), retentionMode: 'purge_on_completion' })
       .returning();
     const cfg = { authMode: 'token', org: 'acme' };
     const [sys] = await db.insert(scanSystems).values({ scanId: scan.id, provider: 'github', label: 'GH', config: cfg, startedConfig: cfg }).returning();

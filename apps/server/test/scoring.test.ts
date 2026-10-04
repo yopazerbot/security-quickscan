@@ -1,4 +1,4 @@
-import { CHECKS, CHECKS_BY_ID, computeRiskProfile, computeScore, DEFAULT_CONTEXT, executiveSummarySentences, GRADE_COLORS, ISO_ASSESSABLE, ISO_BY_ID, IMPLEMENTED, partialLabel, ROLE_LABELS, ROLES, SEVERITY_WEIGHT, type CheckMeta, type ScoreInput } from './fixtures.js';
+import { CHECKS, CHECKS_BY_ID, computeScore, executiveSummarySentences, GRADE_COLORS, ISO_ASSESSABLE, ISO_BY_ID, IMPLEMENTED, partialLabel, ROLE_LABELS, ROLES, SEVERITY_WEIGHT, type CheckMeta, type ScoreInput } from './fixtures.js';
 import { describe, expect, it } from 'vitest';
 
 describe('catalog', () => {
@@ -20,19 +20,9 @@ describe('role labels', () => {
   });
 });
 
-describe('risk profile', () => {
-  it('rates a small low-exposure company low and a NIS2 bank critical', () => {
-    expect(computeRiskProfile({ ...DEFAULT_CONTEXT, employees: '1-10', securityMaturity: 'managed', remoteWork: 'none', internetExposure: 'none', dataSensitivity: 'low' }).level).toBe('low');
-    const bank = computeRiskProfile({ ...DEFAULT_CONTEXT, industry: 'finance', employees: '1000+', regulations: ['nis2_essential', 'dora'], dataSensitivity: 'very_high', internetExposure: 'significant' });
-    expect(bank.level).toBe('critical');
-    expect(bank.domainWeights.data).toBeGreaterThan(1);
-  });
-});
-
 describe('scoring', () => {
-  const weights = computeRiskProfile(DEFAULT_CONTEXT).domainWeights;
   it('gives 100 / A when everything passes', () => {
-    const s = computeScore([{ checkId: 'm365.mfa-all-users', status: 'pass', severity: 'critical' }], CHECKS_BY_ID, weights);
+    const s = computeScore([{ checkId: 'm365.mfa-all-users', status: 'pass', severity: 'critical' }], CHECKS_BY_ID);
     expect(s.score).toBe(100);
     expect(s.grade).toBe('A');
     expect(s.controls.find((c) => c.id === '8.5')?.verdict).toBe('effective');
@@ -44,28 +34,38 @@ describe('scoring', () => {
         { checkId: 'm365.weak-auth-methods', status: 'pass', severity: 'low' },
       ],
       CHECKS_BY_ID,
-      weights,
     );
     expect(s.controls.find((c) => c.id === '8.5')?.verdict).toBe('not_effective');
     expect(s.score).toBeLessThan(20);
   });
   it('needs strong evidence for an effective verdict', () => {
     // A single critical primary check is strong evidence.
-    const s = computeScore([{ checkId: 'm365.mfa-all-users', status: 'pass', severity: 'critical' }], CHECKS_BY_ID, weights);
+    const s = computeScore([{ checkId: 'm365.mfa-all-users', status: 'pass', severity: 'critical' }], CHECKS_BY_ID);
     const c85 = s.controls.find((c) => c.id === '8.5')!;
     expect(c85.evidence).toBe('strong');
     expect(c85.verdict).toBe('effective');
   });
-  it('treats false positives as pass and excludes accepted risks', () => {
-    const fp = computeScore([{ checkId: 'gh.org-2fa', status: 'fail', severity: 'critical', triage: 'false_positive' }], CHECKS_BY_ID, weights);
-    expect(fp.score).toBe(100);
+  it('leaves findings marked not applicable (false_positive) and accepted risks out of the score', () => {
+    const fp = computeScore([{ checkId: 'gh.org-2fa', status: 'fail', severity: 'critical', triage: 'false_positive' }], CHECKS_BY_ID);
+    expect(fp.score).toBeNull();
+    expect(fp.coverage).toEqual({ assessed: 0, inScope: 0 });
+    expect(fp.counts.false_positive).toBe(1);
+    expect(fp.controls.find((c) => c.id === CHECKS_BY_ID['gh.org-2fa'].frameworks.iso27001[0])?.verdict).toBe('not_assessed');
+    const withFail = computeScore(
+      [
+        { checkId: 'gh.org-2fa', status: 'fail', severity: 'critical', triage: 'false_positive' },
+        { checkId: 'gh.base-permissions', status: 'fail', severity: 'high' },
+      ],
+      CHECKS_BY_ID,
+    );
+    // The not applicable finding neither raises nor lowers the score.
+    expect(withFail.score).toBe(0);
     const acc = computeScore(
       [
         { checkId: 'gh.org-2fa', status: 'fail', severity: 'critical', triage: 'accepted' },
         { checkId: 'gh.base-permissions', status: 'pass', severity: 'high' },
       ],
       CHECKS_BY_ID,
-      weights,
     );
     expect(acc.score).toBe(100);
     expect(acc.counts.accepted).toBe(1);
@@ -74,35 +74,43 @@ describe('scoring', () => {
     expect(['partial', 'not_effective']).toContain(ctrl.verdict);
     expect(ctrl.checks.find((x) => x.checkId === 'gh.org-2fa')).toMatchObject({ status: 'fail', primary: true, triage: 'accepted' });
   });
+  it('weights checks by severity only, the same in every domain', () => {
+    const pick = (sev: string) => CHECKS.filter((c) => c.severity === sev);
+    const [a] = pick('high');
+    const b = pick('high').find((c) => c.domain !== a.domain)!;
+    expect(b).toBeDefined();
+    // One pass and one fail of equal severity in different domains is 50 either way round.
+    expect(computeScore([{ checkId: a.id, status: 'pass', severity: 'high' }, { checkId: b.id, status: 'fail', severity: 'high' }], CHECKS_BY_ID).score).toBe(50);
+    expect(computeScore([{ checkId: a.id, status: 'fail', severity: 'high' }, { checkId: b.id, status: 'pass', severity: 'high' }], CHECKS_BY_ID).score).toBe(50);
+  });
   it('ignores n/a and errors', () => {
-    const s = computeScore([{ checkId: 'aws.rds-public', status: 'na', severity: 'high' }], CHECKS_BY_ID, weights);
+    const s = computeScore([{ checkId: 'aws.rds-public', status: 'na', severity: 'high' }], CHECKS_BY_ID);
     expect(s.controls.find((c) => c.id === '8.20')?.verdict).toBe('not_assessed');
   });
 });
 
 describe('coverage-aware grade', () => {
-  const weights = computeRiskProfile(DEFAULT_CONTEXT).domainWeights;
   const ids = CHECKS.filter((c) => c.provider === 'aws').map((c) => c.id).slice(0, 10);
   const mk = (statuses: string[]) => statuses.map((status, i) => ({ checkId: ids[i], status: status as any, severity: CHECKS_BY_ID[ids[i]].severity }));
 
   it('gives no score or grade when nothing is in scope', () => {
-    const empty = computeScore([], CHECKS_BY_ID, weights);
+    const empty = computeScore([], CHECKS_BY_ID);
     expect(empty.score).toBeNull();
     expect(empty.grade).toBeNull();
     expect(empty.coverage).toEqual({ assessed: 0, inScope: 0 });
     expect(empty.partial).toBe(false);
-    const allNa = computeScore(mk(['na', 'na']), CHECKS_BY_ID, weights);
+    const allNa = computeScore(mk(['na', 'na']), CHECKS_BY_ID);
     expect(allNa.grade).toBeNull();
     expect(allNa.coverage.inScope).toBe(0);
     expect(executiveSummarySentences(allNa)[0]).toBe('No checks could be assessed (2 not applicable), so no grade is given.');
   });
 
   it('gives no grade when fewer than half of the applicable checks were assessed (all errors included)', () => {
-    const allErrors = computeScore(mk(['error', 'error', 'error']), CHECKS_BY_ID, weights);
+    const allErrors = computeScore(mk(['error', 'error', 'error']), CHECKS_BY_ID);
     expect(allErrors.score).toBeNull();
     expect(allErrors.grade).toBeNull();
     expect(executiveSummarySentences(allErrors)).toEqual(['No checks could be assessed, so no grade is given.']);
-    const s = computeScore(mk(['pass', 'pass', 'error', 'error', 'error']), CHECKS_BY_ID, weights);
+    const s = computeScore(mk(['pass', 'pass', 'error', 'error', 'error']), CHECKS_BY_ID);
     expect(s.coverage).toEqual({ assessed: 2, inScope: 5 });
     expect(s.score).toBeNull();
     expect(s.grade).toBeNull();
@@ -111,14 +119,14 @@ describe('coverage-aware grade', () => {
   });
 
   it('grades with a partial flag between 50% and 90%', () => {
-    const s = computeScore(mk(['pass', 'pass', 'pass', 'error', 'error', 'na']), CHECKS_BY_ID, weights);
+    const s = computeScore(mk(['pass', 'pass', 'pass', 'error', 'error', 'na']), CHECKS_BY_ID);
     expect(s.coverage).toEqual({ assessed: 3, inScope: 5 });
     expect(s.score).toBe(100);
     expect(s.grade).toBe('A');
     expect(s.partial).toBe(true);
     expect(partialLabel(s)).toBe('Partial: 3 of 5 checks assessed');
     // Exactly half is still graded.
-    expect(computeScore(mk(['pass', 'error']), CHECKS_BY_ID, weights).grade).toBe('A');
+    expect(computeScore(mk(['pass', 'error']), CHECKS_BY_ID).grade).toBe('A');
   });
 
   it('grades fully at 90% coverage or more and counts every result once', () => {
@@ -129,9 +137,8 @@ describe('coverage-aware grade', () => {
         { checkId: 'gh.base-permissions', status: 'fail', severity: 'high', triage: 'accepted' },
       ],
       CHECKS_BY_ID,
-      weights,
     );
-    expect(s.coverage).toEqual({ assessed: 11, inScope: 12 });
+    expect(s.coverage).toEqual({ assessed: 10, inScope: 11 });
     expect(s.partial).toBe(false);
     expect(s.grade).not.toBeNull();
     expect(s.counts.false_positive).toBe(1);
@@ -151,10 +158,9 @@ describe('coverage-aware grade', () => {
 });
 
 describe('ISO control evidence', () => {
-  const weights = computeRiskProfile(DEFAULT_CONTEXT).domainWeights;
   const input = (c: CheckMeta, status: ScoreInput['status'] = 'pass', extra: Partial<ScoreInput> = {}): ScoreInput => ({ checkId: c.id, status, severity: c.severity, ...extra });
   const primaryOf = (ctrl: string) => CHECKS.filter((c) => c.frameworks.iso27001[0] === ctrl);
-  const control = (results: ScoreInput[], id: string) => computeScore(results, CHECKS_BY_ID, weights).controls.find((c) => c.id === id)!;
+  const control = (results: ScoreInput[], id: string) => computeScore(results, CHECKS_BY_ID).controls.find((c) => c.id === id)!;
 
   it('rates a single minor primary check as limited evidence (no issues found, not effective)', () => {
     const minor = CHECKS.find((c) => ['low', 'medium', 'info'].includes(c.severity))!;
@@ -205,12 +211,12 @@ describe('ISO control evidence', () => {
 
   it('lists assessable controls without results as not covered', () => {
     const check = CHECKS_BY_ID['m365.mfa-all-users'];
-    const s = computeScore([input(check)], CHECKS_BY_ID, weights);
+    const s = computeScore([input(check)], CHECKS_BY_ID);
     const covered = new Set(check.frameworks.iso27001);
     expect(s.notCovered).toEqual(ISO_ASSESSABLE.filter((id) => !covered.has(id)));
     // Not applicable results evidence nothing.
-    expect(computeScore([input(check, 'na')], CHECKS_BY_ID, weights).notCovered).toEqual(ISO_ASSESSABLE);
-    expect(computeScore([], CHECKS_BY_ID, weights).notCovered).toEqual(ISO_ASSESSABLE);
+    expect(computeScore([input(check, 'na')], CHECKS_BY_ID).notCovered).toEqual(ISO_ASSESSABLE);
+    expect(computeScore([], CHECKS_BY_ID).notCovered).toEqual(ISO_ASSESSABLE);
   });
 
   it('attributes control results to their system', () => {

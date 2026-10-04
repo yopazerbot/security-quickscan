@@ -8,6 +8,9 @@ import { createSession, requireRole } from '../auth/session.js';
 import { HttpError, notFound, type AppCtx } from '../context.js';
 import { customerAssignments, customers, sessions, settings, users } from '../db/schema.js';
 import { parse } from '../routes/helpers.js';
+import { getRuntime } from '../settings/runtime.js';
+
+const demoMode = async (ctx: AppCtx) => (await getRuntime(ctx)).general.demoMode;
 
 const KEY = 'demo_login';
 export const DEMO_EMAIL = 'demo-visitor@local';
@@ -27,7 +30,7 @@ export async function getDemoLogin(ctx: AppCtx): Promise<DemoLoginSetting> {
 }
 
 export async function demoLoginAvailable(ctx: AppCtx) {
-  if (!ctx.config.DEMO_MODE) return false;
+  if (!(await demoMode(ctx))) return false;
   const s = await getDemoLogin(ctx);
   return s.enabled && Boolean(s.pinHash);
 }
@@ -59,7 +62,7 @@ async function revokeDemoSessions(ctx: AppCtx) {
 export function demoLoginRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get('/api/admin/demo/login', async (req) => {
     requireRole(req, 'admin');
-    if (!ctx.config.DEMO_MODE) throw notFound();
+    if (!(await demoMode(ctx))) throw notFound();
     const s = await getDemoLogin(ctx);
     return { enabled: s.enabled, pinSet: Boolean(s.pinHash), updatedAt: s.updatedAt, updatedBy: s.updatedBy };
   });
@@ -67,7 +70,7 @@ export function demoLoginRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.put('/api/admin/demo/login', async (req) => {
     const me = requireRole(req, 'admin');
     if (me.isDemo) throw new HttpError(403, 'Forbidden');
-    if (!ctx.config.DEMO_MODE) throw notFound();
+    if (!(await demoMode(ctx))) throw notFound();
     const body = parse(z.object({ enabled: z.boolean(), pin: z.string().regex(/^\d{8,12}$/, 'PIN must be 8 to 12 digits').optional() }), req.body);
     const current = await getDemoLogin(ctx);
     const pinHash = body.pin ? await hash(body.pin, { memoryCost: 65536, timeCost: 3, parallelism: 1 }) : current.pinHash;

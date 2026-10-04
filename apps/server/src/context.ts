@@ -18,6 +18,10 @@ export interface SessionUser {
   role: Role;
   isBreakglass: boolean;
   isDemo: boolean;
+  /** A local password is set (password sign-in possible when enabled). */
+  hasPassword: boolean;
+  /** The account still has a temporary password (enforced for password sessions only). */
+  mustChangePassword: boolean;
 }
 
 export interface SessionInfo {
@@ -25,6 +29,9 @@ export interface SessionInfo {
   csrfToken: string;
   authMethod: string;
   expiresAt: Date;
+  createdAt: Date;
+  /** Last re-authentication within this session, if any. */
+  reauthAt: Date | null;
 }
 
 declare module 'fastify' {
@@ -38,6 +45,8 @@ export class HttpError extends Error {
   constructor(
     public statusCode: number,
     message: string,
+    /** Machine-readable code, included in the JSON body as { error, code } (e.g. reauth_required). */
+    public code?: string,
   ) {
     super(message);
   }

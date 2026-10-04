@@ -279,7 +279,7 @@ export function Login() {
           )}
 
           {cfg.data?.password && (
-            <form onSubmit={(e) => void submitPassword(e)} className={cfg.data.entra ? 'space-y-4' : 'mt-6 space-y-4'} aria-label="Sign in with email and password">
+            <form onSubmit={(e) => void submitPassword(e)} className={cfg.data.entra ? 'space-y-4' : 'mt-6 space-y-4'}>
               <Field label="Email">
                 <Input type="email" autoComplete="username" inputMode="email" value={pw.email} onChange={(e) => setPw({ ...pw, email: e.target.value })} required />
               </Field>

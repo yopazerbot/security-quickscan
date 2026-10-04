@@ -1,15 +1,20 @@
 import { brandingSchema, REPORT_TITLE_SHORT, type Branding } from '@qs/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import clsx from 'clsx';
 import { FlaskConical, ImageUp, Link2, RotateCcw, Trash2 } from 'lucide-react';
-import { useContext, useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { Link, UNSAFE_DataRouterContext, useBlocker, useNavigate } from 'react-router';
+import { useCallback, useContext, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Link, UNSAFE_DataRouterContext, useBlocker, useNavigate, useSearchParams } from 'react-router';
 import { DataTable } from '../components/data-table';
 import { AsyncButton, useToast } from '../components/feedback';
+import { isLeavingForReauth } from '../components/reauth';
 import { Alert, Button, Card, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Spinner, Textarea, Toggle } from '../components/ui';
 import { ApiError, del, fileToBase64, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fmtDateTime } from '../lib/format';
 import { useDocumentTitle } from '../lib/use-document-title';
+import { DemoModeToggle, ImportEnvBanner, SessionSettings } from './settings/GeneralSettings';
+import { ScannerSettings } from './settings/ScannerSettings';
+import { SignInSettings } from './settings/SignInSettings';
 
 type BrandingData = Branding & { hasLogo: boolean };
 type BrandingErrors = Partial<Record<keyof Branding, string>>;
@@ -46,6 +51,8 @@ function UnsavedChangesGuard({ when }: { when: boolean }) {
   useEffect(() => {
     if (!when) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Signing in again with Microsoft: the user was already told that unsaved changes are lost.
+      if (isLeavingForReauth()) return;
       e.preventDefault();
       e.returnValue = '';
     };
@@ -72,7 +79,7 @@ function DiscardDialog({ open, onStay, onLeave }: { open: boolean; onStay(): voi
         </>
       }
     >
-      <p className="text-sm text-slate-600">Your changes to the report branding have not been saved.</p>
+      <p className="text-sm text-slate-600">Some changes on this page have not been saved.</p>
     </Modal>
   );
 }
@@ -114,8 +121,99 @@ function LinkClickBlocker({ when }: { when: boolean }) {
   );
 }
 
+type OnDirty = (key: string, dirty: boolean) => void;
+
+const TABS = [
+  { id: 'sign-in', label: 'Sign-in methods', keys: ['entra', 'password'] },
+  { id: 'scanner', label: 'Scanner identities', keys: ['scanner-ms', 'scanner-aws'] },
+  { id: 'sessions', label: 'Sessions and retention', keys: ['sessions'] },
+  { id: 'branding', label: 'Report branding', keys: ['branding'] },
+  { id: 'tenants', label: 'Tenant links', keys: [] },
+  { id: 'demo', label: 'Demo', keys: [] },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
+
 export function SettingsPage() {
   useDocumentTitle('Settings');
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const tab: TabId = TABS.some((t) => t.id === requested) ? (requested as TabId) : 'sign-in';
+  const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  const onDirty = useCallback<OnDirty>((key, value) => setDirty((d) => (Boolean(d[key]) === value ? d : { ...d, [key]: value })), []);
+  const anyDirty = Object.values(dirty).some(Boolean);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const baseId = useId();
+  const select = (id: TabId, focus = false) => {
+    // Replace: switching tabs is not a navigation worth a history entry. The tab survives a reload and a sign-in redirect.
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      next.set('tab', id);
+      return next;
+    }, { replace: true });
+    if (focus) tabRefs.current[id]?.focus();
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = TABS.findIndex((t) => t.id === tab);
+    const to = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i - 1 + TABS.length) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    select(TABS[to].id, true);
+  };
+
+  return (
+    <>
+      <UnsavedChangesGuard when={anyDirty} />
+      <PageHeader title="Settings" subtitle="Sign-in, scanner identities, sessions and report branding. Changes take effect right away, without a restart." />
+      <ImportEnvBanner />
+      <div role="tablist" aria-label="Settings sections" onKeyDown={onKeyDown} className="-mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-slate-200 px-4 sm:mx-0 sm:px-0">
+        {TABS.map((t) => {
+          const selected = t.id === tab;
+          const unsaved = t.keys.some((k) => dirty[k]);
+          return (
+            <button
+              key={t.id}
+              ref={(el) => {
+                tabRefs.current[t.id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`${baseId}-tab-${t.id}`}
+              aria-selected={selected}
+              aria-controls={`${baseId}-panel-${t.id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => select(t.id)}
+              className={clsx(
+                '-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+                selected ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-900',
+              )}
+            >
+              {t.label}
+              {unsaved && (
+                <>
+                  <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+                  <span className="sr-only">(unsaved changes)</span>
+                </>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {/* Panels stay mounted while hidden, so unsaved input survives switching tabs. */}
+      {TABS.map((t) => (
+        <div key={t.id} role="tabpanel" id={`${baseId}-panel-${t.id}`} aria-labelledby={`${baseId}-tab-${t.id}`} hidden={t.id !== tab}>
+          {t.id === 'sign-in' && <SignInSettings onDirty={onDirty} />}
+          {t.id === 'scanner' && <ScannerSettings onDirty={onDirty} />}
+          {t.id === 'sessions' && <SessionSettings onDirty={onDirty} />}
+          {t.id === 'branding' && <BrandingSection onDirty={onDirty} />}
+          {t.id === 'tenants' && <TenantLinksCard />}
+          {t.id === 'demo' && <DemoSection />}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function BrandingSection({ onDirty }: { onDirty: OnDirty }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['branding'], queryFn: () => get<BrandingData>('/api/settings/branding') });
   // The form is initialised once; later refetches (logo upload or removal) never overwrite unsaved edits.
@@ -129,9 +227,6 @@ export function SettingsPage() {
   const fileId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
-  const { me } = useAuth();
-  const [confirmReset, setConfirmReset] = useState(false);
-  const [resetting, setResetting] = useState(false);
   useEffect(() => {
     if (q.data && !form) {
       const { hasLogo: _h, ...b } = q.data;
@@ -141,6 +236,7 @@ export function SettingsPage() {
     }
   }, [q.data, form]);
   const dirty = Boolean(form && saved && !sameBranding(form, saved));
+  useEffect(() => onDirty('branding', dirty), [dirty, onDirty]);
   if (q.isError && !form) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (!form) return <PageLoader />;
   const set = (k: keyof Branding, v: string) => {
@@ -210,18 +306,17 @@ export function SettingsPage() {
 
   return (
     <>
-      <UnsavedChangesGuard when={dirty} />
-      <PageHeader
-        title="Settings"
-        subtitle="Branding and defaults for reports."
-        actions={
-          <Button type="submit" form="branding-form" loading={saving}>
-            Save settings
-          </Button>
-        }
-      />
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" title="Report branding" subtitle={dirty ? 'You have unsaved changes.' : undefined}>
+        <Card
+          className="lg:col-span-2"
+          title="Report branding"
+          subtitle={dirty ? 'You have unsaved changes.' : 'Shown on the PDF report.'}
+          actions={
+            <Button type="submit" form="branding-form" loading={saving} disabled={!dirty}>
+              Save
+            </Button>
+          }
+        >
           <form id="branding-form" noValidate onSubmit={(e) => void save(e)} className="grid gap-4 sm:grid-cols-2">
             <Field label="Company name" error={errors.companyName}>
               <Input name="branding-companyName" maxLength={200} value={form.companyName} onChange={(e) => set('companyName', e.target.value)} />
@@ -320,7 +415,19 @@ export function SettingsPage() {
           </div>
         </Card>
       </div>
-      <TenantLinksCard />
+    </>
+  );
+}
+
+function DemoSection() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { me } = useAuth();
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  return (
+    <>
+      <DemoModeToggle />
       {me?.features.demo && (
         <Card
           className="mt-6"
@@ -338,7 +445,7 @@ export function SettingsPage() {
         >
           <p className="text-sm text-slate-600">
             Use it to try the full flow: open the organisation, run the draft scan from the wizard, review the report and download the PDF and CSV exports. Demo systems never connect to real environments.
-            Turn demo mode off in production by setting <code className="rounded bg-slate-100 px-1">DEMO_MODE=false</code>.
+            Turn demo mode off above on installations that scan real customers.
           </p>
           <DemoLoginSettings />
         </Card>
@@ -360,8 +467,8 @@ export function SettingsPage() {
                 setResetting(true);
                 try {
                   await post('/api/admin/demo/reset');
-                  // Everything except the branding form, which may hold unsaved edits.
-                  await qc.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'branding' });
+                  // Everything except the settings forms, which may hold unsaved edits.
+                  await qc.invalidateQueries({ predicate: (query) => query.queryKey[0] !== 'branding' && query.queryKey[0] !== 'admin-settings' });
                   toast.success('Demo data was reset.');
                 } catch (e: any) {
                   toast.error(e?.message ?? 'The demo data could not be reset.');
@@ -395,7 +502,6 @@ function TenantLinksCard() {
   const q = useQuery({ queryKey: ['tenant-bindings'], queryFn: () => get<TenantLink[]>('/api/admin/tenant-bindings') });
   return (
     <Card
-      className="mt-6"
       title={
         <span className="flex items-center gap-2">
           <Link2 className="size-4 text-slate-500" aria-hidden /> Microsoft tenant links

@@ -1,7 +1,7 @@
 /**
  * Users, offboarding, sharing, audit and triage. Needs TEST_DATABASE_URL (see api.test.ts).
  */
-import { CHECKS, DEFAULT_CONTEXT } from '@qs/shared';
+import { CHECKS } from '@qs/shared';
 import { eq, sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -65,7 +65,7 @@ d('users, sharing and audit', () => {
   const ownerOf = async (id: string) => (await db.select({ o: customers.ownerId }).from(customers).where(eq(customers.id, id)))[0].o;
   const shareOf = async (cid: string, uid: string) =>
     (await db.select().from(customerAssignments).where(sql`${customerAssignments.customerId} = ${cid} and ${customerAssignments.userId} = ${uid}`))[0]?.permission ?? null;
-  const org = async (who: string, name: string) => (await req(who, 'POST', '/api/customers', { name, context: DEFAULT_CONTEXT })).json().id as string;
+  const org = async (who: string, name: string) => (await req(who, 'POST', '/api/customers', { name })).json().id as string;
 
   beforeAll(async () => {
     await runMigrations(db);

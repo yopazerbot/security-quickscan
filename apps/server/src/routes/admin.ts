@@ -1,20 +1,39 @@
-import { brandingSchema, CHECKS, ISO_CONTROLS, ISO_THEME_LABELS, userInputSchema, userUpdateSchema, type Branding, type Role } from '@qs/shared';
+import {
+  brandingSchema,
+  CHECKS,
+  createUserPasswordInput,
+  ISO_CONTROLS,
+  ISO_THEME_LABELS,
+  resetPasswordInput,
+  userInputSchema,
+  userUpdateSchema,
+  type Branding,
+  type Role,
+} from '@qs/shared';
 import { awsPrincipalArn, IMPLEMENTED_CHECKS } from '@qs/checks';
 import { and, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { requireRole, requireUser } from '../auth/session.js';
-import { scannerEnv } from '../config.js';
-import { badRequest, notFound, type AppCtx } from '../context.js';
+import { clearAttempts } from '../auth/routes.js';
+import { hashPassword, passwordProblem } from '../auth/password.js';
+import { requireRecentAuth, requireRole, requireUser } from '../auth/session.js';
+import { badRequest, forbidden, notFound, type AppCtx } from '../context.js';
 import { auditLog, customerAssignments, customers, scans, sessions, settings, users } from '../db/schema.js';
 import { resetDemo } from '../demo/seed.js';
 import { ownerCandidateProblem } from './customers.js';
 import { parse, uuidParam } from './helpers.js';
+import { getRuntime } from '../settings/runtime.js';
 
 type Tx = Parameters<Parameters<AppCtx['db']['transaction']>[0]>[0];
 const ROLE_RANK: Record<Role, number> = { viewer: 0, consultant: 1, admin: 2 };
+
+/** A user row as the API returns it: never the password hash, only whether one is set. */
+function publicUser(u: typeof users.$inferSelect) {
+  const { passwordHash, ...rest } = u;
+  return { ...rest, hasPassword: Boolean(passwordHash) };
+}
 
 export async function getBranding(ctx: AppCtx): Promise<Branding> {
   const r = (await ctx.db.select().from(settings).where(eq(settings.key, 'branding')).limit(1))[0];
@@ -43,26 +62,27 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
   /** Public identifiers of the platform's own scanner identities (shown in the setup guidance). */
   app.get('/api/platform', async (req) => {
     requireUser(req);
+    const rt = await getRuntime(ctx);
     let awsPrincipal: string | null = null;
     let awsError: string | null = null;
     try {
-      awsPrincipal = await awsPrincipalArn(scannerEnv(ctx.config));
+      awsPrincipal = await awsPrincipalArn(rt.scanner.env);
     } catch {
       awsError = 'The platform AWS credentials are invalid.';
     }
     return {
       awsPrincipal,
       awsError,
-      msClientId: ctx.config.SCANNER_MS_CLIENT_ID ?? null,
+      msClientId: rt.scanner.ms.clientId,
       consentRedirectUri: `${ctx.config.APP_URL}/consent/callback`,
-      demo: ctx.config.DEMO_MODE,
+      demo: rt.general.demoMode,
     };
   });
 
   /** Demo mode only: delete the fictional demo organisation(s) and seed them again. */
   app.post('/api/admin/demo/reset', async (req) => {
     requireRole(req, 'admin');
-    if (!ctx.config.DEMO_MODE) throw notFound();
+    if (!(await getRuntime(ctx)).general.demoMode) throw notFound();
     await resetDemo(ctx);
     await audit(ctx, req, 'demo.reset');
     return { ok: true };
@@ -83,7 +103,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
       .where(isNotNull(customers.ownerId))
       .groupBy(customers.ownerId);
     return rows.map((u) => ({
-      ...u,
+      ...publicUser(u),
       activeSessions: active.find((a) => a.userId === u.id)?.n ?? 0,
       lastSeenAt: active.find((a) => a.userId === u.id)?.last ?? null,
       ownedCount: owned.find((o) => o.ownerId === u.id)?.n ?? 0,
@@ -92,12 +112,45 @@ export function adminRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   app.post('/api/users', async (req) => {
     requireRole(req, 'admin');
-    const body = parse(userInputSchema, req.body);
-    const exists = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${body.email.toLowerCase()}`);
+    const { temporaryPassword, ...body } = parse(userInputSchema.extend(createUserPasswordInput.shape), req.body);
+    const email = body.email.toLowerCase();
+    const exists = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`);
     if (exists.length) throw badRequest('A user with this email already exists');
-    const [u] = await db.insert(users).values({ ...body, email: body.email.toLowerCase() }).returning();
-    await audit(ctx, req, 'user.create', { type: 'user', id: u.id }, { email: u.email, role: u.role });
-    return u;
+    // Optional temporary password: the user must replace it at the first password sign-in.
+    let password = {};
+    if (temporaryPassword) {
+      const problem = passwordProblem(temporaryPassword, { minLength: (await getRuntime(ctx)).password.minLength, email });
+      if (problem) throw badRequest(`Temporary password: ${problem}`);
+      password = { passwordHash: await hashPassword(temporaryPassword), passwordChangedAt: new Date(), mustChangePassword: true };
+    }
+    const [u] = await db.insert(users).values({ ...body, email, ...password }).returning();
+    await audit(ctx, req, 'user.create', { type: 'user', id: u.id }, { email: u.email, role: u.role, temporaryPassword: Boolean(temporaryPassword) });
+    return publicUser(u);
+  });
+
+  /** Sets a new temporary password (the user must change it at the next sign-in) and ends the user's sessions. */
+  app.post('/api/users/:userId/reset-password', async (req) => {
+    const me = requireRole(req, 'admin');
+    if (me.isDemo) throw forbidden();
+    requireRecentAuth(ctx, req);
+    const id = uuidParam(req, 'userId');
+    const { temporaryPassword } = parse(resetPasswordInput, req.body);
+    if (id === me.id) throw badRequest('Change your own password under your account instead');
+    const target = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
+    if (!target) throw notFound();
+    if (target.isBreakglass) throw badRequest('The break-glass account is managed through environment variables');
+    if (target.isDemo) throw badRequest('The demo visitor account is managed under Settings, Demo data');
+    const problem = passwordProblem(temporaryPassword, { minLength: (await getRuntime(ctx)).password.minLength, email: target.email });
+    if (problem) throw badRequest(`Temporary password: ${problem}`);
+    const passwordHash = await hashPassword(temporaryPassword);
+    const revoked = await db.transaction(async (tx) => {
+      await tx.update(users).set({ passwordHash, passwordChangedAt: new Date(), mustChangePassword: true }).where(eq(users.id, id));
+      return tx.delete(sessions).where(eq(sessions.userId, id)).returning({ id: sessions.idHash });
+    });
+    // A lockout from earlier failed attempts would block the new temporary password.
+    await clearAttempts(ctx, `pw:acct:${target.email.toLowerCase()}`);
+    await audit(ctx, req, 'user.password_reset', { type: 'user', id }, { email: target.email, sessionsRevoked: revoked.length });
+    return { ok: true, sessionsRevoked: revoked.length };
   });
 
   /**

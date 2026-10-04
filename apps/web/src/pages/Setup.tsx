@@ -5,7 +5,7 @@ import { Link, Navigate, useNavigate } from 'react-router';
 import { AuthShell, PasswordChecks } from '../components/auth-shell';
 import { PasswordInput } from '../components/password-input';
 import { Alert, Button, ErrorState, Field, Input, PageLoader } from '../components/ui';
-import { get, post } from '../lib/api';
+import { ApiError, get, post } from '../lib/api';
 import { AUTH_CONFIG_KEY, useAuth } from '../lib/auth';
 import { PASSWORD_POLICY_HINT } from '../lib/password';
 import { useDocumentTitle } from '../lib/use-document-title';
@@ -36,6 +36,8 @@ export function SetupPage() {
   const [form, setForm] = useState({ token: linkToken, email: '', name: '', password: '', confirm: '' });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The token field is only needed when the page was opened without the link (or the link's token was refused).
+  const [showToken, setShowToken] = useState(!linkToken);
 
   if (status.isLoading) return <PageLoader />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => status.refetch()} className="m-4" />;
@@ -68,6 +70,7 @@ export function SetupPage() {
       navigate('/', { replace: true });
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Setup failed.');
+      if (e instanceof ApiError && e.status === 403) setShowToken(true);
     } finally {
       setBusy(false);
     }
@@ -76,13 +79,13 @@ export function SetupPage() {
   return (
     <AuthShell title="Create the first administrator" intro="The setup link with its one-time token is printed in the server log when the server starts.">
       <form onSubmit={(e) => void submit(e)} className="space-y-4" noValidate>
-        {!linkToken && (
+        {showToken && (
           <Field label="Setup token" hint="Copy it from the setup link in the server log.">
             <Input autoComplete="off" spellCheck={false} className="font-mono" value={form.token} onChange={(e) => set('token', e.target.value)} required autoFocus />
           </Field>
         )}
         <Field label="Your name">
-          <Input autoComplete="name" maxLength={200} value={form.name} onChange={(e) => set('name', e.target.value)} required autoFocus={Boolean(linkToken)} />
+          <Input autoComplete="name" maxLength={200} value={form.name} onChange={(e) => set('name', e.target.value)} required autoFocus={!showToken} />
         </Field>
         <Field label="Email">
           <Input type="email" autoComplete="username" inputMode="email" maxLength={320} value={form.email} onChange={(e) => set('email', e.target.value)} required />

@@ -14,7 +14,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { accessibleCustomerIds, assertCustomerAccess, customerAccess, requireUser, sessionStillValid } from '../auth/session.js';
-import { scannerEnv } from '../config.js';
+import { getRuntime, scannerEnv } from '../settings/runtime.js';
 import { badRequest, HttpError, notFound, type AppCtx } from '../context.js';
 import { randomToken, sha256 } from '../crypto/envelope.js';
 import { authStates, checkResults, credentials, customers, msTenantBindings, scanCriteria, scans, scanSystems } from '../db/schema.js';
@@ -274,7 +274,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.post('/api/scans/:scanId/systems', async (req) => {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const body = parse(systemInputSchema, req.body);
-    if (body.config.authMode === 'demo' && !config.DEMO_MODE) throw badRequest('Demo systems are disabled');
+    if (body.config.authMode === 'demo' && !(await getRuntime(ctx)).general.demoMode) throw badRequest('Demo systems are disabled');
     await assertDemoRules(req, scan.customerId, [body.config.authMode], 'add');
     const cfg: Record<string, unknown> = { ...body.config };
     if (body.provider === 'aws') cfg.externalId = `qs-${randomToken(18)}`;
@@ -291,7 +291,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const scan = await loadScan(ctx, req, { write: true, draft: true });
     const s0 = await loadSystem(scan.id, req);
     const body = parse(systemInputSchema, { ...(req.body as object), provider: s0.provider });
-    if (body.config.authMode === 'demo' && !config.DEMO_MODE) throw badRequest('Demo systems are disabled');
+    if (body.config.authMode === 'demo' && !(await getRuntime(ctx)).general.demoMode) throw badRequest('Demo systems are disabled');
     await assertDemoRules(req, scan.customerId, [body.config.authMode], 'add');
     const r = await withDraftLock(ctx, scan.id, async (tx) => {
       const s = await loadSystem(scan.id, req, tx);
@@ -386,7 +386,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     }
     if (cfg.authMode === 'admin_consent' && !cfg.consentGrantedAt) throw badRequest('Admin consent has not been granted yet');
     await assertTenantBound(scan, s, req, 'test');
-    const r = await testConnection(s.provider, cfg, secret, scannerEnv(config), s.id);
+    const r = await testConnection(s.provider, cfg, secret, await scannerEnv(ctx), s.id);
     secret = null;
     // Store the result only for the configuration that was actually tested.
     await withDraftLock(ctx, scan.id, async (tx) => {
@@ -411,7 +411,8 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     const s = await loadSystem(scan.id, req);
     const cfg = s.config as any;
     if (req.user!.isDemo) throw new HttpError(403, 'Not available for demo visitors');
-    if (cfg.authMode !== 'admin_consent' || !config.SCANNER_MS_CLIENT_ID) throw badRequest('Admin consent is not available for this system');
+    const msClientId = (await getRuntime(ctx)).scanner.ms.clientId;
+    if (cfg.authMode !== 'admin_consent' || !msClientId) throw badRequest('Admin consent is not available for this system');
     if (!cfg.tenantId) throw badRequest('Enter the tenant ID or domain first');
     const guid = await resolveTenantGuid(String(cfg.tenantId));
     if (!guid) throw badRequest('Microsoft tenant not found. Check the tenant ID or domain.');
@@ -432,7 +433,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     });
     await audit(ctx, req, 'consent.link_created', { type: 'system', id: s.id }, { tenant: guid });
     const url = new URL(`https://login.microsoftonline.com/${encodeURIComponent(cfg.tenantId)}/adminconsent`);
-    url.searchParams.set('client_id', config.SCANNER_MS_CLIENT_ID);
+    url.searchParams.set('client_id', msClientId);
     url.searchParams.set('redirect_uri', `${config.APP_URL}/consent/callback`);
     url.searchParams.set('state', state);
     return { url: url.href, expiresInMinutes: 60 };
@@ -483,7 +484,7 @@ export function scanRoutes(app: FastifyInstance, ctx: AppCtx) {
     // Proof that this flow produced the consent: the platform app's service principal (or its newest app role
     // assignment) in the tenant must be newer than the consent link. The browser-supplied result alone is not trusted.
     const issuedAt = data.issuedAt ? new Date(data.issuedAt) : new Date(st.expiresAt.getTime() - 60 * 60_000);
-    const proof = await verifyMsConsentSince(scannerEnv(config), tenant, issuedAt);
+    const proof = await verifyMsConsentSince(await scannerEnv(ctx), tenant, issuedAt);
     if (!proof.ok) {
       await audit(ctx, req, 'consent.unverified', { type: 'system', id: s.id }, { tenant, reason: proof.reason });
       if (proof.reason === 'stale') {

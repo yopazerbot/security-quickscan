@@ -61,6 +61,8 @@ test('run the prepared draft scan end to end and download the exports', async ({
   const finding = page.getByTestId('finding').first();
   await finding.getByRole('button').first().click();
   // Triage applies to this check on this one system, for scans that finish from now on.
+  // Checks that do not apply are taken out of the score here, after the scan, instead of in a criteria step.
+  await expect(finding.getByRole('option', { name: 'Not applicable / false positive' })).toHaveCount(1);
   await finding.getByLabel(/Triage status for/).selectOption('accepted');
   await finding.getByPlaceholder('Note (shown in the report)').fill('Accepted in e2e test');
   await finding.getByRole('button', { name: 'Save', exact: true }).click();
@@ -72,11 +74,13 @@ test('run the prepared draft scan end to end and download the exports', async ({
 test('new organisation through the full wizard with demo systems', async ({ page }) => {
   await page.goto('/');
   await page.goto('/organisations/new');
+  // An organisation is just a name: no context or risk questionnaire.
+  await expect(page.getByRole('textbox')).toHaveCount(1);
   await page.getByLabel('Organisation name').fill(`E2E Organisation ${Date.now()}`);
   await page.getByRole('button', { name: 'Create organisation' }).click();
   await page.getByRole('button', { name: 'New scan' }).click();
-  // The wizard starts at Scope: the context and risk profile come from the organisation record.
-  await expect(page.getByText('Confirm the organisation context')).toHaveCount(0);
+  // Three steps: Scope, Access and Review. Every check for the systems in scope runs.
+  await expect(page.getByRole('navigation', { name: 'Scan wizard steps' }).getByRole('listitem')).toHaveCount(3);
   for (const p of ['Microsoft 365 / Entra ID', 'GitHub']) {
     await page.locator('button', { hasText: p }).first().click();
     // The access methods are radio buttons; click the visible label like a user would.
@@ -89,9 +93,8 @@ test('new organisation through the full wizard with demo systems', async ({ page
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Credential retention')).toBeVisible();
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByText('Evaluation criteria')).toBeVisible();
-  await page.getByRole('button', { name: 'Save and continue' }).click();
   await expect(page.getByRole('heading', { name: 'Summary', exact: true })).toBeVisible();
+  await expect(page.getByText('Checks to run')).toBeVisible();
   await page.getByRole('button', { name: 'Start scan' }).click();
   await expect(page.getByRole('link', { name: 'View report' })).toBeVisible({ timeout: 150_000 });
 });
